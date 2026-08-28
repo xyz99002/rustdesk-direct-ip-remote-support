@@ -1,0 +1,1 @@
+Implement versioned configuration, validation, first-run password creation, secure storage, password change flow and tests.

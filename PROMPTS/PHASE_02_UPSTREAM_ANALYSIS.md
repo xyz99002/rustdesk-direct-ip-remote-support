@@ -1,0 +1,1 @@
+Clone official RustDesk. Record tag/commit. Analyze networking, media, auth, packaging, licensing. Create docs/upstream-analysis.md.

@@ -1,0 +1,1 @@
+Implement authenticated encrypted direct-IP transport. Remove relay-facing UI and configuration.

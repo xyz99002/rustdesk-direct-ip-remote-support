@@ -1,0 +1,1 @@
+Reduce Local UI to hostname/IP field and Start Session button. Remote UI only status, permissions, password settings.

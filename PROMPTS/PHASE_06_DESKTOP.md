@@ -1,0 +1,1 @@
+Make desktop sharing configuration controlled. Same Start Session button launches it when enabled.

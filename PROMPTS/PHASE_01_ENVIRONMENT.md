@@ -1,0 +1,1 @@
+Discover OS, architecture, toolchains, permissions, blank folder state. Produce repository plan before edits.
