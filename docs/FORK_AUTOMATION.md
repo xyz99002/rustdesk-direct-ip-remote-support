@@ -3,6 +3,9 @@
 # Goal
 Create a repeatable process that transforms an upstream RustDesk release into the Direct-IP fork with minimal manual effort.
 
+## Upgrade-verification artifact: `docs/FEATURE_ENFORCEMENT_MATRIX.md`
+Before signing off on an upgrade, re-check every "Yes" cell in that matrix against the cited source in the new upstream version — it records, per feature, whether enforcement is UI-only, config-only, remote/protocol-level, or reuses an unmodified upstream mechanism. It's also where the `support_enabled` vs. `desktop_share_enabled` asymmetry (one is remotely enforced, one is UI-only) is the single source of truth — don't restate that asymmetry elsewhere without updating the matrix first.
+
 ## Strategy
 Treat the fork as a configuration and UI transformation layer instead of a transport fork.
 
@@ -63,7 +66,8 @@ Still UI-layer wiring only — no server/media code to reapply:
 2. Confirm `flutter/lib/common.dart`'s `connect()` still accepts `isViewCamera`, and `session_request_voice_call`/`sessionRequestVoiceCall` still exists and still takes only a `session_id`.
 3. Re-wire the connection screen's Support button (`support_enabled`) to `connect(..., isViewCamera: true)` + a `sessionRequestVoiceCall` call once that session's `initState()` fires, and conditionally to plain `connect()` when `desktop_share_enabled`. Re-wire the Desktop button (`desktop_share_enabled`) to plain `connect()` only.
 4. Confirm the remote side still enforces `enable-camera` at `src/server/connection.rs:2544-2551` — this is what `support_enabled`'s remote-side rejection depends on.
-5. Run the regression checklist in `docs/UPSTREAM_UPGRADE_GUIDE.md`.
+5. Re-verify `docs/FEATURE_ENFORCEMENT_MATRIX.md` — in particular that `support_enabled`'s remote-side enforcement (`enable-camera`) still holds, and that `desktop_share_enabled`'s known UI-only gap hasn't silently become worse (or better — if a future upstream release adds a `DEFAULT_CONN`-rejection permission, that's worth revisiting).
+6. Run the regression checklist in `docs/UPSTREAM_UPGRADE_GUIDE.md`.
 
 **Maintenance risk:** low, by design — this workflow deliberately avoids touching server-side media/audio code, so the maintenance burden is limited to the Dart connection-screen widget and the existing FFI call sites it drives, all already stable, documented integration points. The one open item (no existing permission to reject `DEFAULT_CONN` for `desktop_share_enabled=false`) is a documented gap, not a maintenance risk from upstream changes — it simply doesn't exist yet and would need explicit authorization to add.
 

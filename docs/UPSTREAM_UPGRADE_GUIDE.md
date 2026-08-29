@@ -13,7 +13,8 @@ This document describes how to upgrade the Direct-IP RustDesk fork to a newer up
 3. Build unmodified upstream.
 4. Run fork verification checklist.
 5. Reapply any required fork-specific patches.
-6. Execute automated regression tests.
+6. Re-verify `docs/FEATURE_ENFORCEMENT_MATRIX.md` — the authoritative record of which enforcement layer (UI/config/remote/upstream) backs every fork feature. Every "Yes" cell cites a specific source location; confirm each one still holds in the new upstream version before trusting the matrix for release acceptance.
+7. Execute automated regression tests.
 
 ## Configuration Format
 The fork's own configuration file is TOML (confirmed 2026-08-28) — reuses the `toml`/`confy` crates already present via `hbb_common`, no new dependency. Any YAML-fenced example elsewhere in the project's documentation is illustrative only.
@@ -87,4 +88,4 @@ A clean `cargo build`/`cargo test` of the full `rustdesk` binary on this Windows
 - Remote rejects `VIEW_CAMERA`/Voice Call when `support_enabled = false` (via `enable-camera`).
 
 ## Release Acceptance
-Upgrade is accepted only if all checks pass.
+Upgrade is accepted only if all checks pass, **and** `docs/FEATURE_ENFORCEMENT_MATRIX.md` has been re-verified against the new upstream version (not just left as-is from the prior baseline).
