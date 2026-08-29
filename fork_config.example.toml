@@ -26,12 +26,21 @@ version = 1
 #             it will never initiate an outbound session.
 role = "local"
 
-# --- The keys below are validated but not yet behaviorally active. ---
-# --- They are reserved for the Media, Direct-IP transport, and minimal-UI phases. ---
+# Shows/hides the Support button. Support always opens a VIEW_CAMERA session plus a Voice
+# Call on it; also opens a DEFAULT_CONN session when desktop_share_enabled is true below.
+# On the remote side, this also gates whether VIEW_CAMERA (and therefore Voice Call)
+# connections are accepted at all, via the existing upstream "enable-camera" permission.
+support_enabled = true
 
-camera_enabled = true
-audio_enabled = true
-desktop_enabled = false
+# Shows/hides the Desktop button, which opens a plain DEFAULT_CONN session only (no camera,
+# no voice call) — standard upstream RustDesk behavior. Local UI only; there is no existing
+# upstream permission to reject DEFAULT_CONN remotely (see docs/FORK_PROFILE_SPEC.md).
+desktop_share_enabled = true
+
+# At least one of support_enabled / desktop_share_enabled must be true.
+
+# --- The keys below are validated but not yet behaviorally active. ---
+# --- They are reserved for the Direct-IP transport and minimal-UI phases. ---
 
 listen_address = "0.0.0.0"
 listen_port = 21118

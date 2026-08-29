@@ -338,6 +338,26 @@ class _ConnectionPageState extends State<ConnectionPage>
         isTerminal: isTerminal);
   }
 
+  /// Fork config: shows/hides the Support button. Also gates VIEW_CAMERA/Voice Call
+  /// acceptance on the remote side, via the existing upstream "enable-camera" permission
+  /// (see src/fork_config.rs). Defaults to shown if the fork config is absent/invalid.
+  bool get _supportEnabled => mainGetBoolOptionSync("enable-camera");
+
+  /// Fork config: shows/hides the Desktop button. Local UI only — see
+  /// docs/FORK_PROFILE_SPEC.md for why this has no remote-side enforcement.
+  bool get _desktopShareEnabled => mainGetBoolOptionSync("desktop-share-enabled");
+
+  /// Callback for the Support button. Always opens a VIEW_CAMERA session (which starts a
+  /// Voice Call on it once connected — see ViewCameraPage.initState()); additionally opens a
+  /// plain DEFAULT_CONN session when desktop sharing is enabled. Both reuse the existing
+  /// `connect()` call unmodified.
+  void onSupport() {
+    onConnect(isViewCamera: true);
+    if (_desktopShareEnabled) {
+      onConnect();
+    }
+  }
+
   /// UI for the remote ID TextField.
   /// Search for a peer.
   Widget _buildRemoteIDTextField(BuildContext context) {
@@ -439,7 +459,13 @@ class _ConnectionPageState extends State<ConnectionPage>
                             _idController.id = v;
                           },
                           onSubmitted: (_) {
-                            onConnect();
+                            // Mirrors whichever button(s) are actually shown (fork_config
+                            // guarantees at least one of the two is enabled).
+                            if (_supportEnabled) {
+                              onSupport();
+                            } else {
+                              onConnect();
+                            }
                           },
                         ).workaroundFreezeLinuxMint());
                   },
@@ -516,15 +542,27 @@ class _ConnectionPageState extends State<ConnectionPage>
             Padding(
               padding: const EdgeInsets.only(top: 13.0),
               child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                SizedBox(
-                  height: 28.0,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      onConnect();
-                    },
-                    child: Text(translate("Connect")),
+                if (_supportEnabled)
+                  SizedBox(
+                    height: 28.0,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        onSupport();
+                      },
+                      child: Text(translate("Support")),
+                    ),
                   ),
-                ),
+                if (_supportEnabled) const SizedBox(width: 8),
+                if (_desktopShareEnabled)
+                  SizedBox(
+                    height: 28.0,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        onConnect();
+                      },
+                      child: Text(translate("Desktop")),
+                    ),
+                  ),
                 const SizedBox(width: 8),
                 Container(
                   height: 28.0,

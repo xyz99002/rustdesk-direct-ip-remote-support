@@ -107,6 +107,14 @@ class _ViewCameraPageState extends State<ViewCameraPage>
           _ffi.ffiModel.pi.platform, _ffi.dialogManager);
       _ffi.recordingModel
           .updateStatus(bind.sessionGetIsRecording(sessionId: _ffi.sessionId));
+      // Fork: Support mode always pairs VIEW_CAMERA with a Voice Call, using the existing
+      // session_request_voice_call() mechanism (docs/session-orchestration-analysis.md
+      // Section 9-10 confirmed this works standalone on VIEW_CAMERA, no DEFAULT_CONN needed).
+      // Safe to do unconditionally here because this fork's UI has no peer list, so this page
+      // is only ever reached via the Support button (connection_page.dart's onSupport()).
+      // The call still goes through the existing upstream accept/reject workflow on the
+      // remote side - this only sends the request, it doesn't bypass that.
+      bind.sessionRequestVoiceCall(sessionId: _ffi.sessionId);
     });
     _ffi.start(
       widget.id,

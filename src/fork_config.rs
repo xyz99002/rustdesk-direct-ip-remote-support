@@ -10,6 +10,9 @@
 //!   connects (`src/client.rs`) and the inbound listener (`src/rendezvous_mediator.rs`) on.
 //! - `authentication.mode` -> `hbb_common::config::Config::set_option("approve-mode", ...)`,
 //!   which upstream's own `password_security::approve_mode()` already reads.
+//! - `support_enabled` -> `hbb_common::config::Config::set_option("enable-camera", ...)`, which
+//!   upstream's own login handler (`src/server/connection.rs:2544-2551`) already reads to
+//!   accept/reject `VIEW_CAMERA` (and therefore Voice Call, which rides on it) connections.
 //!
 //! No authentication, transport, encryption, password storage, rendezvous, or relay code is
 //! modified or reimplemented here. See `docs/architecture.md` and `docs/upstream-analysis.md`.
@@ -62,25 +65,25 @@ pub enum LogLevel {
 
 /// Fully parsed and validated fork configuration.
 ///
-/// `camera_enabled`, `audio_enabled`, `desktop_enabled`, `listen_address`, `listen_port`,
-/// `video_quality`, `audio_quality`, and `log_level` are validated here (so the file format is
-/// stable and won't need a version bump later) but are **not yet** wired to any behavior —
-/// that happens in the phases that own them (Media, Direct-IP transport, minimal UI).
+/// `listen_address`, `listen_port`, `video_quality`, `audio_quality`, and `log_level` are
+/// validated here (so the file format is stable and won't need a version bump later) but are
+/// **not yet** wired to any behavior — that happens in the phases that own them (Direct-IP
+/// transport, minimal UI).
 #[derive(Debug, Clone)]
 pub struct ForkConfig {
     pub version: u32,
     pub role: Role,
     pub auth_mode: AuthMode,
+    /// Gates the Support button (local UI) and, via [`apply`], the remote's acceptance of
+    /// `VIEW_CAMERA`/Voice Call connections (existing upstream `enable-camera` permission).
+    pub support_enabled: bool,
+    /// Gates the Desktop button (local UI only — no existing upstream permission rejects
+    /// `DEFAULT_CONN` outright, so this cannot be enforced remotely; see `docs/FORK_PROFILE_SPEC.md`).
+    pub desktop_share_enabled: bool,
     // Parsed and validated now so the file format is stable across phases; not read by any
     // caller yet. Each will lose this `allow` when its owning phase wires it up:
-    // Media (camera_enabled, audio_enabled, video_quality, audio_quality), Direct-IP transport
-    // (desktop_enabled, listen_address, listen_port), minimal UI (log_level).
-    #[allow(dead_code)]
-    pub camera_enabled: bool,
-    #[allow(dead_code)]
-    pub audio_enabled: bool,
-    #[allow(dead_code)]
-    pub desktop_enabled: bool,
+    // Direct-IP transport (listen_address, listen_port), Media (video_quality, audio_quality),
+    // minimal UI (log_level).
     #[allow(dead_code)]
     pub listen_address: String,
     #[allow(dead_code)]
@@ -101,9 +104,8 @@ struct RawForkConfig {
     version: Option<u32>,
     role: Option<String>,
     authentication: Option<RawAuthConfig>,
-    camera_enabled: Option<bool>,
-    audio_enabled: Option<bool>,
-    desktop_enabled: Option<bool>,
+    support_enabled: Option<bool>,
+    desktop_share_enabled: Option<bool>,
     listen_address: Option<String>,
     listen_port: Option<u16>,
     video_quality: Option<String>,
@@ -122,7 +124,14 @@ pub enum ConfigError {
     Parse(String),
     UnsupportedVersion(u32),
     MissingField(&'static str),
-    InvalidValue { field: &'static str, value: String },
+    InvalidValue {
+        field: &'static str,
+        value: String,
+    },
+    /// Neither `support_enabled` nor `desktop_share_enabled` is true — no button would ever be
+    /// shown, so the configuration is rejected outright rather than silently producing a
+    /// connection screen with nothing on it.
+    NoConnectionModeEnabled,
 }
 
 impl std::fmt::Display for ConfigError {
@@ -138,6 +147,10 @@ impl std::fmt::Display for ConfigError {
             ConfigError::InvalidValue { field, value } => {
                 write!(f, "invalid value for '{field}': '{value}'")
             }
+            ConfigError::NoConnectionModeEnabled => write!(
+                f,
+                "at least one of 'support_enabled' or 'desktop_share_enabled' must be true"
+            ),
         }
     }
 }
@@ -222,15 +235,15 @@ fn validate(raw: RawForkConfig) -> Result<ForkConfig, ConfigError> {
         .ok_or(ConfigError::MissingField("authentication.mode"))?;
     let auth_mode = parse_auth_mode(&mode)?;
 
-    let camera_enabled = raw
-        .camera_enabled
-        .ok_or(ConfigError::MissingField("camera_enabled"))?;
-    let audio_enabled = raw
-        .audio_enabled
-        .ok_or(ConfigError::MissingField("audio_enabled"))?;
-    let desktop_enabled = raw
-        .desktop_enabled
-        .ok_or(ConfigError::MissingField("desktop_enabled"))?;
+    let support_enabled = raw
+        .support_enabled
+        .ok_or(ConfigError::MissingField("support_enabled"))?;
+    let desktop_share_enabled = raw
+        .desktop_share_enabled
+        .ok_or(ConfigError::MissingField("desktop_share_enabled"))?;
+    if !support_enabled && !desktop_share_enabled {
+        return Err(ConfigError::NoConnectionModeEnabled);
+    }
 
     let listen_address = raw
         .listen_address
@@ -266,9 +279,8 @@ fn validate(raw: RawForkConfig) -> Result<ForkConfig, ConfigError> {
         version,
         role,
         auth_mode,
-        camera_enabled,
-        audio_enabled,
-        desktop_enabled,
+        support_enabled,
+        desktop_share_enabled,
         listen_address,
         listen_port,
         video_quality,
@@ -326,10 +338,36 @@ pub fn apply(config: &ForkConfig) {
     };
     Config::set_option("approve-mode".to_owned(), approve_mode.to_owned());
 
+    // Reuses the existing upstream `enable-camera` permission (read at login time by
+    // `src/server/connection.rs:2544-2551`) so the remote side rejects VIEW_CAMERA — and
+    // therefore Voice Call, which rides on it — when support_enabled is false. This is
+    // configuration reuse, not a new authentication code path.
+    Config::set_option(
+        "enable-camera".to_owned(),
+        if config.support_enabled { "Y" } else { "N" }.to_owned(),
+    );
+
+    // No existing upstream permission rejects DEFAULT_CONN outright, so desktop_share_enabled
+    // has no remote-side enforcement (see docs/FORK_PROFILE_SPEC.md). This option exists solely
+    // for the local UI to read via the existing main_get_option_sync bridge function, mirroring
+    // how the Dart side already reads other string options — no new FFI surface.
+    Config::set_option(
+        "desktop-share-enabled".to_owned(),
+        if config.desktop_share_enabled {
+            "Y"
+        } else {
+            "N"
+        }
+        .to_owned(),
+    );
+
     log::info!(
-        "fork_config: applied role={:?} authentication.mode={:?} (conn-type={conn_type}, approve-mode={approve_mode:?})",
+        "fork_config: applied role={:?} authentication.mode={:?} support_enabled={} desktop_share_enabled={} \
+         (conn-type={conn_type}, approve-mode={approve_mode:?})",
         config.role,
         config.auth_mode,
+        config.support_enabled,
+        config.desktop_share_enabled,
     );
 }
 
@@ -376,6 +414,15 @@ mod tests {
     use super::*;
 
     fn valid_toml(role: &str, mode: &str) -> String {
+        valid_toml_with_modes(role, mode, true, true)
+    }
+
+    fn valid_toml_with_modes(
+        role: &str,
+        mode: &str,
+        support_enabled: bool,
+        desktop_share_enabled: bool,
+    ) -> String {
         // NOTE: `[authentication]` must come LAST. In TOML, every `key = value` line after a
         // `[table]` header belongs to that table, not to the top level — putting scalar keys
         // after `[authentication]` would silently nest them under it instead of at the root.
@@ -384,9 +431,8 @@ mod tests {
 version = 1
 role = "{role}"
 
-camera_enabled = true
-audio_enabled = true
-desktop_enabled = false
+support_enabled = {support_enabled}
+desktop_share_enabled = {desktop_share_enabled}
 
 listen_address = "0.0.0.0"
 listen_port = 21118
@@ -522,34 +568,75 @@ mode = "{mode}"
     }
 
     #[test]
+    fn rejects_both_support_and_desktop_share_disabled() {
+        let text = valid_toml_with_modes("local", "ask", false, false);
+        assert_eq!(
+            parse_str(&text).unwrap_err(),
+            ConfigError::NoConnectionModeEnabled
+        );
+    }
+
+    #[test]
+    fn accepts_either_flag_alone() {
+        assert!(parse_str(&valid_toml_with_modes("local", "ask", true, false)).is_ok());
+        assert!(parse_str(&valid_toml_with_modes("local", "ask", false, true)).is_ok());
+    }
+
+    #[test]
     fn rejects_malformed_toml() {
         let text = "this is not valid toml {{{";
         assert!(matches!(parse_str(text), Err(ConfigError::Parse(_))));
     }
 
-    /// Restores `HARD_SETTINGS` and the relevant `approve-mode` CONFIG2 option after each test
-    /// that calls `apply()`, so tests don't leak global state into each other or into other
-    /// test modules in the same process.
-    struct GlobalStateGuard {
+    // `cargo test` runs tests in parallel by default; every test below mutates the same
+    // process-global `HARD_SETTINGS`/`Config` options, so without serializing them, one test's
+    // `apply()` can race another's assertion. `GlobalStateGuard` holds this lock for its whole
+    // lifetime (in addition to snapshotting/restoring state) so at most one such test runs at a
+    // time; `Mutex` is deliberately not `parking_lot` — a poisoned lock (from a panicking test)
+    // should surface as failures in subsequent tests, not be silently ignored.
+    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Serializes access to, and restores, `HARD_SETTINGS` and the `approve-mode`/`enable-camera`/
+    /// `desktop-share-enabled` CONFIG2 options around each test that calls `apply()`, so tests
+    /// don't race or leak global state into each other or into other test modules in the same
+    /// process.
+    struct GlobalStateGuard<'a> {
+        _lock: std::sync::MutexGuard<'a, ()>,
         original_hard_settings: std::collections::HashMap<String, String>,
         original_approve_mode: String,
+        original_enable_camera: String,
+        original_desktop_share_enabled: String,
     }
 
-    impl GlobalStateGuard {
+    impl GlobalStateGuard<'_> {
         fn new() -> Self {
+            let lock = TEST_MUTEX
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             Self {
+                _lock: lock,
                 original_hard_settings: HARD_SETTINGS.read().unwrap().clone(),
                 original_approve_mode: Config::get_option("approve-mode"),
+                original_enable_camera: Config::get_option("enable-camera"),
+                original_desktop_share_enabled: Config::get_option("desktop-share-enabled"),
             }
         }
     }
 
-    impl Drop for GlobalStateGuard {
+    impl Drop for GlobalStateGuard<'_> {
         fn drop(&mut self) {
             *HARD_SETTINGS.write().unwrap() = self.original_hard_settings.clone();
             Config::set_option(
                 "approve-mode".to_owned(),
                 self.original_approve_mode.clone(),
+            );
+            Config::set_option(
+                "enable-camera".to_owned(),
+                self.original_enable_camera.clone(),
+            );
+            Config::set_option(
+                "desktop-share-enabled".to_owned(),
+                self.original_desktop_share_enabled.clone(),
             );
         }
     }
@@ -587,5 +674,31 @@ mode = "{mode}"
         let cfg = parse_str(&valid_toml("local", "ask_and_password")).unwrap();
         apply(&cfg);
         assert_eq!(Config::get_option("approve-mode"), "");
+    }
+
+    #[test]
+    fn apply_maps_support_enabled_to_enable_camera_permission() {
+        let _guard = GlobalStateGuard::new();
+
+        let cfg = parse_str(&valid_toml_with_modes("local", "ask", true, true)).unwrap();
+        apply(&cfg);
+        assert_eq!(Config::get_option("enable-camera"), "Y");
+
+        let cfg = parse_str(&valid_toml_with_modes("local", "ask", false, true)).unwrap();
+        apply(&cfg);
+        assert_eq!(Config::get_option("enable-camera"), "N");
+    }
+
+    #[test]
+    fn apply_maps_desktop_share_enabled_to_local_option() {
+        let _guard = GlobalStateGuard::new();
+
+        let cfg = parse_str(&valid_toml_with_modes("local", "ask", true, true)).unwrap();
+        apply(&cfg);
+        assert_eq!(Config::get_option("desktop-share-enabled"), "Y");
+
+        let cfg = parse_str(&valid_toml_with_modes("local", "ask", true, false)).unwrap();
+        apply(&cfg);
+        assert_eq!(Config::get_option("desktop-share-enabled"), "N");
     }
 }
