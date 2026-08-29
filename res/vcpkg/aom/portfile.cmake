@@ -8,7 +8,14 @@ vcpkg_find_acquire_program(PERL)
 get_filename_component(PERL_PATH ${PERL} DIRECTORY)
 vcpkg_add_to_path(${PERL_PATH})
 
-if(DEFINED ENV{USE_AOM_391})
+# 2026-08-29: Downgrade to aom 3.9.1 to resolve NASM multipass incompatibility.
+# NASM 3.01 (from vcpkg) lacks multipass optimization required by aom 3.12.1,
+# causing CMake configure to fail at aom_optimization.cmake:219.
+# aom 3.9.1 is production-proven, codec-compatible (AV1 FFI is backward-compatible),
+# and already in this portfile as an alternative. See docs/BUILD_BLOCKER_CONFIRMATION.md
+# for the full analysis and remediation strategy comparison.
+# To revert to aom 3.12.1, set environment variable: USE_AOM_312=1
+if(NOT DEFINED ENV{USE_AOM_312})
     vcpkg_from_git(
         OUT_SOURCE_PATH SOURCE_PATH
         URL "https://aomedia.googlesource.com/aom"

@@ -1,8 +1,10 @@
 # Build Blocker Analysis
 
-**Status:** Blocking — full binary build not possible on current Windows development environment.
+**Status:** Remediation Applied (2026-08-29) — aom downgraded to 3.9.1; full build verification in progress.
 
 **Date:** 2026-08-29
+
+**Last Updated:** 2026-08-29 (Strategy 1 applied; see "Remediation Applied" section below)
 
 **Blocking stage:** vcpkg dependency resolution for AV1 codec library (aom).
 
@@ -205,7 +207,23 @@ This is a **multi-layered compatibility issue**:
 
 ---
 
-## Recommendation: **Strategy 1 — Downgrade aom to 3.9.1**
+## Remediation Applied (2026-08-29)
+
+**Decision:** Strategy 1 — Downgrade aom to 3.9.1
+
+**Implementation:**
+- **File modified:** `res/vcpkg/aom/portfile.cmake`
+- **Change:** Inverted the conditional logic to default to aom 3.9.1; aom 3.12.1 is now available only if environment variable `USE_AOM_312=1` is set
+- **Rationale:** See `docs/BUILD_BLOCKER_CONFIRMATION.md` for evidence and strategy comparison
+- **Reversibility:** Change can be reverted by setting `USE_AOM_312=1` or editing the portfile back; no permanent modifications to upstream code
+
+**Commit:** Merged into `feature/direct-ip-fork` branch; commit message references the blocker analysis and confirmation docs
+
+**Next step:** Full build verification (vcpkg, cargo, flutter) to confirm the fix resolves the issue without introducing new blockers
+
+---
+
+## Recommendation: **Strategy 1 — Downgrade aom to 3.9.1** (Implemented 2026-08-29)
 
 **Reasoning:**
 
