@@ -81,14 +81,25 @@ Implemented 2026-08-29. Two independent parts, both UI-layer:
 
 **Maintenance risk:** moderate for the connect-screen rewrite specifically (a full-file replacement is more upgrade-fragile than a small patch — upstream restructuring that page requires re-doing the rewrite, not just re-applying a diff), low for the Account/Network hiding (two `HashMap` writes, unlikely to break silently).
 
+### Recreating Direct-IP Enforcement on a future upstream release (ADR-0003, 2026-08-29)
+This is the one part of the fork that touches genuine transport-adjacent code, not just configuration/UI reuse — see `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md` for the full rationale.
+1. In `src/rendezvous_mediator.rs::start_all()`, search for `DIRECT-IP FORK` — both edits are bounded by `--- BEGIN/END DIRECT-IP FORK ---` comments. Re-locate the `is_outgoing_only()` guard at the top of the function (the anchor point/pattern both edits mirror) and re-apply: (a) removing the `crate::hbbs_http::sync::start()` call, (b) replacing the per-server registration loop with `loop { sleep(1.).await; }`.
+2. Confirm `direct_server(...)` and LAN listening are still spawned as independent tasks *before* the registration loop in the new upstream version — this fix depends on that structural separation continuing to hold.
+3. Confirm `Config::get_rendezvous_servers()` (`libs/hbb_common/src/config.rs`) still has the same hardcoded-fallback behavior this ADR was written against (it doesn't have to — the fix works regardless — but if it's changed, note it in the ADR's "Upgrade considerations").
+4. Re-apply `Config::set_option("enable-lan-discovery", "N")` in `src/fork_config.rs::apply()` if that function needed to be substantially reworked; confirm `src/lan.rs`'s `enable-lan-discovery` check still gates the ID-bearing response specifically.
+5. Re-verify `docs/FEATURE_ENFORCEMENT_MATRIX.md`'s "No relay/rendezvous surfaced"/"LAN-discovery ID exposure" rows and the ADR-0003 regression checklist items in `docs/UPSTREAM_UPGRADE_GUIDE.md`.
+
+**Maintenance risk:** moderate-to-high — this is the fork's only real code deletion in upstream logic (as opposed to configuration/UI reuse), so it's the most likely place a naive merge silently resurrects removed behavior (rendezvous registration coming back). The inline `DIRECT-IP FORK` markers exist specifically to make this discoverable in a diff/merge tool.
+
 ## Files Expected To Change Across Upgrades
 - UI entry screens
 - startup wiring
 - config integration points
+- `src/rendezvous_mediator.rs`'s rendezvous-registration section (revised 2026-08-29 — previously listed as stable; ADR-0003 made this fork-owned)
 
 ## Files Expected To Remain Stable
 - transport security
-- direct-IP implementation
+- direct-IP implementation (`direct_server`, `src/client.rs`'s dial path — unaffected by ADR-0003)
 - authentication internals
 
 ## Automation Deliverables

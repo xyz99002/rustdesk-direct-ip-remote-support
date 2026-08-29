@@ -2,20 +2,23 @@ use std::{
     net::SocketAddr,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, RwLock,
+        Arc,
     },
     time::{Duration, Instant},
 };
 
 use uuid::Uuid;
 
+// DIRECT-IP FORK: `RwLock` (std::sync) and `join_all` were only used by the rendezvous
+// registration loop removed from `start_all()` below (see docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md)
+// and are no longer imported. If a future upstream merge reintroduces a need for either, that's a
+// signal the removal wasn't fully re-applied — check `start_all()`'s DIRECT-IP FORK markers first.
 use hbb_common::{
     allow_err,
     anyhow::{self, bail},
     config::{
         self, keys::*, option2bool, use_ws, Config, CONNECT_TIMEOUT, REG_INTERVAL, RENDEZVOUS_PORT,
     },
-    futures::future::join_all,
     log,
     protobuf::Message as _,
     rendezvous_proto::*,
@@ -113,6 +116,13 @@ impl RendezvousMediator {
         log::info!("server restart");
     }
 
+    // ============================================================================================
+    // === DIRECT-IP FORK: rendezvous/relay registration permanently disabled below.             ===
+    // === See docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md for the full rationale and upgrade notes.  ===
+    // === Search this file for "DIRECT-IP FORK" to find every touch point when merging a new    ===
+    // === upstream release. Nothing else in this function (direct_server, LAN listening,        ===
+    // === xdesktop, av1 test) was changed.                                                       ===
+    // ============================================================================================
     pub async fn start_all() {
         crate::test_nat_type();
         if config::is_outgoing_only() {
@@ -120,7 +130,13 @@ impl RendezvousMediator {
                 sleep(1.).await;
             }
         }
-        crate::hbbs_http::sync::start();
+        // --- BEGIN DIRECT-IP FORK ---
+        // Upstream calls `crate::hbbs_http::sync::start()` here unconditionally. That spins up a
+        // background thread (src/hbbs_http/sync.rs) that periodically syncs sysinfo/account
+        // "strategy options" with an HTTP API server — a second "calling home" channel, separate
+        // from ID registration below. This fork never uses accounts (docs/DECISIONS.md), so it's
+        // never started. See docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md.
+        // --- END DIRECT-IP FORK ---
         #[cfg(target_os = "windows")]
         if crate::platform::is_installed() && crate::is_server() {
             crate::updater::start_auto_update();
@@ -139,6 +155,11 @@ impl RendezvousMediator {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let start_lan_listening = crate::platform::is_installed();
         if start_lan_listening {
+            // Kept running (unchanged from upstream): this is a passive LAN-discovery listener.
+            // It only ever *responds* with this host's public ID when the existing upstream
+            // option `enable-lan-discovery` is enabled; the Direct-IP fork sets that option to
+            // "N" unconditionally in `fork_config.rs::apply()`, so in practice this thread never
+            // discloses the ID even though it still runs. See docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md.
             std::thread::spawn(move || {
                 allow_err!(super::lan::start_listening());
             });
@@ -149,53 +170,28 @@ impl RendezvousMediator {
             crate::platform::linux_desktop_manager::start_xdesktop();
         }
         scrap::codec::test_av1();
-        *LAST_NOT_DEPLOYED_REGISTER.lock().await = None;
+        // --- BEGIN DIRECT-IP FORK ---
+        // Upstream's registration loop lived here: for every server in
+        // `Config::get_rendezvous_servers()` (which — note for anyone re-verifying this after an
+        // upgrade — is NEVER empty; it always falls back to the hardcoded `RENDEZVOUS_SERVERS`
+        // constant, see libs/hbb_common/src/config.rs) it opened a UDP/TCP session and sent
+        // `RegisterPk`/`RegisterPeer` (this host's public ID + public key) on a timer, and reacted
+        // to any `RequestRelay` message that channel received by opening a relay connection
+        // (`handle_request_relay`/`create_relay`, also in this file — both are only ever reached
+        // from that same channel, so removing registration removes relay participation too, with
+        // no separate hook needed).
+        //
+        // This entire loop is permanently removed for the Direct-IP fork: this product never
+        // registers with a rendezvous server and never participates in relay. `direct_server`
+        // (spawned above, independent tokio task) and LAN listening (spawned above) are
+        // unaffected and continue to provide this fork's actual accept path.
+        //
+        // See docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md for rationale and
+        // docs/UPSTREAM_UPGRADE_GUIDE.md for what to re-verify after an upstream version bump.
         loop {
-            let timeout = Arc::new(RwLock::new(CONNECT_TIMEOUT));
-            let conn_start_time = Instant::now();
-            *SOLVING_PK_MISMATCH.lock().await = "".to_owned();
-            if !config::option2bool("stop-service", &Config::get_option("stop-service"))
-                && !crate::platform::installing_service()
-            {
-                let mut futs = Vec::new();
-                let servers = Config::get_rendezvous_servers();
-                SHOULD_EXIT.store(false, Ordering::SeqCst);
-                MANUAL_RESTARTED.store(false, Ordering::SeqCst);
-                for host in servers.clone() {
-                    let server = server.clone();
-                    let timeout = timeout.clone();
-                    futs.push(tokio::spawn(async move {
-                        if let Err(err) = Self::start(server, host).await {
-                            let err = format!("rendezvous mediator error: {err}");
-                            // When user reboot, there might be below error, waiting too long
-                            // (CONNECT_TIMEOUT 18s) will make user think there is bug
-                            if err.contains("10054") || err.contains("11001") {
-                                // No such host is known. (os error 11001)
-                                // An existing connection was forcibly closed by the remote host. (os error 10054): also happens for UDP
-                                *timeout.write().unwrap() = 3000;
-                            }
-                            log::error!("{err}");
-                        }
-                        // SHOULD_EXIT here is to ensure once one exits, the others also exit.
-                        SHOULD_EXIT.store(true, Ordering::SeqCst);
-                    }));
-                }
-                join_all(futs).await;
-            } else {
-                server.write().unwrap().close_connections();
-            }
-            Config::reset_online();
-            let timeout = *timeout.read().unwrap();
-            if !MANUAL_RESTARTED.load(Ordering::SeqCst) {
-                let elapsed = conn_start_time.elapsed().as_millis() as u64;
-                if elapsed < timeout {
-                    sleep(((timeout - elapsed) / 1000) as _).await;
-                }
-            } else {
-                // https://github.com/rustdesk/rustdesk/issues/12233
-                sleep(0.033).await;
-            }
+            sleep(1.).await;
         }
+        // --- END DIRECT-IP FORK ---
     }
 
     fn get_host_prefix(host: &str) -> String {

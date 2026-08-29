@@ -85,7 +85,9 @@ The following must not appear in the user experience:
 - Account workflows
 - Cloud workflows
 
-**Status: implemented (Minimal UI phase, 2026-08-29)** for this fork's own UI on both local and remote clients. Note the caveat recorded in `docs/FEATURE_ENFORCEMENT_MATRIX.md`: this is UI-level, not protocol-level — the underlying rendezvous/relay/account capability in upstream RustDesk is not removed, only never surfaced by this fork's screens.
+**Status: implemented (Minimal UI phase, 2026-08-29)** for this fork's own UI on both local and remote clients.
+
+**Status update (2026-08-29, ADR-0003):** the caveat previously recorded here — "UI-level, not protocol-level" — is now only partly true. Rendezvous registration and relay participation are **removed at the protocol level** (`src/rendezvous_mediator.rs::start_all()`, see `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md`), not just hidden from the UI: `role=remote` no longer registers its public ID with any rendezvous server, and cannot participate in relay (relay has no activation path independent of registration). LAN-discovery ID exposure is closed via the existing `enable-lan-discovery` option. Public-ID *generation* itself (a harmless local value, `Config::get_id()`) and the ID-lookup UI removal remain as previously described — see `docs/FEATURE_ENFORCEMENT_MATRIX.md` for the updated, row-by-row enforcement classification.
 
 ---
 

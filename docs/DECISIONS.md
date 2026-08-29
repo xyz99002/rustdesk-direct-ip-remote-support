@@ -11,6 +11,8 @@
 
 **Status: implemented (Minimal UI phase, 2026-08-29).** `flutter/lib/desktop/pages/connection_page.dart` was rewritten to a plain hostname/IP field plus the Support/Desktop buttons — no peer list, autocomplete, or ID lookup. Account and Network (relay/rendezvous server address) settings tabs are hidden via existing upstream mechanisms (`HARD_SETTINGS["disable-account"]`, `BUILTIN_SETTINGS["hide-network-settings"]`, both set unconditionally in `src/fork_config.rs::apply()`). See `docs/FEATURE_ENFORCEMENT_MATRIX.md` for exactly which of these are UI-only vs. protocol-level.
 
+**Status update (2026-08-29, ADR-0003): now also protocol-level, not just UI-level.** An investigation found that `role=remote` actively registered its public ID with RustDesk's default public rendezvous server and would participate in relay, regardless of the UI changes above — `Config::get_rendezvous_servers()` never returns an empty list (it falls back to a hardcoded public-server constant). `src/rendezvous_mediator.rs::start_all()` now permanently skips rendezvous registration and relay participation for this fork (relay has no independent activation path — it's entirely downstream of registration), and `enable-lan-discovery` is set to `"N"` to close the LAN-broadcast ID-exposure path too. `direct_server` (the direct-IP listener) is unaffected. See `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md` for the full decision record.
+
 ## Authentication
 
 Preserve upstream RustDesk authentication.

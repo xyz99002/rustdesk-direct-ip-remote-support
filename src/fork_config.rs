@@ -21,8 +21,17 @@
 //!   same one `is_disable_account()`/`get_builtin_option()` already read for any other
 //!   RustDesk custom client build. No new Dart-side logic was needed for this.
 //!
-//! No authentication, transport, encryption, password storage, rendezvous, or relay code is
-//! modified or reimplemented here. See `docs/architecture.md` and `docs/upstream-analysis.md`.
+//! - Direct-IP enforcement (unconditional): `Config::set_option("enable-lan-discovery", "N")`
+//!   closes the LAN-broadcast public-ID exposure path in `src/lan.rs` (existing upstream
+//!   option). This complements the rendezvous-registration/relay-participation removal in
+//!   `src/rendezvous_mediator.rs::start_all()` — search that file for "DIRECT-IP FORK". See
+//!   `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md`.
+//!
+//! No authentication, transport, encryption, password storage, or Voice Call/VIEW_CAMERA code
+//! is modified or reimplemented here. Rendezvous registration and relay participation *are*
+//! removed (not modified — the client-side registration loop is deleted), by explicit,
+//! documented decision — see `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md`. See also
+//! `docs/architecture.md` and `docs/upstream-analysis.md`.
 
 use hbb_common::config::{Config, BUILTIN_SETTINGS, HARD_SETTINGS};
 use hbb_common::log;
@@ -387,6 +396,15 @@ pub fn apply(config: &ForkConfig) {
         .unwrap()
         .insert("hide-network-settings".to_owned(), "Y".to_owned());
 
+    // Direct-IP enforcement (unconditional — see docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md).
+    // `enable-lan-discovery` is an existing upstream option (src/lan.rs) gating whether this
+    // host responds to LAN-broadcast discovery pings with its public ID/hostname/username/MAC.
+    // Setting it to "N" here closes that exposure path with zero source changes — the listener
+    // in `src/rendezvous_mediator.rs::start_all()` keeps running but never replies. This
+    // complements, but is independent of, that same file's removal of rendezvous-server
+    // registration and relay participation.
+    Config::set_option("enable-lan-discovery".to_owned(), "N".to_owned());
+
     log::info!(
         "fork_config: applied role={:?} authentication.mode={:?} support_enabled={} desktop_share_enabled={} \
          (conn-type={conn_type}, approve-mode={approve_mode:?})",
@@ -633,6 +651,7 @@ mode = "{mode}"
         original_approve_mode: String,
         original_enable_camera: String,
         original_desktop_share_enabled: String,
+        original_enable_lan_discovery: String,
     }
 
     impl GlobalStateGuard<'_> {
@@ -647,6 +666,7 @@ mode = "{mode}"
                 original_approve_mode: Config::get_option("approve-mode"),
                 original_enable_camera: Config::get_option("enable-camera"),
                 original_desktop_share_enabled: Config::get_option("desktop-share-enabled"),
+                original_enable_lan_discovery: Config::get_option("enable-lan-discovery"),
             }
         }
     }
@@ -666,6 +686,10 @@ mode = "{mode}"
             Config::set_option(
                 "desktop-share-enabled".to_owned(),
                 self.original_desktop_share_enabled.clone(),
+            );
+            Config::set_option(
+                "enable-lan-discovery".to_owned(),
+                self.original_enable_lan_discovery.clone(),
             );
         }
     }
@@ -732,7 +756,7 @@ mode = "{mode}"
     }
 
     #[test]
-    fn apply_hides_account_and_network_settings_unconditionally() {
+    fn apply_hides_account_network_and_lan_discovery_unconditionally() {
         let _guard = GlobalStateGuard::new();
 
         // Unconditional means unconditional: verify it holds for every role/mode/flag
@@ -758,6 +782,7 @@ mode = "{mode}"
                                 .get("hide-network-settings"),
                             Some(&"Y".to_owned())
                         );
+                        assert_eq!(Config::get_option("enable-lan-discovery"), "N");
                     }
                 }
             }

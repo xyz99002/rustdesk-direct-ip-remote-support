@@ -21,19 +21,21 @@ Decisions (frozen):
 
 This reverses two items that were previously planned: the "mandatory first-run password gate" and "harden default-password lockout" work is now explicitly out of scope.
 
-## Connectivity — direct-IP only, enforced at the UI/config layer, not the protocol layer
+## Connectivity — direct-IP only, enforced at the UI/config layer **and**, since ADR-0003, the protocol layer
 
-- **No transport redesign.** `src/rendezvous_mediator.rs`, `src/client.rs`'s connection paths, and all relay/rendezvous logic are preserved unchanged. Upstream transport behavior — including the rendezvous discovery and relay fallback code paths — is not removed, rewritten, or gated behind a new "direct-IP-only" enforcement flag.
-- The direct-IP dial path already exists in upstream (`is_ip_str` / `is_domain_port_str` handling in `src/client.rs`, confirmed in `docs/upstream-analysis.md` §1) and is what this fork's UI exclusively drives.
-- "Direct-IP only" is achieved by **not building UI or configuration surface** for anything else, per `docs/DECISIONS.md`. **Implemented (Minimal UI phase, 2026-08-29):**
+- **Revised 2026-08-29 (ADR-0003), correcting the original premise below.** This section originally stated that `src/rendezvous_mediator.rs` and all relay/rendezvous logic were "preserved unchanged" and that direct-IP-only was "a product-level restriction, not a protocol change." An investigation found that claim was not actually true for `role=remote`: it registered its public ID with RustDesk's default public rendezvous server unconditionally, and would participate in relay if asked. See `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md` for the full decision record; the corrected picture:
+  - `src/rendezvous_mediator.rs::start_all()`'s rendezvous-registration loop and `hbbs_http::sync::start()` call are **permanently removed** (marked inline with `DIRECT-IP FORK` comments) — not gated behind a flag, since "no rendezvous, ever" is unconditional for this whole product.
+  - Relay participation required no separate change: `handle_request_relay`/`create_relay` are only ever reached from the registration session removed above.
+  - `src/client.rs`'s direct-IP dial path (`is_ip_str`/`is_domain_port_str`, confirmed in `docs/upstream-analysis.md` §1), `direct_server` (the direct-IP listener), authentication, and encryption/transport framing are **all unchanged** — only the rendezvous-registration and relay-participation code paths were touched, and only by removal (deletion of a call), not modification of remaining logic.
+- "Direct-IP only" is additionally achieved by **not building UI or configuration surface** for anything else, per `docs/DECISIONS.md`. **Implemented (Minimal UI phase, 2026-08-29):**
   - No public ID display or ID-based connect — `connection_page.dart` rewritten to a plain hostname/IP field.
   - No relay configuration UI — Network settings tab hidden (`BUILTIN_SETTINGS["hide-network-settings"]`).
   - No rendezvous-server configuration UI — same mechanism as above (both live in the same tab upstream).
   - No account-system UI — Account settings tab hidden (`HARD_SETTINGS["disable-account"]`); remote's ID board removed.
   - The only connect input is a hostname/IP field.
-- **Local client:** outbound-only in its UI — it only ever initiates a direct-IP connection; there is no UI path for it to accept inbound sessions.
-- **Remote client:** inbound-only in its UI — it only listens for and accepts incoming direct-IP sessions; there is no UI path for it to initiate an outbound session.
-- Net effect: the upstream engine is capable of more than this (rendezvous, relay, bidirectional roles), but this fork's UI/config never exposes or exercises any of that — direct-IP-only is a product-level restriction, not a protocol change.
+- **Local client:** outbound-only, both in its UI (no accept-inbound path) and at the protocol level (`is_incoming_only()`/`is_outgoing_only()`, unchanged from Phase 3).
+- **Remote client:** inbound-only in its UI, and — as of ADR-0003 — no longer registers with, or is reachable via, any rendezvous/relay server; only the direct-IP listener (`direct_server`) accepts connections.
+- LAN-broadcast ID exposure is separately closed via the existing `enable-lan-discovery` option (`src/fork_config.rs::apply()`), independent of the rendezvous-registration removal above.
 
 ## Connection screen — two independently-flagged buttons (revised 2026-08-28, second revision)
 

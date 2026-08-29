@@ -62,6 +62,15 @@ Verify:
 - `flutter/lib/desktop/pages/desktop_home_page.dart`'s remote status pane still has no ID board, still shows password management (`buildPasswordBoard2`) and connection status (`_ConnectionStatusWidget`), and the Settings gear icon is still shown for both roles (not just `isOutgoingOnly`).
 - `server_page.dart`'s `ConnectionManager`/`_CmHeader`/`_PrivilegeBoard` (connection manager, Voice Call accept/reject) remain untouched — this phase deliberately did not modify them.
 
+### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
+Verify:
+- `src/rendezvous_mediator.rs::start_all()` still has both `--- BEGIN/END DIRECT-IP FORK ---` blocks: the `hbbs_http::sync::start()` call removed, and the registration loop replaced with `loop { sleep(1.).await; }`.
+- No path outside this function calls `RendezvousMediator::start()`/`start_udp()`/`start_tcp()`/`register_pk()`/`register_peer()` directly (re-run `grep -rn "RendezvousMediator::start\(" src/` and confirm the only match is inside `start_all()` itself, now unreachable).
+- `direct_server(...)` and LAN listening are still spawned as independent tasks *before* the removed loop, and both still start successfully for `role=remote`.
+- `Config::set_option("enable-lan-discovery", "N")` is still present in `fork_config.rs::apply()`, and `src/lan.rs`'s ping-response handler still gates the ID-bearing `pong` on that exact option.
+- A `role=remote` instance, monitored at the network level, sends **no** outbound UDP/TCP traffic to any rendezvous server address, and does not respond to a LAN-broadcast discovery ping with its ID.
+- `RendezvousMediator::restart()`'s call sites (`flutter_ffi.rs`, `ipc.rs`, `ui_interface.rs`) still compile — the function itself is intentionally unmodified even though its effect is now inert.
+
 ## Newly Discovered Upgrade Risks (found during Phase 3 implementation)
 
 - **Startup call-order dependency.** The fork's config loader hooks in at `src/core_main.rs:35`, immediately after the existing `crate::load_custom_client();` call inside `pub fn core_main()`, and relies on running before argument parsing and before the inbound-listener/outbound-connect decision. If a future upstream release reorders `core_main()` — e.g. moves argument parsing or server-spawn logic earlier — the fork's role/auth mapping could apply too late (after the listener already started, or after an outbound connect was already permitted). **Upgrade check:** confirm `load_custom_client()` (or its replacement) still runs before all branching in `core_main()`, and re-anchor the fork hook to the same relative position.

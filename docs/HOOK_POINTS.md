@@ -46,6 +46,18 @@ The Support/Desktop redesign (see `docs/architecture.md` "Connection screen") el
 | Remote status pane's ID board | `flutter/lib/desktop/pages/desktop_home_page.dart` (`buildIDBoard`/`buildPopupMenu`, removed) | ID display removed entirely. Its Settings-access popup menu is superseded by making the pre-existing bottom-left gear icon (previously `if (isOutgoingOnly)`-only) show for both roles | Removed 2 methods, widened 1 existing conditional |
 | Remote status pane's connection status | `flutter/lib/desktop/pages/desktop_home_page.dart` (new `_ConnectionStatusWidget`, replacing the deleted `OnlineStatusWidget`) | Kept the status dot/text + "Start service" link (operational, needed for any inbound connection); dropped the public-server guide link (`onUsePublicServerGuide`, `setup_server_tip`) | New, smaller private widget scoped to this file |
 
+## Direct-IP Enforcement (2026-08-29, ADR-0003 — rendezvous registration and relay participation removed)
+
+| Hook | Location | Fork usage | Modification |
+|---|---|---|---|
+| `RendezvousMediator::start_all()` | `src/rendezvous_mediator.rs:123-192` (function bounds after this change) | Two removals, both marked inline with `--- BEGIN/END DIRECT-IP FORK ---` comments: (1) `crate::hbbs_http::sync::start()` call removed; (2) the per-server registration loop replaced with `loop { sleep(1.).await; }`, mirroring the pre-existing `is_outgoing_only()` guard's exact pattern two lines above it | **Real code removal** — the only non-config-reuse change made across this whole fork so far. See `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md`. |
+| `Config::get_rendezvous_servers()` | `libs/hbb_common/src/config.rs:936-961` | Read-only dependency: confirms this list is *never* empty (falls back to hardcoded `RENDEZVOUS_SERVERS`), which is *why* code removal was needed instead of a config trick | None |
+| `is_outgoing_only()` guard pattern | `src/rendezvous_mediator.rs:125-129` (pre-existing, unchanged) | Reused as the template for the new removal — same `loop { sleep(1.).await; }` idiom | None — copied the pattern, didn't touch the original guard |
+| `handle_request_relay()`/`create_relay()` | `src/rendezvous_mediator.rs` (function bodies unchanged, left in place but now unreachable) | No hook needed — both are only ever reached from the registration session removed above | None (dead code, deliberately not deleted — see ADR-0003 "What was explicitly NOT touched") |
+| `enable-lan-discovery` config option | `src/lan.rs:39-42` (read side, unmodified) | Fork writes `Config::set_option("enable-lan-discovery", "N")` unconditionally in `fork_config.rs::apply()` | None — existing upstream option, pure config reuse |
+| `RendezvousMediator::restart()` | `src/flutter_ffi.rs`, `src/ipc.rs`, `src/ui_interface.rs` (several call sites, all unmodified) | Now an inert no-op for this fork (sets two atomics nothing reads anymore, since the loop that read them is gone) | None — call sites unchanged, function body unchanged, only its effect changed as a consequence of the `start_all()` edit |
+| `std::sync::RwLock`, `hbb_common::futures::future::join_all` imports | `src/rendezvous_mediator.rs:1-19` | Removed — both were only used by the deleted registration loop | Import cleanup, not a functional change |
+
 ## Not yet mapped (future phases)
 
 - `listen_address`/`listen_port` wiring — Direct-IP transport phase.
