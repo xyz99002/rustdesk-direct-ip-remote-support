@@ -1,3 +1,5 @@
+> **2026-08-28 — requirements frozen.** The "Consequence" notes below in §1 and §3 (mandatory password gate, lockout hardening, removing rendezvous/relay) have been reversed by a subsequent decision: authentication and transport are now preserved exactly as upstream implements them. See `docs/architecture.md` (final) and `docs/DECISIONS.md` for the current authoritative decisions. The factual findings themselves (what the source actually does) remain accurate and are still the basis for `docs/architecture.md`.
+
 # Phase 2 — Upstream Analysis
 
 Scope: `PROMPTS/PHASE_02_UPSTREAM_ANALYSIS.md` — "Clone official RustDesk. Record tag/commit. Analyze networking, media, auth, packaging, licensing."
