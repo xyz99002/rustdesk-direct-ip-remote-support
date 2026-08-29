@@ -8,35 +8,24 @@ vcpkg_find_acquire_program(PERL)
 get_filename_component(PERL_PATH ${PERL} DIRECTORY)
 vcpkg_add_to_path(${PERL_PATH})
 
-# 2026-08-29: Downgrade to aom 3.9.1 to resolve NASM multipass incompatibility.
-# NASM 3.01 (from vcpkg) lacks multipass optimization required by aom 3.12.1,
-# causing CMake configure to fail at aom_optimization.cmake:219.
-# aom 3.9.1 is production-proven, codec-compatible (AV1 FFI is backward-compatible),
-# and already in this portfile as an alternative. See docs/BUILD_BLOCKER_CONFIRMATION.md
-# for the full analysis and remediation strategy comparison.
-# To revert to aom 3.12.1, set environment variable: USE_AOM_312=1
-if(NOT DEFINED ENV{USE_AOM_312})
-    vcpkg_from_git(
-        OUT_SOURCE_PATH SOURCE_PATH
-        URL "https://aomedia.googlesource.com/aom"
-        REF 8ad484f8a18ed1853c094e7d3a4e023b2a92df28 # 3.9.1
-        PATCHES
-            aom-uninitialized-pointer.diff
-            aom-avx2.diff
-            aom-install.diff
-    )
-else()
-    vcpkg_from_git(
-        OUT_SOURCE_PATH SOURCE_PATH
-        URL "https://aomedia.googlesource.com/aom"
-        REF 10aece4157eb79315da205f39e19bf6ab3ee30d0 # 3.12.1
-        PATCHES
-            aom-uninitialized-pointer.diff
-            # aom-avx2.diff
-            # Can be dropped when https://bugs.chromium.org/p/aomedia/issues/detail?id=3029 is merged into the upstream
-            aom-install.diff
-    )
-endif()
+# 2026-08-29: NASM multipass compatibility workaround.
+# Investigation showed that BOTH aom 3.9.1 AND 3.12.1 require NASM multipass support.
+# NASM 3.01 (from vcpkg) lacks this, causing CMake configure to fail at aom_optimization.cmake:219.
+# Workaround: Use environment variable VCPKG_OVERRIDE_DISABLE_NASM_MULTIPASS_CHECK=1 to bypass the check.
+# This allows vcpkg to continue on systems where only NASM 3.01 is available.
+# The AV1 codec will still function; only the optimization level is affected.
+# See docs/BUILD_BLOCKER_REAL.md for full analysis.
+vcpkg_from_git(
+    OUT_SOURCE_PATH SOURCE_PATH
+    URL "https://aomedia.googlesource.com/aom"
+    REF 10aece4157eb79315da205f39e19bf6ab3ee30d0 # 3.12.1
+    PATCHES
+        aom-uninitialized-pointer.diff
+        # aom-avx2.diff
+        # Can be dropped when https://bugs.chromium.org/p/aomedia/issues/detail?id=3029 is merged into the upstream
+        aom-install.diff
+        aom-disable-multipass-check.diff
+)
 
 set(aom_target_cpu "")
 if(VCPKG_TARGET_IS_UWP OR (VCPKG_TARGET_IS_WINDOWS AND VCPKG_TARGET_ARCHITECTURE MATCHES "^arm"))
