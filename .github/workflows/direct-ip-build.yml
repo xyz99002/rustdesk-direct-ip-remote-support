@@ -1,0 +1,221 @@
+name: Direct-IP Build
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
+  push:
+    branches:
+      - feature/direct-ip-fork
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
+
+env:
+  RUST_VERSION: "1.75"
+  FLUTTER_VERSION: "3.24.5"
+  LLVM_VERSION: "15.0.6"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  # vcpkg version: 2025.08.27
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VERSION: "1.4.9"
+
+jobs:
+  # Windows x64 Flutter Build: Direct-IP primary UI target
+  build-windows-direct-ip:
+    name: Windows x64 (Flutter)
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x86_64
+            flutter-arch: x64
+            vcpkg-triplet: x64-windows-static
+
+    steps:
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Checkout source code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@ebc0426251bc40c7cd31162802432c68818ab8f0 # v2.0.9
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install flutter
+        id: flutter
+        uses: subosito/flutter-action@2783a3f08e1baf891508463f8c6653c258246225 # v2.12.0
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          architecture: x64
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ matrix.target }}
+          components: "rustfmt"
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          prefix-key: ${{ runner.os }}
+
+      - name: Setup vcpkg with Github Actions binary cache
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: ${{ matrix.vcpkg-triplet }}
+        run: |
+          if ! $VCPKG_ROOT/vcpkg `
+            install `
+            --triplet ${{ matrix.vcpkg-triplet }} `
+            --x-install-root="$VCPKG_ROOT/installed"; then
+            Get-ChildItem -Path "$VCPKG_ROOT/" -Filter "*.log" -Recurse | ForEach-Object {
+              Write-Host "=== $($_.FullName) ==="
+              Get-Content $_.FullName | Select-Object -First 50
+              Write-Host ""
+            }
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Build rustdesk
+        run: |
+          python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec
+          mv ./flutter/build/windows/${{ matrix.flutter-arch }}/runner/Release ./rustdesk
+
+      - name: Upload Windows Build Artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rustdesk-direct-ip-windows-${{ matrix.arch }}
+          path: rustdesk
+          if-no-files-found: warn
+
+  # Linux x86_64 Cargo Build: Direct-IP headless support
+  build-linux-direct-ip:
+    name: Linux x86_64
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: x86_64
+            vcpkg-triplet: x64-linux
+
+    steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: false
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Checkout source code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Install prerequisites
+        shell: bash
+        run: |
+          sudo apt-get -y update
+          sudo apt-get install -y \
+             clang \
+             cmake \
+             curl \
+             gcc \
+             git \
+             g++ \
+             libpam0g-dev \
+             libasound2-dev \
+             libunwind-dev \
+             libgstreamer1.0-dev \
+             libgstreamer-plugins-base1.0-dev \
+             libgtk-3-dev \
+             libpulse-dev \
+             libva-dev \
+             libvdpau-dev \
+             libxcb-randr0-dev \
+             libxcb-shape0-dev \
+             libxcb-xfixes0-dev \
+             libxdo-dev \
+             libxfixes-dev \
+             nasm \
+             wget
+
+      - name: Setup vcpkg with Github Actions binary cache
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+
+      - name: Install vcpkg dependencies
+        run: |
+          $VCPKG_ROOT/vcpkg install --x-install-root="$VCPKG_ROOT/installed"
+        shell: bash
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ matrix.target }}
+          components: "rustfmt"
+
+      - name: Show version information (Rust, cargo, GCC)
+        shell: bash
+        run: |
+          gcc --version || true
+          rustup -V
+          rustup toolchain list
+          rustup default
+          cargo -V
+          rustc -V
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Build
+        shell: bash
+        run: |
+          cargo build --locked --target=${{ matrix.target }} --release
+
+      - name: Run tests
+        shell: bash
+        run: |
+          cargo test --locked --target=${{ matrix.target }} --release -- --test-threads 1
+
+      - name: Upload Linux Build Artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rustdesk-direct-ip-linux-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/release/rustdesk
+          if-no-files-found: warn
