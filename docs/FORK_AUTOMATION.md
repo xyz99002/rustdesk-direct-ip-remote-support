@@ -17,12 +17,10 @@ Treat the fork as a configuration and UI transformation layer instead of a trans
 ## Fork Profile Concepts
 Configuration file format: TOML (confirmed 2026-08-28; reuses the `toml`/`confy` crates already in the dependency graph via `hbb_common` — no new dependency). Any YAML-fenced example elsewhere in the doc set is illustrative only, not the actual format.
 
-Configuration should define:
+Configuration should define (revised 2026-08-28 — `support_enabled` replaces `camera enablement`/`audio enablement`/`desktop enablement`, which have no referent under the Support/Desktop button model):
 - role
 - authentication mode
-- camera enablement
-- audio enablement
-- desktop enablement
+- support_enabled (gates Support button visibility)
 
 ## Stable Integration Points
 ### Role Control
@@ -50,13 +48,22 @@ Use upstream:
 - `hbb_common::config::Config::path<P>(p: P) -> PathBuf` — `libs/hbb_common/src/config.rs:783-804` — OS-appropriate config directory resolution, reusable for a fork-owned config file without colliding with `config2.toml` (which is keyed off `APP_NAME`).
 - `hbb_common::config::load_path<T>`/`store_path<T>` — `libs/hbb_common/src/config.rs:558-591` — generic TOML (via `confy`) load/store for any serde struct. Not used as-is for the fork's own loader (it silently falls back to `T::default()` on any error, missing-file or malformed-file alike, which isn't precise enough for real validation) — but confirms `toml`/`confy` are already resolved in the workspace via `hbb_common`, so adding `toml = "0.7"` directly to the root crate's `Cargo.toml` introduces no new external dependency.
 
-### Session Orchestration
-Single user action starts:
-- camera
-- audio
-- optional desktop
+### Connection Workflow (revised 2026-08-28 — formerly "Session Orchestration")
+Two buttons, each a single existing upstream session mechanism — not a combined action:
+- **Desktop** → one `DEFAULT_CONN` session. Standard upstream behavior, unmodified.
+- **Support** → one `DEFAULT_CONN` + one `VIEW_CAMERA` session, opened together, gated on `support_enabled`.
 
-Not yet implemented (Phase 3 covers configuration/role only) — `ConnType::VIEW_CAMERA` and `ConnType::DEFAULT_CONN` (desktop) are mutually exclusive upstream connection types (`src/client.rs:2745-2751`), so this will require opening two connections behind one UI action, not a new combined `ConnType`. See `docs/upstream-analysis.md` §4.
+`ConnType::VIEW_CAMERA` and `ConnType::DEFAULT_CONN` are separate upstream connection types (`src/client.rs:2745-2751`) that already support running concurrently to the same peer (distinct `SessionID`s, confirmed in `docs/session-orchestration-analysis.md` §4) — so Support is simply "open both," not a new combined `ConnType`. **No server-side media/audio change is needed**: an earlier design (single "Start Session" launching camera+audio together) would have required a small `src/server.rs`/`src/server/connection.rs` change to give `VIEW_CAMERA` sessions audio (investigated in `docs/session-orchestration-analysis.md` §6-7 — the capability already exists upstream but is never triggered by the current client); the Support/Desktop model avoids needing that entirely because `DEFAULT_CONN` already carries audio.
+
+### Recreating Support mode on a future upstream release
+This is UI-layer wiring only — no server/media code to reapply:
+1. Confirm `ConnType::VIEW_CAMERA` and `ConnType::DEFAULT_CONN` still exist and can still run as concurrent, independent sessions to the same peer (`docs/HOOK_POINTS.md` "Connection Workflow" rows).
+2. Confirm `flutter/lib/common.dart`'s `connect()` (or its renamed/moved equivalent) still accepts an `isViewCamera` flag and still dispatches to the camera vs. desktop window/page paths independently.
+3. Re-wire the connection screen's Desktop button to the plain `connect()` call, and the Support button (rendered only when `support_enabled = true`) to both the plain and `isViewCamera: true` calls, for the same target host.
+4. Confirm audio still flows automatically for `DEFAULT_CONN` (i.e. `try_sub_monitor_services`/`audio_enabled()` in `src/server/connection.rs` still exists with the same gating) — if upstream changes this, Support's audio depends on it exactly as much as a stock desktop connection does, no more.
+5. Run the regression checklist in `docs/UPSTREAM_UPGRADE_GUIDE.md`.
+
+**Maintenance risk:** low, by design — this workflow deliberately avoids touching server-side media/audio code, so the maintenance burden is limited to the Dart connection-screen widget and the two existing FFI call sites it drives, both already stable, documented integration points.
 
 ## Files Expected To Change Across Upgrades
 - UI entry screens

@@ -35,15 +35,18 @@ This reverses two items that were previously planned: the "mandatory first-run p
 - **Remote client:** inbound-only in its UI — it only listens for and accepts incoming direct-IP sessions; there is no UI path for it to initiate an outbound session.
 - Net effect: the upstream engine is capable of more than this (rendezvous, relay, bidirectional roles), but this fork's UI/config never exposes or exercises any of that — direct-IP-only is a product-level restriction, not a protocol change.
 
-## Session startup — one button, two possible connections underneath
+## Connection screen — two buttons, two independent upstream session mechanisms (revised 2026-08-28)
 
-Per `docs/DECISIONS.md` and consistent with the `ConnType` findings in `docs/upstream-analysis.md` §4 (camera-view and desktop-control are mutually exclusive connection types upstream):
+**Supersedes the single "Start Session" model below.** Per `docs/DECISIONS.md` and `docs/FORK_PROFILE_SPEC.md`, and informed by the audio-on-camera investigation in `docs/session-orchestration-analysis.md` §7-8:
 
-- A single **Start Session** action on the local client always starts:
-  - camera (a `VIEW_CAMERA` connection)
-  - audio (the `Permission::Audio` bit on that connection)
-- The same action additionally starts a desktop/control connection (`DEFAULT_CONN`) when the remote side has `desktop_enabled=true` configured.
-- This does not require a new combined `ConnType` in the protocol — the local client opens the camera+audio connection always, and conditionally opens a second desktop connection, both behind the one button, per the "smallest valid diff" principle in `AGENTS.md`.
+- **Desktop button** → one standard upstream `DEFAULT_CONN` session. No camera. Every upstream capability (keyboard, mouse, clipboard, file transfer, audio) works exactly as it does in stock RustDesk — no modifications to transport, authentication, permission negotiation, audio routing, encryption, or protocol messages. Always shown.
+- **Support button** → one `DEFAULT_CONN` session + one `VIEW_CAMERA` session, opened together as one user action, using the existing session-establishment mechanisms already documented in `docs/session-orchestration-analysis.md` §4 (each gets its own `SessionID`, both can run concurrently to the same peer — already supported, no session-model changes needed). Audio is carried entirely by the `DEFAULT_CONN` half, using standard upstream audio routing. Rendered only when `support_enabled = true`; must not render at all when disabled.
+- **Why this avoids the camera+audio problem entirely:** the investigation in `docs/session-orchestration-analysis.md` §7 found that upstream's server-side machinery to give a `VIEW_CAMERA` session audio exists but is never triggered by the current client UI (a default-value gap, not a protocol block) — see §8 below for why the Support/Desktop design sidesteps needing to fix that at all: audio needs come from `DEFAULT_CONN`, which already has full audio support, so `VIEW_CAMERA`'s lack of automatic audio is simply irrelevant to this design.
+- No new `ConnType`, no audio-service changes, no changes to `is_remote()`/`try_sub_monitor_services()`/`add_camera_connection()` — the two sessions are opened independently, each exactly as upstream already supports.
+
+### Session Startup (superseded, kept for history)
+
+~~A single Start Session action always starts camera+audio, and additionally desktop when `desktop_enabled=true`, requiring camera and audio to combine on one `VIEW_CAMERA` connection.~~ Replaced by the Support/Desktop model above specifically because combining audio onto `VIEW_CAMERA` would have required a server-side change (see the now-superseded §6 investigation in `docs/session-orchestration-analysis.md`), whereas Support/Desktop achieves the same product goal using `DEFAULT_CONN` for anything that needs audio — zero server-side media changes.
 
 ## Configuration — TOML, versioned
 
@@ -60,9 +63,7 @@ Full schema (per `docs/FORK_PROFILE_SPEC.md`'s "Configuration Profile" and `CLAU
 version = 1
 role = "local"
 
-camera_enabled = true
-audio_enabled = true
-desktop_enabled = false
+support_enabled = true
 
 listen_address = "0.0.0.0"
 listen_port = 21118
@@ -76,7 +77,9 @@ log_level = "info"
 mode = "ask"
 ```
 
-Phase 3 (Configuration and Role Restriction) implements loading and validation of the full schema above, but only wires `version`, `role`, and `authentication.mode` to actual behavior — see the mapping tables above. The remaining keys (`camera_enabled`, `audio_enabled`, `desktop_enabled`, `listen_address`, `listen_port`, `video_quality`, `audio_quality`, `log_level`) are parsed and type/range-validated now so the file format doesn't need a breaking version bump later, but are inert until their owning phase (Media, Direct-IP transport, minimal UI) wires them up.
+**Revised 2026-08-28:** `support_enabled` replaces `camera_enabled`/`audio_enabled`/`desktop_enabled` from the schema Phase 3 originally implemented. Under the Support/Desktop model neither has a remaining referent: Desktop is unconditionally available (no gate needed), and Support unconditionally launches both `DEFAULT_CONN` and `VIEW_CAMERA` when enabled (no independent camera/audio toggle) — proposed as an assumption of this revision, pending confirmation (see `docs/FORK_PROFILE_SPEC.md`'s Configuration Profile). `listen_address`, `listen_port`, `video_quality`, `audio_quality`, `log_level` are unaffected and remain reserved for the Direct-IP transport and minimal-UI phases.
+
+Phase 3 (Configuration and Role Restriction, accepted) implements loading and validation of a config schema and wires `version`, `role`, and `authentication.mode` to actual behavior — see the mapping tables above. This revision (Connection Workflow) adds `support_enabled`, wired to Support-button visibility, and drops the three now-unused keys from required validation.
 
 ## Upstream baseline
 

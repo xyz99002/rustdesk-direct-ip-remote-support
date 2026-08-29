@@ -43,11 +43,12 @@ Verify outbound-only behavior still works.
 ### Remote Client
 Verify inbound-only behavior still works.
 
-### Session Startup
-Verify Start Session launches:
-- camera
-- audio
-- desktop when enabled
+### Connection Workflow (revised 2026-08-28 — formerly "Session Startup")
+Verify:
+- Desktop button still launches a standard `DEFAULT_CONN` session with all upstream capabilities (keyboard, mouse, clipboard, file transfer, audio) intact and unmodified.
+- Support button still launches `DEFAULT_CONN` + `VIEW_CAMERA` together, and is hidden entirely (not just disabled) when `support_enabled = false`.
+- `ConnType::VIEW_CAMERA` and `ConnType::DEFAULT_CONN` can still run concurrently to the same peer (independent `SessionID`s) — this is the load-bearing upstream behavior the whole Support design depends on.
+- No server-side audio/media code was touched by this fork — confirm that remains true after the upgrade (see `docs/HOOK_POINTS.md` "Connection Workflow" section; the withdrawn `add_camera_connection()`/`try_sub_camera_displays()` rows should stay withdrawn unless a future investigation proves them necessary again).
 
 ## Newly Discovered Upgrade Risks (found during Phase 3 implementation)
 
@@ -75,9 +76,9 @@ A clean `cargo build`/`cargo test` of the full `rustdesk` binary on this Windows
 - ask mode works.
 - password mode works.
 - ask_and_password mode works.
-- Camera works.
-- Audio works.
-- Desktop obeys configuration.
+- Desktop button: standard `DEFAULT_CONN` session, all upstream capabilities (keyboard, mouse, clipboard, file transfer, audio) work unmodified.
+- Support button: `DEFAULT_CONN` + `VIEW_CAMERA` both establish, audio flows on the `DEFAULT_CONN` half exactly as a stock desktop connection.
+- Support button does not render when `support_enabled = false`.
 
 ## Release Acceptance
 Upgrade is accepted only if all checks pass.

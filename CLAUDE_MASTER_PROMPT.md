@@ -74,15 +74,25 @@ Purpose:
 
 
 
-UI:
+UI (revised 2026-08-28 — supersedes the single Start Session button):
 
 
 
 ```text
 
-\[ Hostname / IP Address ] \[ Start Session ]
+\[ Hostname / IP Address ]
+
+
+
+\[ Support ]
+
+\[ Desktop ]
 
 ```
+
+
+
+`Support` is rendered only when `support_enabled = true` in configuration; it must not appear at all otherwise. `Desktop` is always shown.
 
 
 
@@ -380,65 +390,39 @@ ask\_and\_password
 
 
 
-\# Session Startup
+\# Connection Screen (revised 2026-08-28 — supersedes "Session Startup" below)
 
 
 
-The Local Client exposes one button:
+The Local Client exposes two buttons:
 
 
 
 ```text
 
-Start Session
+Support
+
+Desktop
 
 ```
 
 
 
-When pressed:
+\- \*\*Desktop\*\* — launches a single, standard upstream `DEFAULT_CONN` session. No camera. All upstream capabilities (keyboard, mouse, clipboard, file transfer, audio) remain available exactly as upstream implements them. Always shown.
+
+\- \*\*Support\*\* — launches `DEFAULT_CONN` + `VIEW_CAMERA` together (two existing upstream session mechanisms, opened as one user action). Audio is carried entirely by the `DEFAULT_CONN` half using standard upstream audio routing — no `VIEW_CAMERA` audio changes are made. Rendered only when `support_enabled = true`; must not appear at all when disabled.
 
 
 
-Always launch:
+No audio-path, transport, authentication, encryption, or protocol modifications are used or required for either button — both reuse existing session mechanisms as-is.
 
 
 
-\- Camera session
-
-\- Two-way audio session
+\#\# Session Startup (superseded, kept for history)
 
 
 
-When enabled:
-
-
-
-Examples are illustrative; actual implementation uses TOML.
-
-
-
-```toml
-
-desktop_enabled = true
-
-```
-
-
-
-also launch:
-
-
-
-\- Desktop session
-
-
-
-Multiple RustDesk session types may be created internally.
-
-
-
-The user should experience a single action.
+~~The Local Client exposes one button, Start Session, which always launches a camera session and two-way audio session, and additionally a desktop session when `desktop_enabled = true`.~~ Replaced by the Support/Desktop model above, which avoids combining audio onto a camera session — see `docs/session-orchestration-analysis.md` §7-8 for why that combination isn't needed.
 
 
 
@@ -470,11 +454,7 @@ role = "local"
 
 
 
-camera_enabled = true
-
-audio_enabled = true
-
-desktop_enabled = false
+support_enabled = true
 
 
 
@@ -501,6 +481,8 @@ mode = "ask"
 ```
 
 Note: `[authentication]` must be the last section in the file — in TOML, every `key = value` line after a `[table]` header belongs to that table, not the top level. This ordering was verified by `src/fork_config.rs`'s own test suite.
+
+Revised 2026-08-28: `support_enabled` replaces `camera_enabled`/`audio_enabled`/`desktop_enabled` (see `docs/FORK_PROFILE_SPEC.md`'s Configuration Profile for the rationale — proposed as an assumption pending confirmation).
 
 
 
@@ -556,7 +538,7 @@ Must:
 
 \- provide hostname/IP input
 
-\- provide Start Session button
+\- provide Desktop button (always shown) and Support button (shown only when `support_enabled = true`)
 
 
 
@@ -892,7 +874,7 @@ Create tests.
 
 
 
-Session Orchestration
+Connection Workflow (revised 2026-08-28; formerly "Session Orchestration")
 
 
 
@@ -900,15 +882,13 @@ Implement:
 
 
 
-\- Camera startup
+\- Desktop button -> `DEFAULT_CONN` (standard upstream behavior, no camera)
 
-\- Audio startup
-
-\- Optional desktop startup
+\- Support button -> `DEFAULT_CONN` + `VIEW_CAMERA` together, rendered only when `support_enabled = true`
 
 
 
-from one button press.
+using existing upstream session mechanisms — no new session type, no audio-path changes.
 
 
 
@@ -938,7 +918,11 @@ Replace user experience with:
 
 ```text
 
-\[ Host/IP ] \[ Start Session ]
+\[ Host/IP ]
+
+\[ Support ]  (only when support_enabled = true)
+
+\[ Desktop ]
 
 ```
 
@@ -1130,25 +1114,23 @@ Verify:
 
 
 
-✅ Start Session launches:
+✅ Desktop button launches a standard upstream `DEFAULT_CONN` session (keyboard, mouse, clipboard, file transfer, audio all working unmodified).
 
 
 
-\- Camera
-
-\- Audio
-
-
-
-✅ Desktop launches when (illustrative; actual implementation uses TOML):
+✅ Support button launches `DEFAULT_CONN` + `VIEW_CAMERA` together, only when (illustrative; actual implementation uses TOML):
 
 
 
 ```toml
 
-desktop_enabled = true
+support_enabled = true
 
 ```
+
+
+
+and the button does not render at all when `support_enabled = false`.
 
 
 
