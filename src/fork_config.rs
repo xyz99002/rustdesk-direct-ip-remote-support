@@ -13,11 +13,18 @@
 //! - `support_enabled` -> `hbb_common::config::Config::set_option("enable-camera", ...)`, which
 //!   upstream's own login handler (`src/server/connection.rs:2544-2551`) already reads to
 //!   accept/reject `VIEW_CAMERA` (and therefore Voice Call, which rides on it) connections.
+//! - Minimal UI (unconditional, not config-driven): `HARD_SETTINGS["disable-account"]` and
+//!   `BUILTIN_SETTINGS["hide-network-settings"]` are set so the Flutter UI's own existing
+//!   conditionals (`DesktopSettingPage.tabKeys` in `flutter/lib/desktop/pages/
+//!   desktop_setting_page.dart`) hide the Account and Network (relay/rendezvous server
+//!   address) settings tabs — reusing upstream's own custom-client hiding mechanism, the
+//!   same one `is_disable_account()`/`get_builtin_option()` already read for any other
+//!   RustDesk custom client build. No new Dart-side logic was needed for this.
 //!
 //! No authentication, transport, encryption, password storage, rendezvous, or relay code is
 //! modified or reimplemented here. See `docs/architecture.md` and `docs/upstream-analysis.md`.
 
-use hbb_common::config::{Config, HARD_SETTINGS};
+use hbb_common::config::{Config, BUILTIN_SETTINGS, HARD_SETTINGS};
 use hbb_common::log;
 use serde_derive::Deserialize;
 use std::path::PathBuf;
@@ -361,6 +368,25 @@ pub fn apply(config: &ForkConfig) {
         .to_owned(),
     );
 
+    // Minimal UI (unconditional — not gated on any config field, since this is a permanent
+    // product decision per docs/FORK_PROFILE_SPEC.md, not a runtime toggle): hide the Account
+    // and Network (relay/rendezvous server address) settings tabs by reusing the exact
+    // mechanism upstream already provides for any custom-client build. Read by
+    // `hbb_common::config::is_disable_account()` and `common::get_builtin_option()`
+    // respectively; both are plain `pub static` maps upstream already exposes, same pattern as
+    // `HARD_SETTINGS`. Note: like everything else in `apply()`, this only takes effect when a
+    // valid `fork_config.toml` is present — an absent/invalid file falls back to pure upstream
+    // behavior (including the Account/Network tabs being visible), consistent with
+    // `load_and_apply()`'s existing fail-safe fallback documented below.
+    HARD_SETTINGS
+        .write()
+        .unwrap()
+        .insert("disable-account".to_owned(), "Y".to_owned());
+    BUILTIN_SETTINGS
+        .write()
+        .unwrap()
+        .insert("hide-network-settings".to_owned(), "Y".to_owned());
+
     log::info!(
         "fork_config: applied role={:?} authentication.mode={:?} support_enabled={} desktop_share_enabled={} \
          (conn-type={conn_type}, approve-mode={approve_mode:?})",
@@ -596,13 +622,14 @@ mode = "{mode}"
     // should surface as failures in subsequent tests, not be silently ignored.
     static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// Serializes access to, and restores, `HARD_SETTINGS` and the `approve-mode`/`enable-camera`/
-    /// `desktop-share-enabled` CONFIG2 options around each test that calls `apply()`, so tests
-    /// don't race or leak global state into each other or into other test modules in the same
-    /// process.
+    /// Serializes access to, and restores, `HARD_SETTINGS`, `BUILTIN_SETTINGS`, and the
+    /// `approve-mode`/`enable-camera`/`desktop-share-enabled` CONFIG2 options around each test
+    /// that calls `apply()`, so tests don't race or leak global state into each other or into
+    /// other test modules in the same process.
     struct GlobalStateGuard<'a> {
         _lock: std::sync::MutexGuard<'a, ()>,
         original_hard_settings: std::collections::HashMap<String, String>,
+        original_builtin_settings: std::collections::HashMap<String, String>,
         original_approve_mode: String,
         original_enable_camera: String,
         original_desktop_share_enabled: String,
@@ -616,6 +643,7 @@ mode = "{mode}"
             Self {
                 _lock: lock,
                 original_hard_settings: HARD_SETTINGS.read().unwrap().clone(),
+                original_builtin_settings: BUILTIN_SETTINGS.read().unwrap().clone(),
                 original_approve_mode: Config::get_option("approve-mode"),
                 original_enable_camera: Config::get_option("enable-camera"),
                 original_desktop_share_enabled: Config::get_option("desktop-share-enabled"),
@@ -626,6 +654,7 @@ mode = "{mode}"
     impl Drop for GlobalStateGuard<'_> {
         fn drop(&mut self) {
             *HARD_SETTINGS.write().unwrap() = self.original_hard_settings.clone();
+            *BUILTIN_SETTINGS.write().unwrap() = self.original_builtin_settings.clone();
             Config::set_option(
                 "approve-mode".to_owned(),
                 self.original_approve_mode.clone(),
@@ -700,5 +729,38 @@ mode = "{mode}"
         let cfg = parse_str(&valid_toml_with_modes("local", "ask", true, false)).unwrap();
         apply(&cfg);
         assert_eq!(Config::get_option("desktop-share-enabled"), "N");
+    }
+
+    #[test]
+    fn apply_hides_account_and_network_settings_unconditionally() {
+        let _guard = GlobalStateGuard::new();
+
+        // Unconditional means unconditional: verify it holds for every role/mode/flag
+        // combination, not just one.
+        for role in ["local", "remote"] {
+            for mode in ["ask", "password", "ask_and_password"] {
+                for support in [true, false] {
+                    for desktop in [true, false] {
+                        if !support && !desktop {
+                            continue; // invalid combination, rejected by validate()
+                        }
+                        let cfg = parse_str(&valid_toml_with_modes(role, mode, support, desktop))
+                            .unwrap();
+                        apply(&cfg);
+                        assert_eq!(
+                            HARD_SETTINGS.read().unwrap().get("disable-account"),
+                            Some(&"Y".to_owned())
+                        );
+                        assert_eq!(
+                            BUILTIN_SETTINGS
+                                .read()
+                                .unwrap()
+                                .get("hide-network-settings"),
+                            Some(&"Y".to_owned())
+                        );
+                    }
+                }
+            }
+        }
     }
 }

@@ -11,7 +11,6 @@ import 'package:flutter_hbb/common/widgets/custom_password.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/pages/connection_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
-import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/widgets/update_progress.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/server_model.dart';
@@ -34,6 +33,124 @@ class DesktopHomePage extends StatefulWidget {
 }
 
 const borderColor = Color(0xFF2F65BA);
+
+/// Fork: minimal replacement for upstream's `OnlineStatusWidget` (which lived in
+/// connection_page.dart, now removed along with the rest of that file's peer-list UI).
+/// Keeps "connection status" (Keep, per docs/FORK_PROFILE_SPEC.md "Remote Client") — the
+/// colored status dot, status text, and "Start service" link (needed to accept *any* inbound
+/// connection, direct-IP included, so it's operational status, not "public server messaging").
+/// Drops the public-server guide link/tip that the original widget also showed, which was
+/// specifically about upstream's public rendezvous server (Remove, per the same spec section).
+class _ConnectionStatusWidget extends StatefulWidget {
+  const _ConnectionStatusWidget({Key? key, this.onSvcStatusChanged})
+      : super(key: key);
+
+  final VoidCallback? onSvcStatusChanged;
+
+  @override
+  State<_ConnectionStatusWidget> createState() =>
+      _ConnectionStatusWidgetState();
+}
+
+class _ConnectionStatusWidgetState extends State<_ConnectionStatusWidget> {
+  final _svcStopped = Get.find<RxBool>(tag: 'stop-service');
+  Timer? _updateTimer;
+
+  double get em => 14.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _updateTimer = periodic_immediate(Duration(seconds: 1), () async {
+      updateStatus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _updateTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    startServiceWidget() => Offstage(
+          offstage: !_svcStopped.value,
+          child: InkWell(
+                  onTap: () async {
+                    await start_service(true);
+                  },
+                  child: Text(translate("Start service"),
+                      style: TextStyle(
+                          decoration: TextDecoration.underline, fontSize: em)))
+              .marginOnly(left: em),
+        );
+
+    return Container(
+      height: em * 3,
+      child: Obx(() => Column(
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Container(
+                    height: 8,
+                    width: 8,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(4),
+                      color: _svcStopped.value ||
+                              stateGlobal.svcStatus.value ==
+                                  SvcStatus.connecting
+                          ? kColorWarn
+                          : (stateGlobal.svcStatus.value == SvcStatus.ready
+                              ? Color.fromARGB(255, 50, 190, 166)
+                              : Color.fromARGB(255, 224, 79, 95)),
+                    ),
+                  ).marginSymmetric(horizontal: em),
+                  Container(width: 226, child: _buildConnStatusMsg()),
+                ],
+              ),
+              Align(
+                      child: startServiceWidget(),
+                      alignment: Alignment.centerLeft)
+                  .marginOnly(top: 2.0, left: 22.0),
+            ],
+          )),
+    ).paddingOnly(right: 8);
+  }
+
+  _buildConnStatusMsg() {
+    widget.onSvcStatusChanged?.call();
+    return Text(
+      _svcStopped.value
+          ? translate("Service is not running")
+          : stateGlobal.svcStatus.value == SvcStatus.connecting
+              ? translate("connecting_status")
+              : stateGlobal.svcStatus.value == SvcStatus.notReady
+                  ? translate("not_ready_status")
+                  : translate('Ready'),
+      style: TextStyle(fontSize: em),
+    );
+  }
+
+  updateStatus() async {
+    final status =
+        jsonDecode(await bind.mainGetConnectStatus()) as Map<String, dynamic>;
+    final statusNum = status['status_num'] as int;
+    if (statusNum == 0) {
+      stateGlobal.svcStatus.value = SvcStatus.connecting;
+    } else if (statusNum == -1) {
+      stateGlobal.svcStatus.value = SvcStatus.notReady;
+    } else if (statusNum == 1) {
+      stateGlobal.svcStatus.value = SvcStatus.ready;
+    } else {
+      stateGlobal.svcStatus.value = SvcStatus.notReady;
+    }
+    try {
+      stateGlobal.videoConnCount.value = status['video_conn_count'] as int;
+    } catch (_) {}
+  }
+}
 
 class _DesktopHomePageState extends State<DesktopHomePage>
     with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
@@ -91,7 +208,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         child: loadLogo(),
       ),
       buildTip(context),
-      if (!isOutgoingOnly) buildIDBoard(context),
+      // Fork: no ID display (docs/FORK_PROFILE_SPEC.md "Remote Client" — ID display removed).
+      // Password management (Keep) is reached via buildPasswordBoard2's edit icon below,
+      // which already navigates directly to Settings > Safety without needing an ID board.
       if (!isOutgoingOnly) buildPasswordBoard(context),
       FutureBuilder<Widget>(
         future: Future.value(
@@ -116,7 +235,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     if (isIncomingOnly) {
       children.addAll([
         Divider(),
-        OnlineStatusWidget(
+        _ConnectionStatusWidget(
           onSvcStatusChanged: () {
             if (isInHomePage()) {
               Future.delayed(Duration(milliseconds: 300), () {
@@ -147,8 +266,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 Expanded(child: Container())
               ],
             ),
-            if (isOutgoingOnly)
-              Positioned(
+            // Fork: shown for both roles now (previously outgoing-only), since removing the
+            // ID board (which used to carry its own settings entry point, buildPopupMenu) left
+            // the incoming-only/remote case with no general Settings entry point otherwise.
+            Positioned(
                 bottom: 6,
                 left: 12,
                 child: Align(
@@ -187,98 +308,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     );
   }
 
-  buildIDBoard(BuildContext context) {
-    final model = gFFI.serverModel;
-    return Container(
-      margin: const EdgeInsets.only(left: 20, right: 11),
-      height: 57,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
-        children: [
-          Container(
-            width: 2,
-            decoration: const BoxDecoration(color: MyTheme.accent),
-          ).marginOnly(top: 5),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(left: 7),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    height: 25,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          translate("ID"),
-                          style: TextStyle(
-                              fontSize: 14,
-                              color: Theme.of(context)
-                                  .textTheme
-                                  .titleLarge
-                                  ?.color
-                                  ?.withOpacity(0.5)),
-                        ).marginOnly(top: 5),
-                        buildPopupMenu(context)
-                      ],
-                    ),
-                  ),
-                  Flexible(
-                    child: GestureDetector(
-                      onDoubleTap: () {
-                        Clipboard.setData(
-                            ClipboardData(text: model.serverId.text));
-                        showToast(translate("Copied"));
-                      },
-                      child: TextFormField(
-                        controller: model.serverId,
-                        readOnly: true,
-                        decoration: InputDecoration(
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.only(top: 10, bottom: 10),
-                        ),
-                        style: TextStyle(
-                          fontSize: 22,
-                        ),
-                      ).workaroundFreezeLinuxMint(),
-                    ),
-                  )
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget buildPopupMenu(BuildContext context) {
-    final textColor = Theme.of(context).textTheme.titleLarge?.color;
-    RxBool hover = false.obs;
-    return InkWell(
-      onTap: DesktopTabPage.onAddSetting,
-      child: Tooltip(
-        message: translate('Settings'),
-        child: Obx(
-          () => CircleAvatar(
-            radius: 15,
-            backgroundColor: hover.value
-                ? Theme.of(context).scaffoldBackgroundColor
-                : Theme.of(context).colorScheme.background,
-            child: Icon(
-              Icons.more_vert_outlined,
-              size: 20,
-              color: hover.value ? textColor : textColor?.withOpacity(0.5),
-            ),
-          ),
-        ),
-      ),
-      onHover: (value) => hover.value = value,
-    );
-  }
+  // Fork: buildIDBoard/buildPopupMenu removed entirely — no ID display
+  // (docs/FORK_PROFILE_SPEC.md "Remote Client"). General Settings access is now provided by
+  // the always-shown gear icon in buildLeftPane above (previously outgoing-only-only).
 
   buildPasswordBoard(BuildContext context) {
     return ChangeNotifierProvider.value(
