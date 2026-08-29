@@ -44,6 +44,8 @@ UI (revised 2026-08-28 — both buttons now independently config-gated):
 
 Each button's visibility is controlled by its own flag; it must not render at all when its flag is false (not greyed out — absent). At least one of the two flags must be true. See "Session Profile" below for what each button launches.
 
+**Status: implemented (Minimal UI phase, 2026-08-29).** `connection_page.dart` rewritten — no peer list, autocomplete, ID lookup, address book, or public-server messaging remain.
+
 ---
 
 ## Remote Client
@@ -59,6 +61,8 @@ Expose:
 - Password management
 - Permission status
 - Connection status
+
+**Status: implemented (Minimal UI phase, 2026-08-29).** `desktop_home_page.dart`'s ID board removed entirely; Account and Network settings tabs hidden via `HARD_SETTINGS["disable-account"]`/`BUILTIN_SETTINGS["hide-network-settings"]` (see `docs/HOOK_POINTS.md` "Minimal UI"). Password management, connection status, and (via the Safety settings tab) authentication-mode controls remain, along with the existing connection-manager/Voice-Call accept-reject dialogs (`server_page.dart`, untouched).
 
 ---
 
@@ -80,6 +84,8 @@ The following must not appear in the user experience:
 - Discovery configuration
 - Account workflows
 - Cloud workflows
+
+**Status: implemented (Minimal UI phase, 2026-08-29)** for this fork's own UI on both local and remote clients. Note the caveat recorded in `docs/FEATURE_ENFORCEMENT_MATRIX.md`: this is UI-level, not protocol-level — the underlying rendezvous/relay/account capability in upstream RustDesk is not removed, only never surfaced by this fork's screens.
 
 ---
 

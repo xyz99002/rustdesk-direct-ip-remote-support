@@ -29,17 +29,27 @@ The Support/Desktop redesign (see `docs/architecture.md` "Connection screen") el
 | Session bookkeeping by `SessionID` | `src/flutter.rs` (`sessions::insert_peer_session_id`, `flutter.rs:1283`) | Confirms multiple concurrent sessions to one peer are already supported — no changes needed here | None |
 | `Client::_start` | `src/client.rs:238-257` | The single outbound choke point both sessions pass through (already houses the `is_incoming_only()` role check from Phase 3) | None |
 | `enable-camera` permission | `libs/hbb_common/src/config.rs:2902` (`OPTION_ENABLE_CAMERA`), enforced at `src/server/connection.rs:2544-2551` | Fork writes it via `Config::set_option("enable-camera", "Y"/"N")` from `support_enabled`, so the remote rejects `VIEW_CAMERA`/Voice Call when disabled | None — reused exactly as `approve-mode` already is |
-| Connection screen widget | `flutter/lib/desktop/pages/connection_page.dart` (`_ConnectionPageState`, `onConnect()` at lines 330-339, button at 521-526) | **Planned change:** replace the single Connect button with independently-flagged Support/Desktop buttons | UI-only change; no Rust code touched by this row |
-| `ViewCameraPage.initState()` | `flutter/lib/desktop/pages/view_camera_page.dart:101-121` | **Planned change:** after `_ffi.start(...)`, call `bind.sessionRequestVoiceCall(sessionId: _ffi.sessionId)` — safe in this fork because the page is only ever reached via the Support button (no peer list exists to reach it otherwise) | New call; page logic otherwise unmodified |
+| Connection screen widget | `flutter/lib/desktop/pages/connection_page.dart` (`_ConnectionPageState`, `onConnect()`, `onSupport()`) | Implemented: independently-flagged Support/Desktop buttons | UI-only change; no Rust code touched by this row |
+| `ViewCameraPage.initState()` | `flutter/lib/desktop/pages/view_camera_page.dart` (`addCallbackOnFirstImage`) | Implemented: calls `bind.sessionRequestVoiceCall(sessionId: _ffi.sessionId)` once the camera session's first frame arrives — safe in this fork because the page is only ever reached via the Support button (no peer list exists to reach it otherwise) | New call; page logic otherwise unmodified |
 | ~~`add_camera_connection()` `include_audio` param~~ | ~~`src/server.rs:373-382`~~ | ~~Subscribe audio for view-camera~~ | **Withdrawn (round 1)** — not needed once Voice Call was found to work standalone |
 | ~~`try_sub_camera_displays()` call site~~ | ~~`src/server/connection.rs:1963-1970`~~ | ~~Pass `self.audio_enabled()`~~ | **Withdrawn (round 1)** — same reason |
 | ~~Rejecting `DEFAULT_CONN` when `desktop_share_enabled=false`~~ | ~~`src/server/connection.rs`'s login `_ =>` arm, `:2583-2587`~~ | ~~A new permission check~~ | **Investigated, not implemented** — no existing upstream permission rejects `DEFAULT_CONN` outright (its video is unconditional once accepted); adding one would be new authentication code, not reuse. Enforced locally only (button hidden). See `docs/FORK_PROFILE_SPEC.md`'s Configuration Profile. |
 
+## Minimal UI (2026-08-29 — local connect screen stripped, remote ID/account/network UI hidden)
+
+| Hook | Location | Fork usage | Modification |
+|---|---|---|---|
+| `DesktopSettingPage.tabKeys` | `flutter/lib/desktop/pages/desktop_setting_page.dart:66-84` | Pre-existing upstream conditionals: `network` tab hidden when `bind.mainGetBuildinOption(key: kOptionHideNetworkSetting) == 'Y'`; `account` tab hidden when `!bind.isDisableAccount()` is false (i.e. shown only when NOT disabled); `display`/`plugin` tabs already auto-hidden for `isIncomingOnly()`. Fork discovered and reused this — no Dart change needed at all. | None |
+| `HARD_SETTINGS["disable-account"]` | `libs/hbb_common/src/config.rs:82`, read via `is_disable_account()` (`config.rs:2817-2819`, `is_some_hard_opton`) | Fork writes `"Y"` unconditionally in `apply()` — hides the Account settings tab (upstream's own custom-client mechanism) | None — direct write to the same map role/conn-type already use |
+| `BUILTIN_SETTINGS["hide-network-settings"]` | `libs/hbb_common/src/config.rs:83`, read via `get_builtin_option()` (`src/common.rs:2273-2280`) | Fork writes `"Y"` unconditionally in `apply()` — hides the Network tab (relay/rendezvous server address configuration) | None — same pattern, different map |
+| Local connect screen | `flutter/lib/desktop/pages/connection_page.dart` | Rewritten: peer list (`PeerTabPage`), autocomplete (`RawAutocomplete`/`AllPeersLoader`), the ID-specific `IDTextEditingController`/`IDTextInputFormatter`, public-server messaging (`OnlineStatusWidget`), and the ID-based workflow menu (file transfer/terminal/bare view-camera via peer context menu) all removed. Final UI: hostname/IP field + Support/Desktop buttons only. | Full-file rewrite; `ConnectionPage` class name and `onConnect`/`onSupport` API preserved so `desktop_home_page.dart`'s `buildRightPane()` needed no change |
+| Remote status pane's ID board | `flutter/lib/desktop/pages/desktop_home_page.dart` (`buildIDBoard`/`buildPopupMenu`, removed) | ID display removed entirely. Its Settings-access popup menu is superseded by making the pre-existing bottom-left gear icon (previously `if (isOutgoingOnly)`-only) show for both roles | Removed 2 methods, widened 1 existing conditional |
+| Remote status pane's connection status | `flutter/lib/desktop/pages/desktop_home_page.dart` (new `_ConnectionStatusWidget`, replacing the deleted `OnlineStatusWidget`) | Kept the status dot/text + "Start service" link (operational, needed for any inbound connection); dropped the public-server guide link (`onUsePublicServerGuide`, `setup_server_tip`) | New, smaller private widget scoped to this file |
+
 ## Not yet mapped (future phases)
 
-- Minimal UI suppression points (hiding ID/relay/rendezvous/account controls) — Direct-IP transport / minimal-UI phases.
 - `listen_address`/`listen_port` wiring — Direct-IP transport phase.
-- `video_quality`/`audio_quality`/`log_level` wiring — Media / minimal-UI phases.
+- `video_quality`/`audio_quality`/`log_level` wiring — Media / minimal-UI polish phases.
 
 ## How to use this during an upstream upgrade
 

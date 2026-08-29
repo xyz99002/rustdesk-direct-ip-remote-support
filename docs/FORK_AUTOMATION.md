@@ -71,6 +71,16 @@ Still UI-layer wiring only — no server/media code to reapply:
 
 **Maintenance risk:** low, by design — this workflow deliberately avoids touching server-side media/audio code, so the maintenance burden is limited to the Dart connection-screen widget and the existing FFI call sites it drives, all already stable, documented integration points. The one open item (no existing permission to reject `DEFAULT_CONN` for `desktop_share_enabled=false`) is a documented gap, not a maintenance risk from upstream changes — it simply doesn't exist yet and would need explicit authorization to add.
 
+### Recreating Minimal UI on a future upstream release
+Implemented 2026-08-29. Two independent parts, both UI-layer:
+1. **Local connect screen** (`flutter/lib/desktop/pages/connection_page.dart`): confirm the file was fully replaced, not merged with upstream's peer-list version, when importing a new upstream release — a naive merge would resurrect `PeerTabPage`/autocomplete/`OnlineStatusWidget`. Re-apply this fork's version (hostname/IP field + Support/Desktop buttons) on top of whatever the new upstream file looks like, re-checking that `connect()`'s signature (`isViewCamera`, etc.) hasn't changed.
+2. **Account/Network settings hiding**: confirm `DesktopSettingPage.tabKeys` (`flutter/lib/desktop/pages/desktop_setting_page.dart`) still has its `account`/`network` tab conditionals reading `is_disable_account()`/`kOptionHideNetworkSetting`, and that `HARD_SETTINGS`/`BUILTIN_SETTINGS` are still plain, directly-writable maps. If upstream renames or restructures these, `src/fork_config.rs::apply()`'s unconditional writes need updating to match.
+3. **Remote status pane** (`flutter/lib/desktop/pages/desktop_home_page.dart`): confirm `buildLeftPane`'s structure (ID board removed, password board kept, gear icon now unconditional) survived the merge, and that `_ConnectionStatusWidget` (the minimal replacement for upstream's `OnlineStatusWidget`) still compiles against whatever `stateGlobal.svcStatus`/`bind.mainGetConnectStatus()` look like in the new version.
+4. Re-verify `docs/FEATURE_ENFORCEMENT_MATRIX.md`'s Account/Network rows and the "Direct-IP-only outbound"/"no relay/rendezvous surfaced" rows.
+5. Run the regression checklist in `docs/UPSTREAM_UPGRADE_GUIDE.md`.
+
+**Maintenance risk:** moderate for the connect-screen rewrite specifically (a full-file replacement is more upgrade-fragile than a small patch — upstream restructuring that page requires re-doing the rewrite, not just re-applying a diff), low for the Account/Network hiding (two `HashMap` writes, unlikely to break silently).
+
 ## Files Expected To Change Across Upgrades
 - UI entry screens
 - startup wiring

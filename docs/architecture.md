@@ -25,11 +25,11 @@ This reverses two items that were previously planned: the "mandatory first-run p
 
 - **No transport redesign.** `src/rendezvous_mediator.rs`, `src/client.rs`'s connection paths, and all relay/rendezvous logic are preserved unchanged. Upstream transport behavior — including the rendezvous discovery and relay fallback code paths — is not removed, rewritten, or gated behind a new "direct-IP-only" enforcement flag.
 - The direct-IP dial path already exists in upstream (`is_ip_str` / `is_domain_port_str` handling in `src/client.rs`, confirmed in `docs/upstream-analysis.md` §1) and is what this fork's UI exclusively drives.
-- "Direct-IP only" is achieved by **not building UI or configuration surface** for anything else, per `docs/DECISIONS.md`:
-  - No public ID display or ID-based connect.
-  - No relay configuration UI.
-  - No rendezvous-server configuration UI.
-  - No account-system UI.
+- "Direct-IP only" is achieved by **not building UI or configuration surface** for anything else, per `docs/DECISIONS.md`. **Implemented (Minimal UI phase, 2026-08-29):**
+  - No public ID display or ID-based connect — `connection_page.dart` rewritten to a plain hostname/IP field.
+  - No relay configuration UI — Network settings tab hidden (`BUILTIN_SETTINGS["hide-network-settings"]`).
+  - No rendezvous-server configuration UI — same mechanism as above (both live in the same tab upstream).
+  - No account-system UI — Account settings tab hidden (`HARD_SETTINGS["disable-account"]`); remote's ID board removed.
   - The only connect input is a hostname/IP field.
 - **Local client:** outbound-only in its UI — it only ever initiates a direct-IP connection; there is no UI path for it to accept inbound sessions.
 - **Remote client:** inbound-only in its UI — it only listens for and accepts incoming direct-IP sessions; there is no UI path for it to initiate an outbound session.

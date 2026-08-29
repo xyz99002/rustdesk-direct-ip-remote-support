@@ -55,6 +55,13 @@ Verify:
 - No server-side audio/media code was touched by this fork — confirm that remains true after the upgrade (see `docs/HOOK_POINTS.md` "Connection Workflow" section; all withdrawn rows should stay withdrawn unless a future investigation proves them necessary again).
 - **Known gap, re-verify it's still a gap:** confirm no existing upstream permission has been added to reject `DEFAULT_CONN` outright — if one has, it may be worth revisiting whether `desktop_share_enabled` can now be enforced remotely too (currently local-UI-only, documented in `docs/FORK_PROFILE_SPEC.md`).
 
+### Minimal UI (implemented 2026-08-29)
+Verify:
+- `flutter/lib/desktop/pages/connection_page.dart` still has no peer list, autocomplete, ID-lookup, or public-server messaging after merging a new upstream release — this file was fully rewritten, so a naive merge/patch is the most likely thing to silently resurrect removed UI.
+- `DesktopSettingPage.tabKeys` (`flutter/lib/desktop/pages/desktop_setting_page.dart`) still conditionally excludes `account`/`network` based on `is_disable_account()`/`kOptionHideNetworkSetting`, and `HARD_SETTINGS`/`BUILTIN_SETTINGS` are still plain `pub static` maps `fork_config.rs::apply()` can write directly.
+- `flutter/lib/desktop/pages/desktop_home_page.dart`'s remote status pane still has no ID board, still shows password management (`buildPasswordBoard2`) and connection status (`_ConnectionStatusWidget`), and the Settings gear icon is still shown for both roles (not just `isOutgoingOnly`).
+- `server_page.dart`'s `ConnectionManager`/`_CmHeader`/`_PrivilegeBoard` (connection manager, Voice Call accept/reject) remain untouched — this phase deliberately did not modify them.
+
 ## Newly Discovered Upgrade Risks (found during Phase 3 implementation)
 
 - **Startup call-order dependency.** The fork's config loader hooks in at `src/core_main.rs:35`, immediately after the existing `crate::load_custom_client();` call inside `pub fn core_main()`, and relies on running before argument parsing and before the inbound-listener/outbound-connect decision. If a future upstream release reorders `core_main()` — e.g. moves argument parsing or server-spawn logic earlier — the fork's role/auth mapping could apply too late (after the listener already started, or after an outbound connect was already permitted). **Upgrade check:** confirm `load_custom_client()` (or its replacement) still runs before all branching in `core_main()`, and re-anchor the fork hook to the same relative position.
@@ -86,6 +93,10 @@ A clean `cargo build`/`cargo test` of the full `rustdesk` binary on this Windows
 - Support button does not render when `support_enabled = false`; Desktop button does not render when `desktop_share_enabled = false`.
 - A config with both flags false is rejected at load time.
 - Remote rejects `VIEW_CAMERA`/Voice Call when `support_enabled = false` (via `enable-camera`).
+- Local connect screen shows only a hostname/IP field and the applicable Support/Desktop button(s) — no peer list, no ID field, no public-server prompt.
+- Remote status pane shows no RustDesk ID, but does show the one-time password board and connection status.
+- Settings page has no Account or Network tab, on both local and remote builds.
+- Connection-manager accept/reject dialogs (including Voice Call's) still appear and function normally.
 
 ## Release Acceptance
 Upgrade is accepted only if all checks pass, **and** `docs/FEATURE_ENFORCEMENT_MATRIX.md` has been re-verified against the new upstream version (not just left as-is from the prior baseline).

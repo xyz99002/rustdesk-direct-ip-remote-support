@@ -158,3 +158,7 @@ Traced precisely whether any part of the Voice Call pipeline requires a `DEFAULT
 ## Next step (superseded twice)
 
 ~~With (d) selected, the smallest-change implementation plan...~~ then ~~Support = DEFAULT_CONN + VIEW_CAMERA always, audio via DEFAULT_CONN...~~ — both superseded 2026-08-28 by §9-10's finding: Voice Call already works standalone on `VIEW_CAMERA`, so Support needs `VIEW_CAMERA` + Voice Call only, with `DEFAULT_CONN` now an independent, separately-flagged addition (`desktop_share_enabled`) rather than a permanent companion. See the chat response for the current Connection Workflow implementation plan.
+
+## 11. Status (2026-08-29)
+
+Connection Workflow (§9-10's design) and Minimal UI (docs/FEATURE_ENFORCEMENT_MATRIX.md, docs/HOOK_POINTS.md "Minimal UI") are both implemented. Nothing in this document's session/Voice-Call mechanics changed as part of Minimal UI — that phase only touched Dart UI chrome (peer list, ID board, settings tabs), not how sessions are established. No further updates expected here unless a future phase touches session establishment again.
