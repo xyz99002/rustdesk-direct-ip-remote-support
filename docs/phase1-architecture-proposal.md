@@ -1,3 +1,5 @@
+> **Superseded in part by `docs/upstream-analysis.md`.** Phase 2 verified this proposal against the actual source and found several corrections (an existing direct-IP path that isn't identity-authenticated, no separate hbbs/hbbr crate in this repo, no mandatory-password concept today, camera/desktop as mutually exclusive connection types). Read `docs/upstream-analysis.md` first; treat this document as the historical starting point, not the final design.
+
 # Phase 1 — Architecture Proposal (pre-implementation, subject to revision after Phase 2)
 
 This proposal targets the acceptance criteria in `CLAUDE_MASTER_PROMPT.md`:
