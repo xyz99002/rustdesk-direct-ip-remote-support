@@ -25,21 +25,27 @@ No mandatory first-run password creation.
 No password complexity policy.
 No authentication redesign.
 
-## Connection Screen (supersedes "Session Startup" below — 2026-08-28)
+## Connection Screen (revised 2026-08-28 — two independent config flags, not one)
 
-Two buttons, not one:
+Two independently-configured buttons:
 
 ```
 [ Hostname / IP ]
 
-[ Support ]
-[ Desktop ]
+[ Support ]   (shown when support_enabled = true)
+[ Desktop ]   (shown when desktop_share_enabled = true)
 ```
 
-- **Desktop** — standard upstream `DEFAULT_CONN`. No camera. Every upstream capability (keyboard, mouse, clipboard, file transfer, audio) works exactly as it does in stock RustDesk. Always shown.
-- **Support** — `DEFAULT_CONN` + `VIEW_CAMERA` opened together (two sessions, existing session mechanisms, no new session type). Audio rides on the `DEFAULT_CONN` half exactly as upstream already does it — no camera-audio combination is attempted. Visibility gated by `support_enabled` in config; the button must not be rendered at all when disabled (not just greyed out).
+- **Desktop** — standard upstream `DEFAULT_CONN` only. No camera, no voice call. Every upstream capability (keyboard, mouse, clipboard, file transfer, audio) works exactly as it does in stock RustDesk.
+- **Support** — always `VIEW_CAMERA` + Voice Call (via the existing `session_request_voice_call()`/`VoiceCallRequest`/`VoiceCallResponse` mechanism, confirmed to work standalone on a `VIEW_CAMERA` session with no `DEFAULT_CONN` required — see `docs/session-orchestration-analysis.md` §9-10). Additionally opens `DEFAULT_CONN` when `desktop_share_enabled = true`. Voice Call remains subject to the existing upstream accept/reject workflow on the remote side — no bypass.
+- Each button is rendered only when its own flag is true — neither is shown "greyed out," it's absent entirely. At least one of `support_enabled`/`desktop_share_enabled` must be true; a config with both false is rejected.
+- **Remote-side enforcement:** `support_enabled` also controls whether the remote/host accepts `VIEW_CAMERA` (and therefore Voice Call, which rides on it) at all, reusing the existing upstream `enable-camera` permission — see `docs/architecture.md` for the mechanism and an open gap (`desktop_share_enabled` has no equivalent existing upstream permission to reject `DEFAULT_CONN`).
 
 This is a product-goal change (customer-support-focused derivative): keep as close to upstream as possible, minimize fork maintenance, avoid transport/authentication/encryption/protocol/media-path modifications unless conclusively proven necessary.
+
+### Prior Connection Screen model (superseded, kept for history)
+
+~~Support = `DEFAULT_CONN` + `VIEW_CAMERA` always, audio via `DEFAULT_CONN`, gated by a single `support_enabled` flag; Desktop always shown.~~ Replaced by the two-independent-flags model above once Voice Call was confirmed to work standalone on `VIEW_CAMERA` — Support no longer needs `DEFAULT_CONN` at all unless `desktop_share_enabled` is also true, and Desktop is no longer unconditional.
 
 ### Session Startup (superseded, kept for history)
 

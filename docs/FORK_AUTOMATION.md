@@ -17,10 +17,12 @@ Treat the fork as a configuration and UI transformation layer instead of a trans
 ## Fork Profile Concepts
 Configuration file format: TOML (confirmed 2026-08-28; reuses the `toml`/`confy` crates already in the dependency graph via `hbb_common` — no new dependency). Any YAML-fenced example elsewhere in the doc set is illustrative only, not the actual format.
 
-Configuration should define (revised 2026-08-28 — `support_enabled` replaces `camera enablement`/`audio enablement`/`desktop enablement`, which have no referent under the Support/Desktop button model):
+Configuration should define (revised 2026-08-28, second revision — `desktop_share_enabled` added; Desktop is no longer unconditional):
 - role
 - authentication mode
-- support_enabled (gates Support button visibility)
+- support_enabled (gates Support button visibility locally; also reused as the remote-side `enable-camera` permission to reject VIEW_CAMERA/Voice Call)
+- desktop_share_enabled (gates Desktop button visibility locally; no remote-side enforcement exists — documented gap)
+- validation: at least one of support_enabled/desktop_share_enabled must be true
 
 ## Stable Integration Points
 ### Role Control
@@ -48,22 +50,22 @@ Use upstream:
 - `hbb_common::config::Config::path<P>(p: P) -> PathBuf` — `libs/hbb_common/src/config.rs:783-804` — OS-appropriate config directory resolution, reusable for a fork-owned config file without colliding with `config2.toml` (which is keyed off `APP_NAME`).
 - `hbb_common::config::load_path<T>`/`store_path<T>` — `libs/hbb_common/src/config.rs:558-591` — generic TOML (via `confy`) load/store for any serde struct. Not used as-is for the fork's own loader (it silently falls back to `T::default()` on any error, missing-file or malformed-file alike, which isn't precise enough for real validation) — but confirms `toml`/`confy` are already resolved in the workspace via `hbb_common`, so adding `toml = "0.7"` directly to the root crate's `Cargo.toml` introduces no new external dependency.
 
-### Connection Workflow (revised 2026-08-28 — formerly "Session Orchestration")
-Two buttons, each a single existing upstream session mechanism — not a combined action:
-- **Desktop** → one `DEFAULT_CONN` session. Standard upstream behavior, unmodified.
-- **Support** → one `DEFAULT_CONN` + one `VIEW_CAMERA` session, opened together, gated on `support_enabled`.
+### Connection Workflow (revised 2026-08-28, second revision — formerly "Session Orchestration")
+Two independently-flagged buttons, each composed of existing upstream session/message mechanisms only:
+- **Desktop** (shown when `desktop_share_enabled`) → one `DEFAULT_CONN` session, only. Standard upstream behavior, unmodified.
+- **Support** (shown when `support_enabled`) → always `VIEW_CAMERA` + a Voice Call on it (`session_request_voice_call()`); additionally `DEFAULT_CONN` when `desktop_share_enabled` is also true.
 
-`ConnType::VIEW_CAMERA` and `ConnType::DEFAULT_CONN` are separate upstream connection types (`src/client.rs:2745-2751`) that already support running concurrently to the same peer (distinct `SessionID`s, confirmed in `docs/session-orchestration-analysis.md` §4) — so Support is simply "open both," not a new combined `ConnType`. **No server-side media/audio change is needed**: an earlier design (single "Start Session" launching camera+audio together) would have required a small `src/server.rs`/`src/server/connection.rs` change to give `VIEW_CAMERA` sessions audio (investigated in `docs/session-orchestration-analysis.md` §6-7 — the capability already exists upstream but is never triggered by the current client); the Support/Desktop model avoids needing that entirely because `DEFAULT_CONN` already carries audio.
+`ConnType::VIEW_CAMERA` and `ConnType::DEFAULT_CONN` are separate upstream connection types (`src/client.rs:2745-2751`) that already support running concurrently to the same peer (distinct `SessionID`s, confirmed in `docs/session-orchestration-analysis.md` §4). Voice Call is a message-level feature layered on an existing session (`VoiceCallRequest`/`VoiceCallResponse`, `session_request_voice_call()`), confirmed in §9-10 to work completely with only a `VIEW_CAMERA` session present — no `DEFAULT_CONN`, no server-side audio-service change, needed at all. Two earlier rounds of planned server-side media changes (giving `VIEW_CAMERA` its own audio subscription) were both investigated and withdrawn as unnecessary.
 
 ### Recreating Support mode on a future upstream release
-This is UI-layer wiring only — no server/media code to reapply:
-1. Confirm `ConnType::VIEW_CAMERA` and `ConnType::DEFAULT_CONN` still exist and can still run as concurrent, independent sessions to the same peer (`docs/HOOK_POINTS.md` "Connection Workflow" rows).
-2. Confirm `flutter/lib/common.dart`'s `connect()` (or its renamed/moved equivalent) still accepts an `isViewCamera` flag and still dispatches to the camera vs. desktop window/page paths independently.
-3. Re-wire the connection screen's Desktop button to the plain `connect()` call, and the Support button (rendered only when `support_enabled = true`) to both the plain and `isViewCamera: true` calls, for the same target host.
-4. Confirm audio still flows automatically for `DEFAULT_CONN` (i.e. `try_sub_monitor_services`/`audio_enabled()` in `src/server/connection.rs` still exists with the same gating) — if upstream changes this, Support's audio depends on it exactly as much as a stock desktop connection does, no more.
+Still UI-layer wiring only — no server/media code to reapply:
+1. Confirm `ConnType::VIEW_CAMERA`/`ConnType::DEFAULT_CONN` still run concurrently to the same peer, and that `VoiceCallRequest`/`VoiceCallResponse`/`AudioFrame`/`AudioFormat` remain in `is_view_camera_scoped_message`/`_misc`'s whitelist (`src/server/connection.rs:5508-5546`) — this is the single fact the whole Support design depends on.
+2. Confirm `flutter/lib/common.dart`'s `connect()` still accepts `isViewCamera`, and `session_request_voice_call`/`sessionRequestVoiceCall` still exists and still takes only a `session_id`.
+3. Re-wire the connection screen's Support button (`support_enabled`) to `connect(..., isViewCamera: true)` + a `sessionRequestVoiceCall` call once that session's `initState()` fires, and conditionally to plain `connect()` when `desktop_share_enabled`. Re-wire the Desktop button (`desktop_share_enabled`) to plain `connect()` only.
+4. Confirm the remote side still enforces `enable-camera` at `src/server/connection.rs:2544-2551` — this is what `support_enabled`'s remote-side rejection depends on.
 5. Run the regression checklist in `docs/UPSTREAM_UPGRADE_GUIDE.md`.
 
-**Maintenance risk:** low, by design — this workflow deliberately avoids touching server-side media/audio code, so the maintenance burden is limited to the Dart connection-screen widget and the two existing FFI call sites it drives, both already stable, documented integration points.
+**Maintenance risk:** low, by design — this workflow deliberately avoids touching server-side media/audio code, so the maintenance burden is limited to the Dart connection-screen widget and the existing FFI call sites it drives, all already stable, documented integration points. The one open item (no existing permission to reject `DEFAULT_CONN` for `desktop_share_enabled=false`) is a documented gap, not a maintenance risk from upstream changes — it simply doesn't exist yet and would need explicit authorization to add.
 
 ## Files Expected To Change Across Upgrades
 - UI entry screens

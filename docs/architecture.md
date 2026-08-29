@@ -35,18 +35,21 @@ This reverses two items that were previously planned: the "mandatory first-run p
 - **Remote client:** inbound-only in its UI — it only listens for and accepts incoming direct-IP sessions; there is no UI path for it to initiate an outbound session.
 - Net effect: the upstream engine is capable of more than this (rendezvous, relay, bidirectional roles), but this fork's UI/config never exposes or exercises any of that — direct-IP-only is a product-level restriction, not a protocol change.
 
-## Connection screen — two buttons, two independent upstream session mechanisms (revised 2026-08-28)
+## Connection screen — two independently-flagged buttons (revised 2026-08-28, second revision)
 
-**Supersedes the single "Start Session" model below.** Per `docs/DECISIONS.md` and `docs/FORK_PROFILE_SPEC.md`, and informed by the audio-on-camera investigation in `docs/session-orchestration-analysis.md` §7-8:
+**Supersedes both prior models below.** Per `docs/DECISIONS.md` and `docs/FORK_PROFILE_SPEC.md`, and informed by `docs/session-orchestration-analysis.md` §7-10 (audio-on-camera investigation, then Voice Call confirmed to work standalone on `VIEW_CAMERA`):
 
-- **Desktop button** → one standard upstream `DEFAULT_CONN` session. No camera. Every upstream capability (keyboard, mouse, clipboard, file transfer, audio) works exactly as it does in stock RustDesk — no modifications to transport, authentication, permission negotiation, audio routing, encryption, or protocol messages. Always shown.
-- **Support button** → one `DEFAULT_CONN` session + one `VIEW_CAMERA` session, opened together as one user action, using the existing session-establishment mechanisms already documented in `docs/session-orchestration-analysis.md` §4 (each gets its own `SessionID`, both can run concurrently to the same peer — already supported, no session-model changes needed). Audio is carried entirely by the `DEFAULT_CONN` half, using standard upstream audio routing. Rendered only when `support_enabled = true`; must not render at all when disabled.
-- **Why this avoids the camera+audio problem entirely:** the investigation in `docs/session-orchestration-analysis.md` §7 found that upstream's server-side machinery to give a `VIEW_CAMERA` session audio exists but is never triggered by the current client UI (a default-value gap, not a protocol block) — see §8 below for why the Support/Desktop design sidesteps needing to fix that at all: audio needs come from `DEFAULT_CONN`, which already has full audio support, so `VIEW_CAMERA`'s lack of automatic audio is simply irrelevant to this design.
-- No new `ConnType`, no audio-service changes, no changes to `is_remote()`/`try_sub_monitor_services()`/`add_camera_connection()` — the two sessions are opened independently, each exactly as upstream already supports.
+- **Desktop button** → one standard upstream `DEFAULT_CONN` session, **only**. No camera, no voice call. Every upstream capability (keyboard, mouse, clipboard, file transfer, audio) works exactly as it does in stock RustDesk — no modifications to transport, authentication, permission negotiation, audio routing, encryption, or protocol messages. Rendered only when `desktop_share_enabled = true`.
+- **Support button** → always one `VIEW_CAMERA` session + a Voice Call on it (`session_request_voice_call()` — existing `VoiceCallRequest`/`VoiceCallResponse` messages, confirmed in §9-10 to work with no `DEFAULT_CONN` present anywhere). Additionally opens a `DEFAULT_CONN` session when `desktop_share_enabled = true` (independent flag, not tied to Support). Voice Call remains subject to the existing upstream host-side accept/reject workflow — no bypass. Rendered only when `support_enabled = true`.
+- Each button renders only when its own flag is true — never greyed out, absent entirely. **Validation:** at least one of `support_enabled`/`desktop_share_enabled` must be true; both false is rejected.
+- **Remote-side enforcement:** `support_enabled` reuses the existing upstream `enable-camera` permission (`libs/hbb_common/src/config.rs:2902`, enforced at `src/server/connection.rs:2544-2551`) to reject `VIEW_CAMERA` (and therefore Voice Call, which rides on it) when disabled. **No equivalent existing permission was found to reject `DEFAULT_CONN`** — `desktop_share_enabled` is therefore enforced locally only (button hidden); see `docs/FORK_PROFILE_SPEC.md`'s Configuration Profile for this documented gap.
+- No new `ConnType`, no new protocol messages, no audio-service changes, no changes to `is_remote()`/`try_sub_monitor_services()`/`add_camera_connection()` — every session and every message reused exactly as upstream already provides it.
 
-### Session Startup (superseded, kept for history)
+### Prior models (superseded, kept for history)
 
-~~A single Start Session action always starts camera+audio, and additionally desktop when `desktop_enabled=true`, requiring camera and audio to combine on one `VIEW_CAMERA` connection.~~ Replaced by the Support/Desktop model above specifically because combining audio onto `VIEW_CAMERA` would have required a server-side change (see the now-superseded §6 investigation in `docs/session-orchestration-analysis.md`), whereas Support/Desktop achieves the same product goal using `DEFAULT_CONN` for anything that needs audio — zero server-side media changes.
+~~A single Start Session action always starts camera+audio, and additionally desktop when `desktop_enabled=true`, requiring camera and audio to combine on one `VIEW_CAMERA` connection.~~ Required a server-side audio change (§6, withdrawn).
+
+~~Support = `DEFAULT_CONN` + `VIEW_CAMERA` always (single `support_enabled` flag), audio via `DEFAULT_CONN`; Desktop unconditional.~~ Superseded once Voice Call was confirmed to work standalone on `VIEW_CAMERA` (§9-10) — `DEFAULT_CONN` is no longer required for Support at all, and Desktop is no longer unconditional.
 
 ## Configuration — TOML, versioned
 
@@ -64,6 +67,7 @@ version = 1
 role = "local"
 
 support_enabled = true
+desktop_share_enabled = true
 
 listen_address = "0.0.0.0"
 listen_port = 21118
@@ -77,9 +81,9 @@ log_level = "info"
 mode = "ask"
 ```
 
-**Revised 2026-08-28:** `support_enabled` replaces `camera_enabled`/`audio_enabled`/`desktop_enabled` from the schema Phase 3 originally implemented. Under the Support/Desktop model neither has a remaining referent: Desktop is unconditionally available (no gate needed), and Support unconditionally launches both `DEFAULT_CONN` and `VIEW_CAMERA` when enabled (no independent camera/audio toggle) — proposed as an assumption of this revision, pending confirmation (see `docs/FORK_PROFILE_SPEC.md`'s Configuration Profile). `listen_address`, `listen_port`, `video_quality`, `audio_quality`, `log_level` are unaffected and remain reserved for the Direct-IP transport and minimal-UI phases.
+**Revised 2026-08-28 (second revision):** `desktop_share_enabled` added alongside `support_enabled` — Desktop is no longer unconditional; each button now has its own independent flag. **Validation:** reject a config where both `support_enabled` and `desktop_share_enabled` are false. `support_enabled` is additionally written to the existing upstream `enable-camera` option (`Config::set_option("enable-camera", ...)`) so the remote side enforces it too, not just the local UI. `camera_enabled`/`audio_enabled`/`desktop_enabled` from the original schema remain removed. `listen_address`, `listen_port`, `video_quality`, `audio_quality`, `log_level` are unaffected and remain reserved for the Direct-IP transport and minimal-UI phases.
 
-Phase 3 (Configuration and Role Restriction, accepted) implements loading and validation of a config schema and wires `version`, `role`, and `authentication.mode` to actual behavior — see the mapping tables above. This revision (Connection Workflow) adds `support_enabled`, wired to Support-button visibility, and drops the three now-unused keys from required validation.
+Phase 3 (Configuration and Role Restriction, accepted) implements loading and validation of a config schema and wires `version`, `role`, and `authentication.mode` to actual behavior. This revision (Connection Workflow) adds `support_enabled` + `desktop_share_enabled`, wired to both button visibility (local) and, for `support_enabled`, remote-side enforcement via `enable-camera`.
 
 ## Upstream baseline
 

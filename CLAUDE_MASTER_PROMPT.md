@@ -92,7 +92,7 @@ UI (revised 2026-08-28 — supersedes the single Start Session button):
 
 
 
-`Support` is rendered only when `support_enabled = true` in configuration; it must not appear at all otherwise. `Desktop` is always shown.
+Revised 2026-08-28: each button now has its own independent config flag. `Support` is rendered only when `support_enabled = true`; `Desktop` is rendered only when `desktop_share_enabled = true`. Neither is unconditional any more — a config with both flags false is rejected (at least one must be true).
 
 
 
@@ -408,13 +408,15 @@ Desktop
 
 
 
-\- \*\*Desktop\*\* — launches a single, standard upstream `DEFAULT_CONN` session. No camera. All upstream capabilities (keyboard, mouse, clipboard, file transfer, audio) remain available exactly as upstream implements them. Always shown.
+\- \*\*Desktop\*\* — launches a single, standard upstream `DEFAULT_CONN` session only. No camera, no voice call. All upstream capabilities (keyboard, mouse, clipboard, file transfer, audio) remain available exactly as upstream implements them. Rendered only when `desktop_share_enabled = true`.
 
-\- \*\*Support\*\* — launches `DEFAULT_CONN` + `VIEW_CAMERA` together (two existing upstream session mechanisms, opened as one user action). Audio is carried entirely by the `DEFAULT_CONN` half using standard upstream audio routing — no `VIEW_CAMERA` audio changes are made. Rendered only when `support_enabled = true`; must not appear at all when disabled.
+\- \*\*Support\*\* — always launches `VIEW_CAMERA` + a Voice Call on it (`session_request_voice_call()`, existing `VoiceCallRequest`/`VoiceCallResponse` messages — confirmed to work standalone on `VIEW_CAMERA` with no `DEFAULT_CONN` required). Additionally launches `DEFAULT_CONN` when `desktop_share_enabled = true`. Voice Call remains subject to the existing upstream accept/reject workflow on the remote side. Rendered only when `support_enabled = true`.
+
+\- At least one of `support_enabled` / `desktop_share_enabled` must be true; a configuration with both false is rejected.
 
 
 
-No audio-path, transport, authentication, encryption, or protocol modifications are used or required for either button — both reuse existing session mechanisms as-is.
+No audio-path, transport, authentication, encryption, or protocol modifications are used or required for either button — both reuse existing session/message mechanisms as-is. Exception: `support_enabled` maps to the existing upstream `enable-camera` permission on the remote side, to reject `VIEW_CAMERA`/Voice Call when disabled — this is configuration reuse, not a new authentication code path. No equivalent existing mechanism was found to reject `DEFAULT_CONN` when `desktop_share_enabled = false`; that flag is enforced locally (button hidden) only — see `docs/FORK_PROFILE_SPEC.md`'s Configuration Profile for the documented gap.
 
 
 
@@ -456,6 +458,8 @@ role = "local"
 
 support_enabled = true
 
+desktop_share_enabled = true
+
 
 
 listen_address = "0.0.0.0"
@@ -482,7 +486,7 @@ mode = "ask"
 
 Note: `[authentication]` must be the last section in the file — in TOML, every `key = value` line after a `[table]` header belongs to that table, not the top level. This ordering was verified by `src/fork_config.rs`'s own test suite.
 
-Revised 2026-08-28: `support_enabled` replaces `camera_enabled`/`audio_enabled`/`desktop_enabled` (see `docs/FORK_PROFILE_SPEC.md`'s Configuration Profile for the rationale — proposed as an assumption pending confirmation).
+Revised 2026-08-28: `desktop_share_enabled` added alongside `support_enabled` — each button now has its own independent flag (previously a single `support_enabled` gated Support only, with Desktop unconditional). Validation requires at least one of the two to be true. `camera_enabled`/`audio_enabled`/`desktop_enabled` from the original schema remain removed (see `docs/FORK_PROFILE_SPEC.md`'s Configuration Profile).
 
 
 
@@ -538,7 +542,7 @@ Must:
 
 \- provide hostname/IP input
 
-\- provide Desktop button (always shown) and Support button (shown only when `support_enabled = true`)
+\- provide Support button (shown only when `support_enabled = true`) and Desktop button (shown only when `desktop_share_enabled = true`)
 
 
 
@@ -882,13 +886,15 @@ Implement:
 
 
 
-\- Desktop button -> `DEFAULT_CONN` (standard upstream behavior, no camera)
+\- Desktop button -> `DEFAULT_CONN` only (standard upstream behavior, no camera, no voice call), rendered only when `desktop_share_enabled = true`
 
-\- Support button -> `DEFAULT_CONN` + `VIEW_CAMERA` together, rendered only when `support_enabled = true`
+\- Support button -> `VIEW_CAMERA` + Voice Call always, plus `DEFAULT_CONN` when `desktop_share_enabled = true`, rendered only when `support_enabled = true`
+
+\- Remote side: `support_enabled` reuses the existing `enable-camera` permission to reject `VIEW_CAMERA`/Voice Call when disabled
 
 
 
-using existing upstream session mechanisms — no new session type, no audio-path changes.
+using existing upstream session/message mechanisms — no new session type, no audio-path changes, no new protocol messages.
 
 
 
@@ -922,7 +928,7 @@ Replace user experience with:
 
 \[ Support ]  (only when support_enabled = true)
 
-\[ Desktop ]
+\[ Desktop ]  (only when desktop_share_enabled = true)
 
 ```
 
@@ -1114,11 +1120,11 @@ Verify:
 
 
 
-✅ Desktop button launches a standard upstream `DEFAULT_CONN` session (keyboard, mouse, clipboard, file transfer, audio all working unmodified).
+✅ Desktop button launches a standard upstream `DEFAULT_CONN` session only (keyboard, mouse, clipboard, file transfer, audio all working unmodified; no camera, no voice call), shown only when `desktop_share_enabled = true`.
 
 
 
-✅ Support button launches `DEFAULT_CONN` + `VIEW_CAMERA` together, only when (illustrative; actual implementation uses TOML):
+✅ Support button launches `VIEW_CAMERA` + Voice Call always, plus `DEFAULT_CONN` when `desktop_share_enabled = true`, shown only when (illustrative; actual implementation uses TOML):
 
 
 
@@ -1126,7 +1132,17 @@ Verify:
 
 support_enabled = true
 
+desktop_share_enabled = true
+
 ```
+
+
+
+✅ A configuration with both `support_enabled = false` and `desktop_share_enabled = false` is rejected.
+
+
+
+✅ Remote side rejects `VIEW_CAMERA`/Voice Call when `support_enabled = false` (via the existing `enable-camera` permission).
 
 
 

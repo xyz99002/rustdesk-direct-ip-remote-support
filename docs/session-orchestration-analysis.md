@@ -126,6 +126,35 @@ No. Keyboard, clipboard, audio, and file-transfer are all **sub-capability permi
 
 Per the user's stated preference to reuse existing upstream capability rather than add fork-specific behavior: **(1) camera-only** already works exactly as upstream ships it (§1 camera launch path, unmodified). **(2) camera + audio** does *not* require the server-side `add_camera_connection()` change floated in §6 — the server-side plumbing already exists and already works (§1.D/E above); what's actually missing is a client-side value (an explicit non-`NotSet` `disable_audio`) that nothing today sends for a camera session. **(3) audio without desktop** falls out of the same finding as (2) — once camera sessions carry audio, camera-only already *is* "audio without desktop video." **(4) desktop enable/disable via existing permissions** does **not** exist upstream (§2) — enabling/disabling desktop screen sharing is not a permission-framework capability today; it can only be expressed as "establish a `DEFAULT_CONN` session or don't," which is exactly the fork's planned `desktop_enabled` config flag deciding whether to open that second session at all (§6's already-adopted approach), not something achievable by toggling an existing permission bit.
 
-## Next step (superseded)
+## 9. Voice Call — existing feature, verified to work standalone on VIEW_CAMERA (2026-08-28)
 
-~~With (d) selected, the smallest-change implementation plan...~~ Superseded 2026-08-28: the product goal changed to a customer-support-focused derivative with an explicit "no audio-service forks unless conclusively proven necessary" constraint. Given §7's finding that (d) was never actually necessary — the underlying capability already exists upstream, just unreached by the current client — the Support/Desktop redesign (this file's header note, and `docs/architecture.md`) uses `DEFAULT_CONN` for anything needing audio instead. **No server-side change (d) or any other) is part of the current implementation plan.** See the chat response for the Connection Workflow implementation plan (files, diagrams, upgrade impact).
+Investigated whether RustDesk's existing "Voice Call" feature (two-way microphone audio, distinct from the one-way system-audio-follows-`DEFAULT_CONN` behavior in §1-2) can be initiated programmatically and function with only a `VIEW_CAMERA` session — no `DEFAULT_CONN` anywhere.
+
+**Source paths (all pre-existing, none modified):**
+
+| Layer | File:line |
+|---|---|
+| Protocol messages | `libs/hbb_common/protos/message.proto:865-875` (`VoiceCallRequest{req_timestamp, is_connect}`, `VoiceCallResponse{accepted, req_timestamp, ack_timestamp}`), `:974-975` (`Message.union` fields 23/24) |
+| Client send | `src/ui_session_interface.rs:1597-1606` (`request_voice_call()`/`close_voice_call()`) → `src/client.rs:3817-3818` (`Data::NewVoiceCall`/`CloseVoiceCall`) → `src/client/io_loop.rs:981-997` (builds/sends the message) |
+| Server receive/accept | `src/server/connection.rs:3633-3644` (incoming request → notifies connection manager, unconditional on conn type), `:4363-4403` (`handle_voice_call()`/`close_voice_call()`) |
+| View-camera message whitelist | `src/server/connection.rs:5508-5522` — `is_view_camera_scoped_message()` explicitly permits `VoiceCallRequest`, `VoiceCallResponse`, `AudioFrame`; `is_view_camera_scoped_misc()` (`:5524-5546`) permits `AudioFormat` |
+| Connection-manager (host accept) | `src/ui_cm_interface.rs:656,944-951`, `src/ipc.rs:376` |
+| FFI | `src/flutter_ffi.rs:1703-1728` — `session_request_voice_call`/`session_close_voice_call` (controller), `cm_handle_incoming_voice_call`/`cm_close_voice_call` (host) |
+| Dart entry points | `flutter/lib/desktop/widgets/remote_toolbar.dart:2651` (desktop `DEFAULT_CONN`), `flutter/lib/mobile/pages/remote_page.dart:814` (mobile `DEFAULT_CONN`), `flutter/lib/mobile/pages/view_camera_page.dart:496` (mobile **`VIEW_CAMERA`** — direct proof it's already wired for camera sessions). Desktop's `view_camera_page.dart` has no such button today (UI gap only). |
+
+**Session type:** not a new/separate `ConnType`. A message-level feature layered on an already-established session — confirmed identical for `DEFAULT_CONN` and `VIEW_CAMERA`.
+
+**Permission:** no dedicated "enable-voice-call" key exists. Every incoming request unconditionally surfaces an accept/reject prompt at the host (no auto-accept path found in Rust or Dart) — a human must click Accept. Once accepted, the host's `enable-audio` permission additionally gates whether audio actually flows.
+
+## 10. Scenario verification — VIEW_CAMERA-only voice call, no DEFAULT_CONN anywhere
+
+Traced precisely whether any part of the Voice Call pipeline requires a `DEFAULT_CONN` session to exist. **Conclusion: no — every piece of state and every method involved belongs to the single `Connection` struct instance representing the `VIEW_CAMERA` session itself.**
+
+- **Session ownership:** `voice_call_request_timestamp`, `voice_calling`, `disable_audio`, `audio_sender`, `authed_conn_id` are all fields of *that one* `Connection` instance (`src/server/connection.rs:343,348,558`). `is_authed_view_camera_conn()` (`connection.rs:5265-5270`) checks only `self.authed_conn_id` — never looks up or requires a sibling connection.
+- **Audio-service subscription path (host mic → controller):** `handle_voice_call()` (`connection.rs:4363-4389`, accepted branch) calls `audio_service::set_voice_call_input_device(...)` then `s.write().unwrap().subscribe(audio_service::NAME, self.inner.clone(), ...)`. `Server::subscribe()` (`src/server.rs:432-444`) registers *this connection's own* `ConnInner`. `audio_service` (`src/server/audio_service.rs`) is a single, **process-wide** capture+broadcast service (not per-connection) — `get_audio_input()` (`audio_service.rs:61-68`) returns the microphone when `VOICE_CALL_INPUT_DEVICE` is set, else the normal system-audio device, and broadcasts to every subscribed `ConnInner` regardless of conn type. Subscribing the `VIEW_CAMERA` connection's `ConnInner` is sufficient by itself.
+- **Reverse direction (controller mic → host):** `Misc::Union::AudioFormat` (`connection.rs:3526-3535`) creates `self.audio_sender` (again, a field of the `VIEW_CAMERA` connection's own struct) via `start_audio_thread()`; subsequent `AudioFrame` messages (`connection.rs:3622-3631`) feed into that same sender. Both message types are on the view-camera whitelist (§9 table).
+- **Assumption/side-effect worth carrying forward:** `audio_service` being process-wide means that if a `DEFAULT_CONN` session to the same host is *also* active and *also* subscribed when a `VIEW_CAMERA` voice call starts, that `DEFAULT_CONN` session's audio would momentarily switch from system audio to the microphone too, for as long as the call lasts. Not a defect for the VIEW_CAMERA-only scenario, but relevant when Support opens both session types together (`desktop_share_enabled = true` case) — noted, not fixed (no media-service changes authorized).
+
+## Next step (superseded twice)
+
+~~With (d) selected, the smallest-change implementation plan...~~ then ~~Support = DEFAULT_CONN + VIEW_CAMERA always, audio via DEFAULT_CONN...~~ — both superseded 2026-08-28 by §9-10's finding: Voice Call already works standalone on `VIEW_CAMERA`, so Support needs `VIEW_CAMERA` + Voice Call only, with `DEFAULT_CONN` now an independent, separately-flagged addition (`desktop_share_enabled`) rather than a permanent companion. See the chat response for the current Connection Workflow implementation plan.

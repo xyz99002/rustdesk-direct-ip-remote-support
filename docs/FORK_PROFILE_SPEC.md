@@ -33,16 +33,16 @@ Responsibilities:
 - Never accept inbound sessions
 - Never expose listener controls
 
-UI (revised 2026-08-28 — supersedes the single "Start Session" button below):
+UI (revised 2026-08-28 — both buttons now independently config-gated):
 
 ```
 [ Hostname / IP ]
 
-[ Support ]
-[ Desktop ]
+[ Support ]   (support_enabled = true)
+[ Desktop ]   (desktop_share_enabled = true)
 ```
 
-`Support` visibility is controlled by `support_enabled` (config); it must not render when disabled. `Desktop` is always shown. See "Session Profile" below for what each button launches.
+Each button's visibility is controlled by its own flag; it must not render at all when its flag is false (not greyed out — absent). At least one of the two flags must be true. See "Session Profile" below for what each button launches.
 
 ---
 
@@ -121,17 +121,19 @@ Implementation should reuse upstream role enforcement wherever available.
 
 ---
 
-# Session Profile (revised 2026-08-28 — supersedes the single Start Session model below)
+# Session Profile (revised 2026-08-28 — Support no longer requires DEFAULT_CONN)
 
-Two independent actions, each already an existing upstream session mechanism — no new session type is introduced:
+Independent actions, each already an existing upstream session/message mechanism — no new session type or protocol message is introduced:
 
-- **Desktop button** -> one `DEFAULT_CONN` session. Standard upstream behavior: keyboard, mouse, clipboard, file transfer, audio, and any other upstream-supported capability all work unmodified. No camera.
-- **Support button** -> one `DEFAULT_CONN` session + one `VIEW_CAMERA` session, opened together. Purpose: customer desktop support plus customer camera support. Audio is carried entirely by the `DEFAULT_CONN` half, using standard upstream audio routing — no audio-path or `VIEW_CAMERA`-audio changes are made or required (see `docs/session-orchestration-analysis.md` §7-8 for the investigation that ruled this unnecessary).
-- Support button is rendered only when `support_enabled = true`; otherwise it must not appear in the UI at all.
+- **Desktop button** -> one `DEFAULT_CONN` session only. Standard upstream behavior: keyboard, mouse, clipboard, file transfer, audio, and any other upstream-supported capability all work unmodified. No camera, no voice call. Shown only when `desktop_share_enabled = true`.
+- **Support button** -> always one `VIEW_CAMERA` session + a Voice Call on it (`session_request_voice_call()`, existing `VoiceCallRequest`/`VoiceCallResponse` messages — confirmed to work standalone on `VIEW_CAMERA` with no `DEFAULT_CONN` required, `docs/session-orchestration-analysis.md` §9-10). Additionally opens a `DEFAULT_CONN` session when `desktop_share_enabled = true`. Voice Call remains subject to the existing upstream accept/reject workflow on the remote side. Shown only when `support_enabled = true`.
+- Each button renders only when its own flag is true. At least one flag must be true (config with both false is rejected).
 
-### Superseded: single Start Session model
+### Superseded models (kept for history)
 
-~~Start Session action launches camera + two-way audio always, desktop optionally when `desktop_enabled = true`, as a single user action.~~ This required combining audio onto a `VIEW_CAMERA` session, which upstream doesn't do by default. The Support/Desktop model avoids that entirely by using `DEFAULT_CONN` for anything that needs audio.
+~~Start Session action launches camera + two-way audio always, desktop optionally when `desktop_enabled = true`, as a single user action.~~ Superseded because it required combining audio onto a `VIEW_CAMERA` session, which upstream doesn't do by default.
+
+~~Support = `DEFAULT_CONN` + `VIEW_CAMERA` always (single `support_enabled` flag), audio via `DEFAULT_CONN`; Desktop unconditional.~~ Superseded once Voice Call was confirmed to work standalone on `VIEW_CAMERA` — `DEFAULT_CONN` is no longer required for Support at all, and Desktop is no longer unconditional.
 
 ---
 
@@ -139,11 +141,12 @@ Two independent actions, each already an existing upstream session mechanism —
 
 Actual configuration format: TOML (see `docs/architecture.md` for the concrete schema and file location; any `key = value` shown in this document is TOML, not YAML — examples elsewhere in the doc set are illustrative unless explicitly marked as TOML).
 
-Required configuration keys (revised 2026-08-28):
+Required configuration keys (revised 2026-08-28 — `desktop_share_enabled` added):
 
 version
 role
 support_enabled
+desktop_share_enabled
 authentication.mode
 listen_address
 listen_port
@@ -151,7 +154,11 @@ video_quality
 audio_quality
 log_level
 
-**`support_enabled`** (new) — gates whether the Support button is rendered. `camera_enabled`, `audio_enabled`, and `desktop_enabled` from the prior schema are **removed as an assumption of this revision, pending confirmation**: under the Support/Desktop model neither has a remaining referent — Desktop is unconditionally available (no gate needed) and Support unconditionally launches both `DEFAULT_CONN` and `VIEW_CAMERA` when enabled (no independent camera/audio toggle). `listen_address`, `listen_port`, `video_quality`, `audio_quality`, `log_level` are unaffected by this revision and remain reserved for their respective future phases (Direct-IP transport, minimal UI).
+**`support_enabled`** — gates the Support button (local UI) and, on the remote side, whether `VIEW_CAMERA` (and therefore Voice Call) connections are accepted at all, by reusing the existing upstream `enable-camera` permission (`libs/hbb_common/src/config.rs:2902`, enforced at `src/server/connection.rs:2544-2551`) — no new authentication code. **`desktop_share_enabled`** — gates the Desktop button (local UI). **Validation:** at least one of the two must be true; a config with both false is rejected.
+
+**Known gap, documented not silently worked around:** unlike `support_enabled`/`enable-camera`, there is **no existing upstream permission that rejects a `DEFAULT_CONN` login outright** (`DEFAULT_CONN`'s video is unconditional once accepted — see `docs/session-orchestration-analysis.md` §2 desktop-video-permission findings). So `desktop_share_enabled = false` is enforced **only at the local UI** (Desktop button hidden) — it does not, and today cannot without a new authentication-path check, prevent a `DEFAULT_CONN` login attempt at the remote side. Flagged for a decision rather than silently adding new authentication code or silently leaving it unenforced.
+
+`camera_enabled`, `audio_enabled`, and `desktop_enabled` from the prior schema remain removed — no referent under this model. `listen_address`, `listen_port`, `video_quality`, `audio_quality`, `log_level` are unaffected and remain reserved for their respective future phases.
 
 Version changes must be backward compatible or provide migration guidance. This revision keeps `version = 1` (pre-release, no deployed configs depend on backward compatibility yet) but is recorded here and in `CHANGELOG_IMPLEMENTATION.md` for traceability.
 
@@ -177,8 +184,10 @@ When upgrading upstream RustDesk:
 - ask mode works.
 - password mode works.
 - ask_and_password mode works.
-- Desktop button launches a standard upstream `DEFAULT_CONN` session with all upstream capabilities (keyboard, mouse, clipboard, file transfer, audio) intact.
-- Support button launches `DEFAULT_CONN` + `VIEW_CAMERA` together, only when `support_enabled = true`; the button itself must not render when `support_enabled = false`.
+- Desktop button launches a standard upstream `DEFAULT_CONN` session with all upstream capabilities (keyboard, mouse, clipboard, file transfer, audio) intact; shown only when `desktop_share_enabled = true`.
+- Support button launches `VIEW_CAMERA` + Voice Call always, plus `DEFAULT_CONN` when `desktop_share_enabled = true`; shown only when `support_enabled = true`.
+- A configuration with both flags false is rejected.
+- Remote side rejects `VIEW_CAMERA`/Voice Call when `support_enabled = false` (via `enable-camera`).
 - Public-ID workflow absent from user experience.
 - Relay workflow absent from user experience.
 - Rendezvous workflow absent from user experience.
