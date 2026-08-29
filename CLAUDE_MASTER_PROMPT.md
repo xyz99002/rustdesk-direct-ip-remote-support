@@ -470,12 +470,6 @@ role = "local"
 
 
 
-[authentication]
-
-mode = "ask"
-
-
-
 camera_enabled = true
 
 audio_enabled = true
@@ -498,7 +492,15 @@ audio_quality = "medium"
 
 log_level = "info"
 
+
+
+[authentication]
+
+mode = "ask"
+
 ```
+
+Note: `[authentication]` must be the last section in the file — in TOML, every `key = value` line after a `[table]` header belongs to that table, not the top level. This ordering was verified by `src/fork_config.rs`'s own test suite.
 
 
 

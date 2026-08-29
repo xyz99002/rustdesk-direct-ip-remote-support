@@ -52,11 +52,13 @@ The fork's own configuration is a TOML file (confirmed 2026-08-28: reuses the `t
 Full schema (per `docs/FORK_PROFILE_SPEC.md`'s "Configuration Profile" and `CLAUDE_MASTER_PROMPT.md`'s "# Configuration" section):
 
 ```toml
+# NOTE: [authentication] must stay LAST — in TOML, every key = value line after a
+# [table] header belongs to that table, not the top level. This ordering was found to
+# matter in practice: an earlier draft of this example had [authentication] first,
+# which would have silently nested every key below it under authentication.* instead
+# of the top level (caught by fork_config.rs's own test suite).
 version = 1
 role = "local"
-
-[authentication]
-mode = "ask"
 
 camera_enabled = true
 audio_enabled = true
@@ -69,6 +71,9 @@ video_quality = "medium"
 audio_quality = "medium"
 
 log_level = "info"
+
+[authentication]
+mode = "ask"
 ```
 
 Phase 3 (Configuration and Role Restriction) implements loading and validation of the full schema above, but only wires `version`, `role`, and `authentication.mode` to actual behavior — see the mapping tables above. The remaining keys (`camera_enabled`, `audio_enabled`, `desktop_enabled`, `listen_address`, `listen_port`, `video_quality`, `audio_quality`, `log_level`) are parsed and type/range-validated now so the file format doesn't need a breaking version bump later, but are inert until their owning phase (Media, Direct-IP transport, minimal UI) wires them up.
