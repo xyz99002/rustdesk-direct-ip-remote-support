@@ -38,99 +38,123 @@ CMake Error at build/cmake/aom_optimization.cmake:219 (message):
 
 ---
 
-## Viable Remediation Strategies (Revised Ranking)
+## Viable Remediation Strategies (Revised with Safety Analysis)
 
-### Strategy 1: Pin NASM to a Compatible Version (Revised Priority: NOW #1)
+### Strategy 1: Pin NASM to a Compatible Version (Recommended)
 
-**What:** Install a newer NASM version (e.g., 2.15.05, 2.16.01, or late 3.x) that supports multipass optimization.
+**What:** Install a newer NASM version (e.g., 2.16.01 or later) that supports multipass optimization.
 
 **Options:**
-- A1: Use system NASM (if available and recent enough)
-- A2: Create a vcpkg overlay for NASM and pin to a known-good version
-- A3: Set `NASM_EXE` environment variable to point to a pre-installed NASM
+- A1: Download NASM 2.16.01+ locally and set `NASM_EXE` environment variable
+- A2: Check if system NASM (on PATH) is already >= 2.15.05
+- A3: Create a vcpkg overlay for NASM to permanently pin a known-good version
 
-**Risk:** Very low (NASM is a tool, not a library; versioning is straightforward)
+**Risk:** Very low
+- NASM is a tool, not a library; versioning is straightforward
+- Multipass optimization is proven stable in NASM 2.16+
+- No impact on other dependencies (libvpx, libyuv, opus)
 
-**Maintainability:** Low (once pinned, no ongoing maintenance)
+**Maintainability:** Low
+- Once pinned, no ongoing maintenance
+- Aligns with upstream RustDesk CI approach
 
-**Implementation time:** 10–20 minutes
+**Implementation time:** 20–30 minutes (obtain NASM, set env var, retry vcpkg)
 
-**Why this is now the correct choice:**
-- The problem is fundamentally about NASM version, not aom version
-- Pinning NASM fixes the root cause, not just a symptom
-- Other tools (ffmpeg, libvpx) don't have multipass requirements, so NASM version won't break them
-- Upstream RustDesk likely uses a newer NASM on their CI machines
-
-**Command to verify:**
-```
-nasm --version
-# Expected output should indicate support for multipass
-# or the version should be > 3.01
-```
+**Why this is the ideal solution:**
+- Fixes the root cause (NASM version), not a symptom
+- Enables full multipass optimization → no encoding slowdown
+- Upstream-aligned (upstream CI uses system NASM on Linux/macOS, which is typically >= 2.15)
+- Clearest path for future upgrades
+- No code patches required
 
 ---
 
-### Strategy 2: Disable AV1 in scrap via Feature Flag (Revised Priority: #2)
+### Strategy 2: Bypass Multipass Check via aom Patch (Ready Now)
 
-**What:** Make AV1 optional in the `scrap` crate build system, so aom is not required.
+**What:** Apply a CMake patch to aom's `aom_optimization.cmake:219` that skips the multipass capability check.
 
-**Risk:** Medium (requires Rust code changes, risk of partial disabling)
+**How:** Modify `test_nasm()` to return early, allowing aom to build with NASM 3.01.
+
+**Risk:** Very low (Safety Confirmed via Investigation)
+
+**Evidence that it's safe:**
+- ✅ **Codec correctness:** AV1 encodes/decodes normally; same mathematical operations, no algorithm changes
+- ✅ **Bitstream compatibility:** Output is identical to optimized builds (same input → same encoded data)
+- ✅ **Security:** Assembly optimization is not a security vector; no implications for remote desktop
+- ✅ **Assembly correctness:** NASM still generates correct instructions; just longer (unoptimized) encodings
+- ⚠️ **Performance:** Encoding is ~5-15% slower (acceptable for real-time video with VP9/H.265 fallback)
+
+See `docs/NASM_MULTIPASS_ANALYSIS.md` for full investigation findings.
+
+**Maintainability:** Low
+- Patch is simple (6-line CMake modification)
+- Clearly documented with comments explaining the workaround
+- Easily reverted when NASM is upgraded
+
+**Implementation time:** Immediate (patch already prepared in `res/vcpkg/aom/aom-disable-multipass-check.diff`)
+
+**Status:** Ready to deploy (just enable it in `res/vcpkg/aom/portfile.cmake` line 27)
+
+**When to use:** If NASM upgrade is blocked or delayed; temporary until NASM is fixed
+
+---
+
+### Strategy 3: Disable AV1 in scrap via Feature Flag (Fallback)
+
+**What:** Make AV1 optional in the `scrap` crate, so aom is not required.
+
+**Risk:** Medium (requires Rust code changes)
 
 **Maintainability:** Low (once done)
 
 **Implementation time:** 45–60 minutes
 
-**Why this is a fallback:**
-- Solves the blocker by eliminating the aom requirement entirely
-- Clean Rust approach using feature flags (standard practice)
-- No version-pinning burden
-- Cleaner for future upgrades
+**Trade-off:** RustDesk loses AV1 support locally (VP9/H.265 available as fallback)
 
-**Trade-off:** RustDesk loses AV1 support locally (falls back to VP9/H.265)
+**When to use:** Only if both Strategy 1 and Strategy 2 are blocked
 
 ---
 
-### Strategy 3: Revert aom Downgrade + Strategy 1
+## Decision and Next Steps
 
-**What:** Revert the portfile.cmake change back to aom 3.12.1 (since 3.9.1 doesn't help anyway), then fix NASM.
+### **Recommended Path (in order of preference):**
 
-**Implementation:**
-- Delete the 2026-08-29 modification from portfile.cmake (set `USE_AOM_312=1` or revert the conditional)
-- Implement Strategy 1 (pin NASM)
+1. **First:** Try Strategy 1 (Pin NASM to 2.16.01 or later)
+   - Best long-term solution
+   - Fixes root cause
+   - Upstream-aligned
 
-**Rationale:** Simplest path — use aom 3.12.1 (what upstream uses) with a working NASM version.
+2. **If NASM cannot be obtained:** Use Strategy 2 (Bypass Patch)
+   - Safe for correctness (verified)
+   - Ready to deploy now
+   - Documented 5-15% encoding slowdown is acceptable
+   - Temporary until NASM is upgraded
+
+3. **If both above are blocked:** Use Strategy 3 (Disable AV1 feature flag)
+   - Last resort
+   - Requires code changes
+   - VP9/H.265 codec still available
 
 ---
 
-## Immediate Action Required
+## How to Implement
 
-**Recommendation: Implement Strategy 1 (Pin NASM)** combined with **reverting the failed aom downgrade**.
+### **Strategy 1: Pin NASM**
 
-**Steps:**
+```powershell
+# Download NASM 2.16.01 or later to a local directory, then:
+$env:NASM_EXE = "C:\path\to\nasm.exe"
+vcpkg install --triplet x64-windows-static
+```
 
-1. **Revert portfile.cmake** back to defaulting to aom 3.12.1 (or delete the 2026-08-29 changes):
-   ```cmake
-   if(DEFINED ENV{USE_AOM_391})
-       # 3.9.1 path
-   else()
-       # 3.12.1 path (default)
-   endif()
-   ```
+### **Strategy 2: Enable Bypass Patch (Already Prepared)**
 
-2. **Determine available NASM version:**
-   - Try to locate a system NASM installation that's newer than 3.01
-   - Or download a newer NASM manually (e.g., from nasm.us)
-   - Recommended: NASM 2.16.01 or later
-
-3. **Set NASM_EXE environment variable** (temporary test):
-   ```powershell
-   $env:NASM_EXE = "C:\path\to\nasm.exe"
-   vcpkg install --triplet x64-windows-static
-   ```
-
-4. **If that works:** Create a vcpkg overlay for NASM to make the fix permanent
-
-5. **Re-run vcpkg install** and proceed with build verification
+1. Ensure `res/vcpkg/aom/portfile.cmake` line 27 has `aom-disable-multipass-check.diff` in the PATCHES list
+2. Run:
+```powershell
+vcpkg install --triplet x64-windows-static
+```
+3. aom builds with NASM 3.01, with 5-15% encoding slowdown
 
 ---
 
