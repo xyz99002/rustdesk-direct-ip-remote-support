@@ -98,13 +98,13 @@ No custom authentication implementation.
 
 # Role Profile
 
-role = local
+role = "local"
 
 Behavior:
 
 - outbound only
 
-role = remote
+role = "remote"
 
 Behavior:
 
@@ -136,6 +136,8 @@ The user experiences a single action even if multiple upstream session types are
 ---
 
 # Configuration Profile
+
+Actual configuration format: TOML (see `docs/architecture.md` for the concrete schema and file location; any `key = value` shown in this document is TOML, not YAML — examples elsewhere in the doc set are illustrative unless explicitly marked as TOML).
 
 Required configuration keys:
 

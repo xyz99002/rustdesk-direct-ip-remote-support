@@ -15,6 +15,8 @@ Treat the fork as a configuration and UI transformation layer instead of a trans
 6. Produce local-client and remote-client artifacts.
 
 ## Fork Profile Concepts
+Configuration file format: TOML (confirmed 2026-08-28; reuses the `toml`/`confy` crates already in the dependency graph via `hbb_common` — no new dependency). Any YAML-fenced example elsewhere in the doc set is illustrative only, not the actual format.
+
 Configuration should define:
 - role
 - authentication mode

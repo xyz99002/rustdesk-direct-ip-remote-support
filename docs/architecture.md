@@ -45,10 +45,38 @@ Per `docs/DECISIONS.md` and consistent with the `ConnType` findings in `docs/ups
 - The same action additionally starts a desktop/control connection (`DEFAULT_CONN`) when the remote side has `desktop_enabled=true` configured.
 - This does not require a new combined `ConnType` in the protocol — the local client opens the camera+audio connection always, and conditionally opens a second desktop connection, both behind the one button, per the "smallest valid diff" principle in `AGENTS.md`.
 
+## Configuration — TOML, versioned
+
+The fork's own configuration is a TOML file (confirmed 2026-08-28: reuses the `toml`/`confy` crates already in the dependency graph via `hbb_common`; no new dependency — see `docs/FORK_AUTOMATION.md`). Any YAML-fenced example elsewhere in the doc set (including in `CLAUDE_MASTER_PROMPT.md`) is illustrative only, not the actual format.
+
+Full schema (per `docs/FORK_PROFILE_SPEC.md`'s "Configuration Profile" and `CLAUDE_MASTER_PROMPT.md`'s "# Configuration" section):
+
+```toml
+version = 1
+role = "local"
+
+[authentication]
+mode = "ask"
+
+camera_enabled = true
+audio_enabled = true
+desktop_enabled = false
+
+listen_address = "0.0.0.0"
+listen_port = 21118
+
+video_quality = "medium"
+audio_quality = "medium"
+
+log_level = "info"
+```
+
+Phase 3 (Configuration and Role Restriction) implements loading and validation of the full schema above, but only wires `version`, `role`, and `authentication.mode` to actual behavior — see the mapping tables above. The remaining keys (`camera_enabled`, `audio_enabled`, `desktop_enabled`, `listen_address`, `listen_port`, `video_quality`, `audio_quality`, `log_level`) are parsed and type/range-validated now so the file format doesn't need a breaking version bump later, but are inert until their owning phase (Media, Direct-IP transport, minimal UI) wires them up.
+
 ## Upstream baseline
 
 - RustDesk `1.4.9`, commit `6c578292e8ebbbec708b76986ba8c4bc7c509747` (already merged into `main`; work happens on `feature/direct-ip-fork`).
 
-## Traceability note — conflict with `CLAUDE_MASTER_PROMPT.md`
+## Traceability note — conflict with `CLAUDE_MASTER_PROMPT.md` (now resolved)
 
-`CLAUDE_MASTER_PROMPT.md`'s original acceptance criteria ("remote accepts authenticated direct-IP only," "no relay/rendezvous," "mandatory first-run password") reads, taken literally, as a transport/auth *code* change. The frozen decision above achieves the product-level intent (direct-IP-only experience) through UI/config curation instead, and explicitly drops the mandatory-password requirement. This document reflects the user's direct chat instruction, which takes precedence over the checked-in project file. `CLAUDE_MASTER_PROMPT.md` itself has not been edited to match this — noting the discrepancy here so it isn't lost; whether to amend that file is left to the user.
+`CLAUDE_MASTER_PROMPT.md`'s *original* acceptance criteria ("remote accepts authenticated direct-IP only," "no relay/rendezvous," "mandatory first-run password") read, taken literally, as a transport/auth *code* change, conflicting with the frozen decision above. `CLAUDE_MASTER_PROMPT.md` has since been rewritten (2026-08-28) and now explicitly states the same position as this document: no mandatory first-run password, no custom authentication mechanisms, and direct-IP-only achieved through "UI restrictions, Product workflow restrictions, Configuration restrictions... NOT through transport rewrites, custom protocols, networking redesign." The conflict noted here is historical — kept for the record, not because it's still live.

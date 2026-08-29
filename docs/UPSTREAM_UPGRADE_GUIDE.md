@@ -15,6 +15,9 @@ This document describes how to upgrade the Direct-IP RustDesk fork to a newer up
 5. Reapply any required fork-specific patches.
 6. Execute automated regression tests.
 
+## Configuration Format
+The fork's own configuration file is TOML (confirmed 2026-08-28) — reuses the `toml`/`confy` crates already present via `hbb_common`, no new dependency. Any YAML-fenced example elsewhere in the project's documentation is illustrative only.
+
 ## Critical Hook Points
 ### Role Enforcement
 Verify:
