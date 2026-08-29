@@ -107,5 +107,96 @@ A clean `cargo build`/`cargo test` of the full `rustdesk` binary on this Windows
 - Settings page has no Account or Network tab, on both local and remote builds.
 - Connection-manager accept/reject dialogs (including Voice Call's) still appear and function normally.
 
+## Build Environment Verification (added 2026-08-29)
+
+**Before attempting `cargo build`:**
+
+1. **Check for known vcpkg/dependency blockers** (see `docs/BUILD_BLOCKER_ANALYSIS.md`).
+   - aom version: Confirm the upstream version's `res/vcpkg/aom/vcpkg.json` and expected NASM compatibility.
+   - If aom 3.12.1+ is required and you hit NASM multipass errors → apply Strategy 1 (downgrade to 3.9.1) or your chosen remediation from the BUILD_BLOCKER_ANALYSIS.
+
+2. **Run vcpkg dependency resolution:**
+   ```bash
+   vcpkg install libvpx:x64-windows-static libyuv:x64-windows-static opus:x64-windows-static aom:x64-windows-static libjpeg-turbo:x64-windows-static
+   ```
+   - Expected: All packages resolve without error.
+   - If any fail: document the new blocker in `docs/BUILD_BLOCKER_ANALYSIS.md`.
+
+3. **Attempt a clean Rust build:**
+   ```bash
+   cargo build --release
+   ```
+   - Expected: `target/release/rustdesk.exe` (or equivalent) produced; no critical errors.
+   - Time budget: 30–60 minutes (cold start) or 5–15 minutes (incremental).
+   - If blocker: stop; resolve before proceeding to packaging or release phases.
+
+4. **Run fork-specific test suite:**
+   ```bash
+   cargo test -- --test-threads=1
+   ```
+   - Focus on `src/fork_config.rs` tests (role mapping, authentication mode mapping, button visibility).
+   - Expected: All tests pass.
+
+5. **Check Flutter builds for the target platform(s):**
+   ```bash
+   cd flutter
+   flutter pub get
+   flutter build windows --release  # (or macos/linux)
+   ```
+   - Expected: `flutter/build/[windows|macos|linux]/...` directory produced with all assets.
+   - Time budget: 20–30 minutes (cold start) or 5–10 minutes (incremental).
+
+## Packaging Verification (added 2026-08-29)
+
+**After successful builds, prepare release artifacts:**
+
+1. **Ensure fork_config.toml template is up-to-date** (see `docs/PACKAGING_PLAN.md`).
+   - Verify the schema matches `src/fork_config.rs`'s ForkConfig struct.
+   - Provide both local and remote examples.
+
+2. **Build platform-specific installers/packages** (see `docs/PACKAGING_PLAN.md` for detailed steps):
+   - Windows: NSIS or MSI installer (e.g., rustdesk-local-[version]-x64.exe)
+   - macOS: .dmg or .app bundle
+   - Linux: .deb or .rpm packages
+
+3. **Generate checksums** for all artifacts:
+   ```bash
+   sha256sum rustdesk-*.exe rustdesk-*.dmg rustdesk-*.deb > checksums.txt
+   ```
+
+4. **Sign packages** (optional, recommended for Windows/macOS).
+
+## Release Validation (added 2026-08-29)
+
+**Before shipping, complete the full release checklist** (see `docs/RELEASE_CHECKLIST.md`):
+
+1. **Build Verification:** All Rust, Flutter, and packaging steps complete without errors.
+2. **Functional Verification:** Complete all tests in RELEASE_CHECKLIST.md (Support mode, Desktop mode, Voice Call, authentication modes, role enforcement).
+3. **Direct-IP Enforcement Verification:**
+   - [ ] No rendezvous registration (monitor network traffic; see ADR-0003).
+   - [ ] No relay participation (both instances on different networks; relay should not be attempted).
+   - [ ] No LAN discovery ID exposure (send broadcast ping; remote should not respond with ID).
+4. **Regression Testing:** Verify upstream features (keyboard, mouse, clipboard, file transfer, audio) still work, especially on `DEFAULT_CONN` (Desktop mode).
+5. **Documentation review:** Confirm release notes reference `docs/DECISIONS.md`, `docs/architecture.md`, and the relevant ADRs (e.g., ADR-0003 for Direct-IP Enforcement).
+
+**Gate:** All items must pass before release is approved.
+
+## Build Blocker Tracking (added 2026-08-29)
+
+Maintain `docs/BUILD_BLOCKER_ANALYSIS.md` as the authoritative record of:
+- Current blockers (if any)
+- Root-cause classification (environment/RustDesk-design/vcpkg/external)
+- Remediation strategy chosen
+- Workarounds in use
+
+**Trigger an update to this file when:**
+- A new blocker is discovered during an upgrade or build attempt
+- A blocker is resolved
+- A workaround is replaced with a permanent fix
+
 ## Release Acceptance
-Upgrade is accepted only if all checks pass, **and** `docs/FEATURE_ENFORCEMENT_MATRIX.md` has been re-verified against the new upstream version (not just left as-is from the prior baseline).
+Upgrade is accepted only if all checks pass:
+1. **Build Readiness:** `docs/BUILD_BLOCKER_ANALYSIS.md` shows no unresolved blockers; `cargo build --release` succeeds.
+2. **Packaging Readiness:** `docs/PACKAGING_PLAN.md` build steps complete; all platform-specific artifacts generated.
+3. **Functional Readiness:** `docs/RELEASE_CHECKLIST.md` items all pass.
+4. **Documentation Current:** `docs/FEATURE_ENFORCEMENT_MATRIX.md` has been re-verified against the new upstream version (not just left as-is from the prior baseline).

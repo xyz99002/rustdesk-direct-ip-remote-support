@@ -102,18 +102,109 @@ This is the one part of the fork that touches genuine transport-adjacent code, n
 - direct-IP implementation (`direct_server`, `src/client.rs`'s dial path — unaffected by ADR-0003)
 - authentication internals
 
+## Build Prerequisites (2026-08-29)
+
+**Environment:**
+- Rust: `rustc 1.98+`, `cargo 1.98+` (via `rustup stable`)
+- C++ toolchain: MSVC (Windows), Clang (macOS), GCC (Linux)
+- CMake: `4.4+`
+- vcpkg: manifest-mode or classic-mode
+- NASM: `3.02+` (or via vcpkg tools; see `docs/BUILD_BLOCKER_ANALYSIS.md` for NASM compatibility issue)
+- Flutter SDK: stable channel
+
+**Known blocker (2026-08-29):**
+- aom 3.12.1 requires NASM with multipass optimization support; vcpkg's bundled NASM 3.01 lacks this. **Workaround:** downgrade aom to 3.9.1 (see `docs/BUILD_BLOCKER_ANALYSIS.md`, Strategy 1).
+- Manifest-mode vcpkg installs to `<repo>/vcpkg_installed/` but build scripts look for `$VCPKG_ROOT/installed/`. **Workaround:** directory junction linking the two paths (in use; a real fix would set `VCPKG_ROOT` or use `VCPKGRS_TRIPLET`).
+
+**Build commands (after blocker is resolved):**
+```bash
+# Resolve vcpkg dependencies
+vcpkg install libvpx:x64-windows-static libyuv:x64-windows-static opus:x64-windows-static aom:x64-windows-static libjpeg-turbo:x64-windows-static
+
+# Build Rust binary (release)
+cargo build --release
+
+# Build Flutter binary (release, platform-specific)
+cd flutter
+flutter pub get
+flutter build windows --release  # or macos/linux
+```
+
+**Expected output:**
+- Rust binary: `target/release/rustdesk.exe` (Windows) or equivalent (~50–80 MB)
+- Flutter binary: `flutter/build/[windows|macos|linux]/...` (~150–250 MB per platform)
+- Build time: 30–60 minutes (cold start); 5–15 minutes (incremental)
+
+## Packaging Prerequisites (2026-08-29)
+
+**Tools:**
+- NSIS or MSI builder (Windows .exe installer generation)
+- pkgbuild (macOS .dmg generation)
+- dh_make or fpm (Linux .deb/.rpm generation)
+- Code signing tools (if signing is desired)
+
+**Template files:**
+- `fork_config.toml` (sample/default config for each role)
+- Installer scripts/specifications (NSIS script, pkgbuild plist, etc.)
+- License/README files
+
+**Packaging flow:**
+1. Verify Rust binary (`target/release/rustdesk.exe`)
+2. Verify Flutter binary (`flutter/build/.../runner`)
+3. Collect runtime files (MSVC redist for Windows, system libs for Linux, etc.)
+4. Generate installer/package for each platform
+5. Sign and verify checksums
+
+**Expected output:**
+- Windows: `rustdesk-local-[version]-x64.exe` (installer or portable ZIP)
+- macOS: `rustdesk-local-[version].dmg`
+- Linux: `rustdesk-local_[version]_amd64.deb` (Debian/Ubuntu)
+- All: checksums.txt (SHA256 hashes)
+
+**See:** `docs/PACKAGING_PLAN.md` for detailed platform-specific instructions.
+
+## Release Prerequisites and Validation (2026-08-29)
+
+**Before shipping:**
+1. Complete build readiness verification (full `cargo build`, `cargo test`, `flutter build` succeed).
+2. Complete functional verification (all items in `docs/RELEASE_CHECKLIST.md` pass).
+3. Verify Direct-IP enforcement (no rendezvous registration, no relay, no LAN discovery ID exposure).
+4. Verify support_enabled/desktop_share_enabled controls work (buttons show/hide, remote enforces via enable-camera).
+5. Sign packages (optional, recommended for Windows/macOS).
+6. Publish release notes (link to `docs/DECISIONS.md`, `docs/architecture.md`, `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md` for technical context).
+
+**See:** `docs/RELEASE_CHECKLIST.md` for complete functional and regression testing requirements.
+
+## Tracking Build Blockers and Remediation (2026-08-29)
+
+**Current blocker (2026-08-29):**
+- aom 3.12.1 + NASM 3.01 multipass optimization compatibility
+- **Status:** Documented; Strategy 1 (downgrade to aom 3.9.1) is recommended in `docs/BUILD_BLOCKER_ANALYSIS.md`
+- **Next action:** Apply remediation (change `res/vcpkg/aom/portfile.cmake` to default to 3.9.1), re-verify `vcpkg install`, then `cargo build`.
+
+**Future blockers:**
+- Monitor upstream RustDesk for new vcpkg dependencies or build-system changes after upgrades
+- Re-run `cargo build --release` and `flutter build [platform] --release` as part of upgrade verification
+- Update `docs/BUILD_BLOCKER_ANALYSIS.md` with any new issues found
+
+**See:** `docs/BUILD_BLOCKER_ANALYSIS.md` for full root-cause analysis and remediation strategies.
+
 ## Automation Deliverables
 Generate:
-- architecture report
-- compatibility report
-- upgrade report
-- test report
-- packaging report
+- architecture report (docs/architecture.md)
+- compatibility report (docs/FEATURE_ENFORCEMENT_MATRIX.md)
+- upgrade report (docs/UPSTREAM_UPGRADE_GUIDE.md)
+- build readiness report (docs/BUILD_BLOCKER_ANALYSIS.md)
+- packaging plan (docs/PACKAGING_PLAN.md)
+- release checklist (docs/RELEASE_CHECKLIST.md)
+- test report (CHANGELOG_IMPLEMENTATION.md)
 
 ## Future Enhancement
 Create a scripted upgrade tool that:
 - imports upstream
-- checks hook points
-- applies fork profile
-- runs verification tests
-- generates release artifacts
+- checks hook points (via `docs/HOOK_POINTS.md` and source inspection)
+- applies fork profile (config mapping, UI conditionals)
+- resolves build blockers (vcpkg/aom, or report blocker to user)
+- runs verification tests (build, functional, Direct-IP enforcement)
+- generates release artifacts (platform-specific binaries/installers)
+- publishes release notes (referencing frozen docs, ADRs, changesets)
