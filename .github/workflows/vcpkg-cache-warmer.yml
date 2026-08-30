@@ -65,3 +65,49 @@ jobs:
           echo "Cache warmed successfully!"
           echo "Cached packages:"
           ls -lah $VCPKG_ROOT/installed/x64-linux/lib/ 2>/dev/null | head -20
+
+  # Windows uses a different vcpkg triplet (x64-windows-static) than Linux (x64-linux).
+  # GitHub Actions binary cache keys are triplet/host-specific, so warming Linux alone
+  # never helps the Windows job in direct-ip-build.yml - it needs its own warmer run.
+  warm-vcpkg-cache-windows:
+    name: Warm vcpkg Binary Cache (Windows)
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Setup vcpkg with Github Actions binary cache
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies (cache warmer)
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
+        run: |
+          & "$env:VCPKG_ROOT\vcpkg" `
+            install `
+            --triplet x64-windows-static `
+            --x-install-root="$env:VCPKG_ROOT\installed"
+          if ($LASTEXITCODE -ne 0) {
+            Get-ChildItem -Path "$env:VCPKG_ROOT\" -Filter "*.log" -Recurse | ForEach-Object {
+              Write-Host "=== $($_.FullName) ==="
+              Get-Content $_.FullName | Select-Object -First 50
+              Write-Host ""
+            }
+            exit 1
+          }
+          Write-Host "Cache warmed successfully!"
+        shell: pwsh
