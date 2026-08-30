@@ -84,11 +84,12 @@ jobs:
         env:
           VCPKG_DEFAULT_HOST_TRIPLET: ${{ matrix.vcpkg-triplet }}
         run: |
-          if ! $VCPKG_ROOT/vcpkg `
+          & "$env:VCPKG_ROOT\vcpkg" `
             install `
             --triplet ${{ matrix.vcpkg-triplet }} `
-            --x-install-root="$VCPKG_ROOT/installed"; then
-            Get-ChildItem -Path "$VCPKG_ROOT/" -Filter "*.log" -Recurse | ForEach-Object {
+            --x-install-root="$env:VCPKG_ROOT\installed"
+          if ($LASTEXITCODE -ne 0) {
+            Get-ChildItem -Path "$env:VCPKG_ROOT\" -Filter "*.log" -Recurse | ForEach-Object {
               Write-Host "=== $($_.FullName) ==="
               Get-Content $_.FullName | Select-Object -First 50
               Write-Host ""
