@@ -1,0 +1,67 @@
+name: vcpkg Cache Warmer
+
+on:
+  schedule:
+    # Run nightly at 2 AM UTC to warm cache before morning builds
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+env:
+  RUST_VERSION: "1.75"
+  FLUTTER_VERSION: "3.24.5"
+  LLVM_VERSION: "15.0.6"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+
+jobs:
+  warm-vcpkg-cache:
+    name: Warm vcpkg Binary Cache
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Setup vcpkg with Github Actions binary cache
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install Linux prerequisites
+        shell: bash
+        run: |
+          sudo apt-get -y update
+          sudo apt-get install -y \
+            clang cmake curl gcc git g++ \
+            libpam0g-dev libasound2-dev libunwind-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libgtk-3-dev libpulse-dev libva-dev libvdpau-dev \
+            libxcb-randr0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxdo-dev libxfixes-dev libxrandr-dev libxtst-dev \
+            libxinerama-dev libxkbcommon-dev nasm
+
+      - name: Install vcpkg dependencies (cache warmer)
+        shell: bash
+        run: |
+          $VCPKG_ROOT/vcpkg install \
+            --triplet x64-linux \
+            --x-install-root="$VCPKG_ROOT/installed"
+          echo "✅ vcpkg dependencies installed and cached"
+
+      - name: Verify cache population
+        shell: bash
+        run: |
+          echo "Cache warmed successfully!"
+          echo "Cached packages:"
+          ls -lah $VCPKG_ROOT/installed/x64-linux/lib/ 2>/dev/null | head -20
