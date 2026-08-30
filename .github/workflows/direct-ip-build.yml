@@ -90,6 +90,7 @@ jobs:
             ./src/bridge_generated.rs
             ./src/bridge_generated.io.rs
             ./flutter/lib/generated_bridge.dart
+            ./flutter/lib/generated_bridge.freezed.dart
           if-no-files-found: error
 
   # Windows x64 Flutter Build: Direct-IP primary UI target
