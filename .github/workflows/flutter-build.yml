@@ -6,7 +6,7 @@ on:
       upload-artifact:
         type: boolean
         default: true
-    upload-release:
+      upload-release:
         type: boolean
         default: false
       upload-tag:
