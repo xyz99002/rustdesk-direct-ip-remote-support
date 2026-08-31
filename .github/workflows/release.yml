@@ -1,0 +1,76 @@
+name: Create Direct-IP Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      direct-ip-version:
+        description: "Direct-IP release version (for example 1.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build RustDesk Direct-IP ${{ inputs.direct-ip-version }}
+    uses: ./.github/workflows/flutter-build.yml
+    with:
+      upload-artifact: true
+      upload-release: true
+      upload-tag: v${{ inputs.direct-ip-version }}
+
+  finalize-release:
+    name: Finalize GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read RustDesk baseline version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/^[[:space:]]*VERSION:[[:space:]]*"\([^"]*\)".*/\1/p' .github/workflows/flutter-build.yml | head -n 1)
+
+          if [ -z "$VERSION" ]; then
+            echo "Could not determine RustDesk VERSION from flutter-build.yml"
+            exit 1
+          fi
+
+          echo "rustdesk=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "RustDesk baseline: $VERSION"
+
+      - name: Create release notes
+        shell: bash
+        run: |
+          cat > release-notes.md <<EOF
+          ## RustDesk Direct-IP v${{ inputs.direct-ip-version }}
+
+          Direct-IP release version: **${{ inputs.direct-ip-version }}**
+
+          Based on RustDesk: **${{ steps.version.outputs.rustdesk }}**
+
+          ### Build information
+
+          - RustDesk baseline: \`${{ steps.version.outputs.rustdesk }}\`
+          - Direct-IP version: \`${{ inputs.direct-ip-version }}\`
+          - Windows builds are unsigned.
+          - Android builds are unsigned unless Android signing credentials are configured.
+
+          This release was built automatically by the repository's
+          \`flutter-build.yml\` workflow.
+          EOF
+
+      - name: Finalize release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ inputs.direct-ip-version }}"
+
+          gh release edit "$TAG" \
+            --title "RustDesk Direct-IP v${{ inputs.direct-ip-version }}" \
+            --notes-file release-notes.md \
+            --prerelease=false
