@@ -16,8 +16,8 @@ All actions used across the fork's workflows (direct-ip-build.yml, flutter-ci.ym
 | **actions/checkout** | v4 (used) | Node 20 | ⚠️ DEPRECATED | v4.2.0+ (latest v4) | ✅ LOW | Official action; v4 is latest major; GitHub is forcing to Node 24; upgrade to latest patch avoids warning |
 | **actions/checkout** | v3 (legacy, commented out in ci.yml) | Node 16 | ⚠️ END-OF-LIFE | v4 | ✅ LOW | Only commented-out in code; no active risk; consider deleting |
 | **actions/cache** | v3 | Node 16 | ⚠️ DEPRECATED-OLDER | v4 | ✅ LOW | v4 is available and stable; recommend upgrade to avoid future warnings |
-| **actions/upload-artifact** | v7.0.1 (used) | Node 20 | ⚠️ DEPRECATED | v7.1.0+ or v8.3.0+ | ✅ LOW | Stable; using v7 is fine but v8 is current major; GitHub forcing to Node 24 anyway |
-| **actions/download-artifact** | v8.0.1 (used) | Node 20 | ⚠️ DEPRECATED | v8.1.0+ (latest v8) | ✅ LOW | Latest v8 already available; minimal upgrade risk |
+| **actions/upload-artifact** | v7.0.1 (used) | Node 20 | ⚠️ DEPRECATED | v7.0.1 — already the latest v7.x release | ✅ LOW | **Correction (2026-09-01): v7.1.0 does not exist and was previously listed here in error — verified via GitHub API against actions/upload-artifact/releases.** v7.0.1 is current; a v8.x major exists separately but was not evaluated. |
+| **actions/download-artifact** | v8.0.1 (used) | Node 20 | ⚠️ DEPRECATED | v8.0.1 — already the latest v8.x release | ✅ LOW | **Correction (2026-09-01): v8.1.0 does not exist and was previously listed here in error — verified via GitHub API against actions/download-artifact/releases.** v8.0.1 is current. |
 | **actions/github-script** | v6 (used) | Node 16 | ⚠️ DEPRECATED-OLDER | v7 | ⚠️ MEDIUM | v7 requires Node 20; v7 itself may be deprecated soon; consider compatibility timeline |
 | **actions/github-script** | v7 (used in some workflows) | Node 20 | ⚠️ DEPRECATED | v7.0.1+ (latest v7) | ✅ LOW | Upgrade to latest patch |
 | **apple-actions/import-codesign-certs** | v1 | Node 12 | ⚠️ OLD/UNMAINTAINED | No direct replacement; community-maintained fork may exist | ⚠️ MEDIUM | Non-official; verify if a maintained version exists (e.g., apple-actions/import-codesign-certs@v2 or alternatives); low risk since it runs only on macOS runners |
@@ -44,17 +44,17 @@ All actions used across the fork's workflows (direct-ip-build.yml, flutter-ci.ym
 
 | Action | Current | Recommended | Effort | Risk |
 |---|---|---|---|---|
-| `actions/checkout` | v4 | v4.2.0+ | 1 line × ~12 files | ✅ LOW — same major version, fully compatible |
-| `actions/download-artifact` | v8.0.1 | v8.1.0+ | 1 line × ~3 files | ✅ LOW — same major version, patch level upgrade |
-| `actions/upload-artifact` | v7.0.1 | v7.1.0+ | 1 line × ~6 files | ✅ LOW — same major version, patch level upgrade |
+| `actions/checkout` | v4 (bare) | v4.2.0 | 1 line × ~12 files | ✅ LOW — same major version, fully compatible |
+| `actions/download-artifact` | v8.0.1 | v8.0.1 (no change — already latest v8.x) | — | N/A |
+| `actions/upload-artifact` | v7.0.1 | v7.0.1 (no change — already latest v7.x) | — | N/A |
 
-**Effect:** Upgrades to latest patches within major versions; no Node.js warning will remain for these three.
+**Effect:** Pins `checkout` to an explicit patch version. `upload-artifact` and `download-artifact` were already correct in the repo and required no change; see the correction note above about the previously-fabricated v7.1.0/v8.1.0 targets.
 
-**Commands** (need to update .github/workflows/*.yml):
+**Commands** (already applied to .github/workflows/*.yml):
 ```
-actions/checkout@v4 → actions/checkout@v4.2.0 (or latest v4.x)
-actions/download-artifact@v8.0.1 → actions/download-artifact@v8.1.0 (or latest v8.x)
-actions/upload-artifact@v7.0.1 → actions/upload-artifact@v7.1.0 (or latest v7.x)
+actions/checkout@v4 → actions/checkout@v4.2.0
+actions/download-artifact@v8.0.1 → (unchanged — v8.1.0 does not exist)
+actions/upload-artifact@v7.0.1 → (unchanged — v7.1.0 does not exist)
 ```
 
 ### Phase 2: Medium-Complexity Upgrades (Post-Release)
