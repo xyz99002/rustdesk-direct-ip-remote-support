@@ -11,7 +11,7 @@ on:
         default: false
       upload-tag:
         type: string
-        default: "nightly"
+        default: ""
 
 # NOTE: F-Droid builder script 'flutter/build_fdroid.sh' reads environment
 # variables from this workflow!
@@ -1994,8 +1994,15 @@ jobs:
           pushd appimage
           sudo appimage-builder --skip-tests --recipe ./AppImageBuilder-${{ matrix.job.arch }}.yml
 
-      - name: Publish appimage package
+      - name: Upload appimage package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: env.UPLOAD_ARTIFACT == 'true'
+        with:
+          name: rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}.AppImage
+          path: ./appimage/rustdesk-${{ env.VERSION }}-*.AppImage
+
+      - name: Publish appimage package
+        if: env.UPLOAD_RELEASE == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           prerelease: true
