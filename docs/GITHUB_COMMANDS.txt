@@ -1,4 +1,4 @@
-# Exact Git Commands for First CI Execution
+# Exact Git Commands for CI Execution
 # Copy-paste ready for immediate execution
 
 # =============================================================================
@@ -19,7 +19,7 @@ git remote -v
 git status
 
 # Expected output:
-# On branch feature/direct-ip-fork
+# On branch master
 # nothing to commit, working tree clean
 
 
@@ -28,36 +28,35 @@ git status
 # =============================================================================
 git log -1 --oneline
 
-# Expected output:
-# c5217fec8 Add comprehensive repository and artifact mapping documentation
+# Expected output (updates as new commits land; check against actual HEAD):
+# bdb601d0f Correct canonical repository references; fix release.yml tag versioning; audit flutter-ci/nightly failures
 
 
 # =============================================================================
-# COMMAND 4: TRIGGER CI - Push Feature Branch to Fork
+# COMMAND 4: TRIGGER CI - Push to Fork
 # =============================================================================
-git push fork feature/direct-ip-fork
+git push fork master
 
 # Expected output (last line most important):
 # ...
 # remote: GitHub has received your request to run this workflow
-#  * [new branch]      feature/direct-ip-fork -> feature/direct-ip-fork
+#  * [new branch]      master -> master   (or a fast-forward update line on subsequent pushes)
 
 
 # =============================================================================
-# COMMAND 5: MONITOR WORKFLOW
+# COMMAND 5: MONITOR WORKFLOWS
 # =============================================================================
 # Open in browser:
 # https://github.com/xyz99002/rustdesk-direct-ip-remote-support/actions
 
-# Expected:
-# - Workflow "Direct-IP Build" appears within 30 seconds
-# - Two jobs run in parallel:
-#   - build-windows-direct-ip (Windows job)
-#   - build-linux-direct-ip (Linux job)
-# - Both jobs should complete in 10-20 minutes total
+# A push to master triggers TWO workflows:
+# - "Direct-IP Build" (direct-ip-build.yml) — Direct-IP-scoped Windows + Linux build/test
+# - "Full Flutter CI" (flutter-ci.yml) — the full upstream flutter-build.yml matrix
+#   (Windows/macOS/Linux/Android/AppImage/Flatpak); see docs/CI_WORKFLOW_AUDIT_2026-09-01.md
+#   for known failures in this second workflow.
 
 
 # =============================================================================
 # ONE-LINE EXECUTION (all verification + push)
 # =============================================================================
-git remote -v && git status && git log -1 --oneline && git push fork feature/direct-ip-fork
+git remote -v && git status && git log -1 --oneline && git push fork master
