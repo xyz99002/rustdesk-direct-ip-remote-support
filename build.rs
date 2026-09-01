@@ -1,3 +1,7 @@
+// Triggered GCC7/AOM compatibility verification run - validating aom-gcc7-avx2-compat.diff patch
+// See: res/vcpkg/aom/aom-gcc7-avx2-compat.diff (commit f2b7a0942)
+// Verification ticket: Testing build-rustdesk-linux-sciter x86_64 leg for _mm256_set_m128i compatibility
+
 #[cfg(windows)]
 fn build_windows() {
     let file = "src/platform/windows.cc";
