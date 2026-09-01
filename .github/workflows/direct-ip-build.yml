@@ -83,7 +83,7 @@ jobs:
           ~/.cargo/bin/flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart
 
       - name: Upload bridge artifact
-        uses: actions/upload-artifact@v7.1.0
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: bridge-artifact
           path: |
@@ -121,7 +121,7 @@ jobs:
           submodules: recursive
 
       - name: Restore bridge files
-        uses: actions/download-artifact@v8.1.0
+        uses: actions/download-artifact@v8.0.1
         with:
           name: bridge-artifact
           path: .
@@ -181,7 +181,7 @@ jobs:
           mv ./flutter/build/windows/${{ matrix.flutter-arch }}/runner/Release ./rustdesk
 
       - name: Upload Windows Build Artifacts
-        uses: actions/upload-artifact@v7.1.0
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: rustdesk-direct-ip-windows-${{ matrix.arch }}
           path: rustdesk
@@ -296,7 +296,7 @@ jobs:
           xvfb-run --auto-servernum cargo test --locked --target=${{ matrix.target }} --release -- --test-threads 1
 
       - name: Upload Linux Build Artifacts
-        uses: actions/upload-artifact@v7.1.0
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: rustdesk-direct-ip-linux-${{ matrix.arch }}
           path: target/${{ matrix.target }}/release/rustdesk
