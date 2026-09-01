@@ -1,6 +1,10 @@
 # Quick Start for New Developers
 
-Short version. For full depth, see `docs/DEVELOPER_ONBOARDING.md`.
+**TL;DR version of developer setup.** For full depth, see `docs/DEVELOPER_ONBOARDING.md`; for the daily workflow, see `docs/DEVELOPER_WORKFLOW.md`.
+
+---
+
+## Machine Setup (5 minutes)
 
 ## What you need on your machine
 

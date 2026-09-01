@@ -5,6 +5,12 @@ developer and points to the detailed docs that already exist in this
 repository. It intentionally does not duplicate their content — read it,
 then follow the links for depth.
 
+**Start here based on your immediate goal:**
+- **First 5 minutes?** → `QUICK_START_FOR_NEW_DEVELOPER.md`
+- **Daily workflow (edit → push → CI)?** → `DEVELOPER_WORKFLOW.md`
+- **CI build failed?** → `CI_TROUBLESHOOTING.md`
+- **Full architectural understanding?** → This document (DEVELOPER_ONBOARDING.md)
+
 ---
 
 ## 1. What this fork is
@@ -176,11 +182,10 @@ convention.
 
 ## 7. Where to look when CI fails
 
-Start with these two living documents rather than re-diagnosing from
-scratch:
-- `docs/CI_WORKFLOW_AUDIT_2026-09-01.md` — the most current, detailed audit
-  of every workflow, with root causes and fixes for issues found so far.
-- `docs/BUILD_VERIFICATION_RESULTS.md` — build execution results log.
+Start with these documents rather than re-diagnosing from scratch:
+- `CI_TROUBLESHOOTING.md` — **First stop**: golden path to fix common failures (click the red job, read the error, fix locally, push again)
+- `CI_WORKFLOW_AUDIT_2026-09-01.md` — Detailed audit of every workflow, with root causes and fixes for issues found
+- `BUILD_VERIFICATION_RESULTS.md` — Build execution results log and historical context
 
 One currently-known issue worth flagging without going deep here: the
 `build-rustdesk-linux-sciter` job's `x86_64` leg fails on a GCC 7.5.0 /
