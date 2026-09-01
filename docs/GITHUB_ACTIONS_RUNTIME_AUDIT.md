@@ -144,6 +144,6 @@ After Phase 1 upgrades:
 
 | Phase | Actions | Effort | Risk | Timeline | Status |
 |---|---|---|---|---|---|
-| Phase 1 | checkout (patch), download-artifact (patch), upload-artifact (patch) | ~20 lines | ✅ LOW | Now | ⏳ TODO |
+| Phase 1 | checkout (patch), download-artifact (patch), upload-artifact (patch) | ~20 lines | ✅ LOW | Now | ✅ DONE (2026-09-01) |
 | Phase 2 | github-script (minor), cache (minor), softprops (major) | ~10 lines | ⚠️ MEDIUM | Post-release | 📋 PLAN |
 | Phase 3 | apple-actions, lukka/run-vcpkg | TBD | ⚠️ MEDIUM | Q4 2026 | 🔄 WATCH |

@@ -218,12 +218,24 @@ Rationale:
 
 ---
 
-## Decision Point
+## Decision Point: IMPLEMENTED
 
-**Which option does the team prefer?**
+**Decision: Option C (Conditional Finalization with Fallback) — IMPLEMENTED 2026-09-01**
 
-- **A** (Allow Partial) — simpler (~10 lines), but requires documenting partial failure in notes
-- **C** (Conditional with Fallback) — slightly more YAML (~20 lines), but very explicit and always finalized
-- **Other** — propose an alternative
+**Implementation in `.github/workflows/release.yml` (commit 46b7ff2f5):**
 
-**Interim:** Leave as-is (Option: Status Quo) until decision is made. Document it as a known gap (already done in Task 1 and earlier audit docs).
+✅ **`finalize-release` job (success path):**
+   - Condition: `if: success()`
+   - Runs only if the `build` job succeeds
+   - Sets full release title: `RustDesk Direct-IP v${{ inputs.direct-ip-version }}`
+   - Release notes: standard full release message
+   - Prerelease flag: `false` (full release)
+
+✅ **`finalize-release-on-failure` job (failure path):**
+   - Condition: `if: failure()`
+   - Runs only if the `build` job fails
+   - Sets partial release title: `RustDesk Direct-IP v${{ inputs.direct-ip-version }} [Partial]`
+   - Release notes: includes warning, explanation, and link to Actions run
+   - Prerelease flag: `true` (partial release)
+
+**Result:** Release is always finalized with appropriate title/notes even on partial build failure.

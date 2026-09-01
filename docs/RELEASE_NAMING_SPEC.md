@@ -1,7 +1,7 @@
 # Release Naming Specification
 
 **Date:** 2026-09-01  
-**Status:** Specification + Gap Analysis (Decision Finalized: Option 3 chosen for v1.4.9-direct-ip release; Options 1–2 deferred post-release)  
+**Status:** Specification + Gap Analysis (Decision Finalized 2026-09-01: Option 3 chosen; Options 1-2 deferred post-release)  
 **Context:** RustDesk Direct-IP fork release artifacts need consistent naming across three contexts: Git tags, GitHub Releases, and downloadable asset filenames.
 
 ---
