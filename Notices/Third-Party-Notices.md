@@ -32,7 +32,7 @@ The corresponding source code for this modified version is available at:
 
 
 
-https://github.com/xyz99002/rustdesk-direct-ip
+https://github.com/xyz99002/rustdesk-direct-ip-remote-support
 
 
 

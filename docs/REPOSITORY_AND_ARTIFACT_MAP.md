@@ -28,17 +28,32 @@
 | Property | Value |
 |----------|-------|
 | **Repository Path** | C:\Work\RustDesk |
-| **Primary Branch** | feature/direct-ip-fork |
-| **Main Branch (PR target)** | main |
-| **Git Remote** | (configured in local .git/config) |
-| **Current Status** | Phase 5 (Build Verification) |
+| **Canonical GitHub Repository** | https://github.com/xyz99002/rustdesk-direct-ip-remote-support |
+| **Primary Branch** | master |
+| **Git Remote (`fork`)** | https://github.com/xyz99002/rustdesk-direct-ip-remote-support.git |
+| **Git Remote (`upstream`)** | https://github.com/rustdesk/rustdesk.git |
+| **Current Status** | GitHub Actions CI validation; architecture is one executable + TOML role config (no separate Local/Remote executables) |
 
-**Important commits:**
-- `bce6e66cc` — Session Orchestration: verify audio-on-camera and desktop-video permission evidence
-- `b79e44c75` — Session Orchestration: analysis and hook-point registry
-- `6bab1fcbb` — Phase 3: implement versioned TOML config, role restriction, authentication-mode mapping
-- `f6b4b1106` — Confirm TOML as fork's actual config format
-- `8c4ec777e` — Attempted FFI bindgen allowlist regex fix; created CI strategy docs
+**Note on repository history:** This repository was previously named `rustdesk-direct-ip` (and, before that, development also referenced a now-deleted `RustDesk-direct-ip-remote-support` fork under a different account). It was renamed/consolidated to its current canonical location above. All docs and workflow references in this repo should point only at the canonical URL.
+
+**Local remote configuration** (`git remote -v`, verified 2026-09-01):
+```
+fork      https://github.com/xyz99002/rustdesk-direct-ip-remote-support.git (fetch)
+fork      https://github.com/xyz99002/rustdesk-direct-ip-remote-support.git (push)
+upstream  https://github.com/rustdesk/rustdesk.git (fetch)
+upstream  https://github.com/rustdesk/rustdesk.git (push)
+```
+
+**Recent commits (`master`, most recent first):**
+- `d09b1f8e0` — Fixed Linux Sciter build failure RELEASE check was missed
+- `2b82ae2aa` — Rename build artifacts for Direct-IP
+- `b8d3f5d5b` — Fix artifact and release separation for Linux and Android
+- `583ca3d18` — Add project notices
+- `3f5da82c9` — Add manual Direct-IP release workflow (`release.yml`)
+- `c7b3a0572` — Separate build artifacts from release publishing
+- `5ca094ccf` — Enable Flutter build artifact uploads
+- `ddf9e54fb` — Fix Windows build: upload the missing generated_bridge.freezed.dart
+- `c400d043d` — Add Windows job to vcpkg cache warmer
 
 ---
 

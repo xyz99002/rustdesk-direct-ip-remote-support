@@ -16,7 +16,7 @@
 
 2. **Git Remote Configuration**
    ```bash
-   git remote add fork https://github.com/xyz99002/rustdesk-direct-ip.git
+   git remote add fork https://github.com/xyz99002/rustdesk-direct-ip-remote-support.git
    ```
 
 3. **Branch Naming Convention**
@@ -195,7 +195,7 @@ If cargo build fails with bindgen errors in Linux CI:
 
 ### Step 1: Configure Remote (One-Time)
 ```bash
-git remote add fork https://github.com/xyz99002/rustdesk-direct-ip.git
+git remote add fork https://github.com/xyz99002/rustdesk-direct-ip-remote-support.git
 # Verify:
 git remote -v
 ```
@@ -209,7 +209,7 @@ git push fork feature/direct-ip-fork
 ```
 
 ### Step 3: Monitor Workflow Execution
-- Navigate to: `https://github.com/xyz99002/rustdesk-direct-ip/actions`
+- Navigate to: `https://github.com/xyz99002/rustdesk-direct-ip-remote-support/actions`
 - Click: "Direct-IP Build" workflow run
 - Watch: Windows and Linux jobs execute in parallel
 

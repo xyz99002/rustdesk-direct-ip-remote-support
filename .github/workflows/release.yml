@@ -12,37 +12,50 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build RustDesk Direct-IP ${{ inputs.direct-ip-version }}
-    uses: ./.github/workflows/flutter-build.yml
-    with:
-      upload-artifact: true
-      upload-release: true
-      upload-tag: v${{ inputs.direct-ip-version }}
-
-  finalize-release:
-    name: Finalize GitHub Release
-    needs: build
+  determine-version:
+    name: Compute combined release tag
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.compute.outputs.tag }}
+      rustdesk-version: ${{ steps.compute.outputs.rustdesk-version }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Read RustDesk baseline version
-        id: version
+      - name: Compute tag from upstream RustDesk version + Direct-IP suffix
+        id: compute
         shell: bash
         run: |
-          VERSION=$(sed -n 's/^[[:space:]]*VERSION:[[:space:]]*"\([^"]*\)".*/\1/p' .github/workflows/flutter-build.yml | head -n 1)
+          RUSTDESK_VERSION=$(sed -n 's/^[[:space:]]*VERSION:[[:space:]]*"\([^"]*\)".*/\1/p' .github/workflows/flutter-build.yml | head -n 1)
 
-          if [ -z "$VERSION" ]; then
+          if [ -z "$RUSTDESK_VERSION" ]; then
             echo "Could not determine RustDesk VERSION from flutter-build.yml"
             exit 1
           fi
 
-          echo "rustdesk=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "RustDesk baseline: $VERSION"
+          TAG="v${RUSTDESK_VERSION}-direct-ip.${{ inputs.direct-ip-version }}"
 
+          echo "rustdesk-version=$RUSTDESK_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "RustDesk baseline: $RUSTDESK_VERSION"
+          echo "Combined release tag: $TAG"
+
+  build:
+    name: Build RustDesk Direct-IP ${{ inputs.direct-ip-version }}
+    needs: determine-version
+    uses: ./.github/workflows/flutter-build.yml
+    with:
+      upload-artifact: true
+      upload-release: true
+      upload-tag: ${{ needs.determine-version.outputs.tag }}
+
+  finalize-release:
+    name: Finalize GitHub Release
+    needs: [determine-version, build]
+    runs-on: ubuntu-latest
+
+    steps:
       - name: Create release notes
         shell: bash
         run: |
@@ -51,12 +64,13 @@ jobs:
 
           Direct-IP release version: **${{ inputs.direct-ip-version }}**
 
-          Based on RustDesk: **${{ steps.version.outputs.rustdesk }}**
+          Based on RustDesk: **${{ needs.determine-version.outputs.rustdesk-version }}**
 
           ### Build information
 
-          - RustDesk baseline: \`${{ steps.version.outputs.rustdesk }}\`
+          - RustDesk baseline: \`${{ needs.determine-version.outputs.rustdesk-version }}\`
           - Direct-IP version: \`${{ inputs.direct-ip-version }}\`
+          - Release tag: \`${{ needs.determine-version.outputs.tag }}\`
           - Windows builds are unsigned.
           - Android builds are unsigned unless Android signing credentials are configured.
 
@@ -68,9 +82,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v${{ inputs.direct-ip-version }}"
+          TAG="${{ needs.determine-version.outputs.tag }}"
 
           gh release edit "$TAG" \
+            --repo "${{ github.repository }}" \
             --title "RustDesk Direct-IP v${{ inputs.direct-ip-version }}" \
             --notes-file release-notes.md \
             --prerelease=false
