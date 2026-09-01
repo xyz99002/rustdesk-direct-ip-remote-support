@@ -1,5 +1,4 @@
 diff --git a/aom_dsp/flow_estimation/x86/disflow_avx2.c b/aom_dsp/flow_estimation/x86/disflow_avx2.c
-index original..patched 100644
 --- a/aom_dsp/flow_estimation/x86/disflow_avx2.c
 +++ b/aom_dsp/flow_estimation/x86/disflow_avx2.c
 @@ -17,6 +17,15 @@
