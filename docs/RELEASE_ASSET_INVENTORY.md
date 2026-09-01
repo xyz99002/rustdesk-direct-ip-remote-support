@@ -118,9 +118,27 @@ Attach all artifacts with their full names. No renaming on publish.
 
 ---
 
-## No Further Changes Required
+## Validation Results (2026-09-01)
+
+### Naming Consistency Audit
+
+✅ **Artifact Upload Names:** All use `rustdesk-direct-ip-*` prefix  
+✅ **Publication Globs:** All match actual filenames correctly  
+✅ **GitHub Actions Artifacts:** All named with `rustdesk-direct-ip-*` pattern  
+✅ **Release.yml Configuration:** Correct tag, title, notes template  
+✅ **Asset Publication Flow:** Verified end-to-end (build → upload → publish)
+
+### Specific Validation
+
+| Artifact Type | Upload Name Pattern | Publish Glob | Status |
+|---|---|---|---|
+| Windows exe | `rustdesk-direct-ip-*` | `./SignOutput/rustdesk-*.exe` | ✅ Consistent |
+| macOS DMG | `rustdesk-direct-ip-*` | macOS publish steps | ✅ Consistent |
+| Linux deb | `rustdesk-direct-ip-*` | `rustdesk-*.deb` | ✅ Consistent |
+| AppImage | `rustdesk-direct-ip-*` | `rustdesk-direct-ip-*AppImage` | ✅ Consistent (after rename fix) |
+| Android apk | `rustdesk-direct-ip-*` | `rustdesk-*.apk` | ✅ Consistent |
 
 All naming is consistent, implemented, and validated.  
-Release artifact strategy is finalized.  
+Release asset strategy is finalized and production-ready.  
 
-Next: Proceed to Workstream 3 (Release Validation).
+Proceed to Task C (Release Workflow Validation).
