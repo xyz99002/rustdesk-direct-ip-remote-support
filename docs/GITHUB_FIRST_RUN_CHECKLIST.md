@@ -1,7 +1,7 @@
 # GitHub Actions First Run Checklist
 
 **Date:** 2026-08-29
-**Repository:** https://github.com/xyz99002/rustdesk-direct-ip.git
+**Repository:** https://github.com/xyz99002/rustdesk-direct-ip-remote-support.git
 **Branch:** feature/direct-ip-fork
 **Critical Question:** Does the FFI bindgen opaque struct error reproduce in GitHub Actions?
 
@@ -16,8 +16,8 @@
 ```bash
 git remote -v
 # Should show:
-# fork      https://github.com/xyz99002/rustdesk-direct-ip.git (fetch)
-# fork      https://github.com/xyz99002/rustdesk-direct-ip.git (push)
+# fork      https://github.com/xyz99002/rustdesk-direct-ip-remote-support.git (fetch)
+# fork      https://github.com/xyz99002/rustdesk-direct-ip-remote-support.git (push)
 # upstream  https://github.com/rustdesk/rustdesk.git (fetch)
 # upstream  https://github.com/rustdesk/rustdesk.git (push)
 ```
@@ -57,7 +57,7 @@ test -f .github/workflows/direct-ip-build.yml && echo "✅ Workflow file exists"
 
 ### GitHub Repository Configuration
 
-**Location:** https://github.com/xyz99002/rustdesk-direct-ip
+**Location:** https://github.com/xyz99002/rustdesk-direct-ip-remote-support
 
 **Required Settings:**
 
@@ -248,8 +248,8 @@ git remote -v
 
 **Expected output:**
 ```
-fork      https://github.com/xyz99002/rustdesk-direct-ip.git (fetch)
-fork      https://github.com/xyz99002/rustdesk-direct-ip.git (push)
+fork      https://github.com/xyz99002/rustdesk-direct-ip-remote-support.git (fetch)
+fork      https://github.com/xyz99002/rustdesk-direct-ip-remote-support.git (push)
 upstream  https://github.com/rustdesk/rustdesk.git (fetch)
 upstream  https://github.com/rustdesk/rustdesk.git (push)
 ```
@@ -289,7 +289,7 @@ remote: GitHub has received your request to run this workflow
 
 Open GitHub Actions to confirm workflow started:
 ```
-https://github.com/xyz99002/rustdesk-direct-ip/actions
+https://github.com/xyz99002/rustdesk-direct-ip-remote-support/actions
 ```
 
 **Expected:** "Direct-IP Build" workflow run appears within 30 seconds.
@@ -424,4 +424,4 @@ Once workflow completes, document findings:
 
 **Next action:** `git push fork feature/direct-ip-fork`
 
-**Then:** Monitor workflow at https://github.com/xyz99002/rustdesk-direct-ip/actions
+**Then:** Monitor workflow at https://github.com/xyz99002/rustdesk-direct-ip-remote-support/actions

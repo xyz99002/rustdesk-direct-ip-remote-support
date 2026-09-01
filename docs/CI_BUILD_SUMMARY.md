@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-29  
 **Status:** ✅ Ready for Testing Phase  
-**Repository:** https://github.com/xyz99002/rustdesk-direct-ip
+**Repository:** https://github.com/xyz99002/rustdesk-direct-ip-remote-support
 
 ---
 
@@ -166,10 +166,10 @@ Once workflow #3 passes, the Direct-IP fork is production-ready:
 
 | Resource | URL |
 |----------|-----|
-| **Repository** | https://github.com/xyz99002/rustdesk-direct-ip |
-| **Main Workflow** | https://github.com/xyz99002/rustdesk-direct-ip/actions/workflows/direct-ip-build.yml |
-| **Cache Warmer** | https://github.com/xyz99002/rustdesk-direct-ip/actions/workflows/vcpkg-cache-warmer.yml |
-| **Latest Run** | https://github.com/xyz99002/rustdesk-direct-ip/actions |
+| **Repository** | https://github.com/xyz99002/rustdesk-direct-ip-remote-support |
+| **Main Workflow** | https://github.com/xyz99002/rustdesk-direct-ip-remote-support/actions/workflows/direct-ip-build.yml |
+| **Cache Warmer** | https://github.com/xyz99002/rustdesk-direct-ip-remote-support/actions/workflows/vcpkg-cache-warmer.yml |
+| **Latest Run** | https://github.com/xyz99002/rustdesk-direct-ip-remote-support/actions |
 
 ---
 

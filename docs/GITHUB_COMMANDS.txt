@@ -7,8 +7,8 @@
 git remote -v
 
 # Expected output (all four lines must appear):
-# fork      https://github.com/arvind-patel_pdfs/RustDesk-direct-ip-remote-support.git (fetch)
-# fork      https://github.com/arvind-patel_pdfs/RustDesk-direct-ip-remote-support.git (push)
+# fork      https://github.com/xyz99002/rustdesk-direct-ip-remote-support.git (fetch)
+# fork      https://github.com/xyz99002/rustdesk-direct-ip-remote-support.git (push)
 # upstream  https://github.com/rustdesk/rustdesk.git (fetch)
 # upstream  https://github.com/rustdesk/rustdesk.git (push)
 
@@ -47,7 +47,7 @@ git push fork feature/direct-ip-fork
 # COMMAND 5: MONITOR WORKFLOW
 # =============================================================================
 # Open in browser:
-# https://github.com/arvind-patel_pdfs/RustDesk-direct-ip-remote-support/actions
+# https://github.com/xyz99002/rustdesk-direct-ip-remote-support/actions
 
 # Expected:
 # - Workflow "Direct-IP Build" appears within 30 seconds
