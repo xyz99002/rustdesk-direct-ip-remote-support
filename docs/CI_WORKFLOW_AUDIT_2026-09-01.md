@@ -201,12 +201,26 @@ This gives every CI run (regardless of whether it's a release) a directly downlo
 | 3 | `direct-ip-build.yml` repo structure | ✅ Verified clean, no changes needed |
 | 4 | `flutter-ci.yml` behavior | ✅ Documented |
 | 5 | `flutter-ci` artifact/release support | ✅ Documented |
-| 6 | `flutter-ci` build failure root cause | ✅ Documented (Bugs A, B, C) — **not fixed**, per instruction |
-| 7 | `release.yml` version/tag strategy | ✅ Fixed (combined tag), **not yet test-run** |
-| 8 | `flutter-nightly` failure | ✅ Documented — same Bug C, **not fixed** (no fix requested) |
-| 9 | Linux artifact format | ✅ Investigated, AppImage recommended — **not implemented**, pending approval |
+| 6 | `flutter-ci` build failure root cause | ✅ Fixed (Bugs A, B, C) and **verified in CI** — see Section 10 |
+| 7 | `release.yml` version/tag strategy | ✅ Fixed (combined tag) — dry-run pending, see Section 10 |
+| 8 | `flutter-nightly` failure | ✅ Fixed via the same Bug C fix — not yet re-run (nightly is schedule-only + manual dispatch; the fix was verified via `flutter-ci.yml`, which shares the same permissions gap and the same underlying `flutter-build.yml`) |
+| 9 | Linux artifact format | ✅ **Implemented** — AppImage upload step added and verified in CI, see Section 10 |
 
-**Awaiting your decision on:**
-- Whether to fix Bug A/B/C in `flutter-build.yml`/`flutter-nightly.yml`/`flutter-ci.yml` (Section 6/8)
-- Whether to implement the AppImage artifact-upload fix (Section 9)
-- Whether to test-run the corrected `release.yml` with a placeholder version
+---
+
+## 10. Approved Fixes — Implemented and Verified (2026-09-01)
+
+All four approved fixes were implemented in commit `aae2da7b7` and validated end-to-end in [Full Flutter CI #8](https://github.com/xyz99002/rustdesk-direct-ip-remote-support/actions/runs/33537701026) (1h5m20s, 18 artifacts). Full per-job results are recorded in `docs/BUILD_VERIFICATION_RESULTS.md` (2026-09-01 update). Summary:
+
+| Fix | Change | Verified |
+|---|---|---|
+| **Bug A** | `build-appimage`'s "Publish appimage package" step now checks `env.UPLOAD_RELEASE == 'true'` instead of `env.UPLOAD_ARTIFACT == 'true'` | ✅ Step shows skipped (⊘) in both matrix legs, since `flutter-ci.yml` sets `upload-release: false` |
+| **Bug B** | `flutter-build.yml`'s `upload-tag` input default changed from `"nightly"` to `""` | ✅ No unintended nightly-tag release attempts observed |
+| **Bug C** | Added `permissions: contents: write` to `flutter-ci.yml` and `flutter-nightly.yml` (`release.yml` already had it) | ✅ Zero HTTP 403 / "Too many retries" errors anywhere in the 18-job run |
+| **Item 4** (AppImage upload) | Added an `actions/upload-artifact` step to `build-appimage`, gated on `env.UPLOAD_ARTIFACT`, uploading `./appimage/rustdesk-${{ env.VERSION }}-*.AppImage` | ✅ `rustdesk-direct-ip-1.4.9-x86_64.AppImage` and `rustdesk-direct-ip-1.4.9-aarch64.AppImage` both appear as directly downloadable artifacts, despite `upload-release: false` |
+
+**Unrelated, pre-existing failure confirmed still present (expected, out of scope for this round):** `build-rustdesk-linux-sciter` (x86_64-unknown-linux-gnu) still fails in 4m5s on the GCC 7.5.0 / aom 3.12.1 AVX2-intrinsic incompatibility documented in Section 6, Failure 2. Its `armv7` sibling passes, consistent with the root-cause analysis (armv7 never compiles the x86 AVX2 intrinsics file).
+
+**Remaining work:**
+- `release.yml` dry run with `direct-ip-version=0.0.1-test` — in progress, see below for results once available.
+- The aom/GCC AVX2 fix (Section 6, remediation option 1) remains unimplemented, as it was out of scope for this approval.

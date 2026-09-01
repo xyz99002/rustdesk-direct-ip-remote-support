@@ -244,3 +244,44 @@ vcpkg install --triplet x64-windows-static
 ---
 
 **Ready to proceed. Choose either strategy and continue with vcpkg build, then cargo build, cargo test, flutter build, and code quality checks.**
+
+---
+
+## 2026-09-01 Update: GitHub Actions CI Verification (Full Flutter CI #8)
+
+**Status:** ✅ Verified — all Direct-IP-relevant fixes confirmed working; one known, pre-existing, unrelated failure remains open.
+
+**Context:** the NASM/aom blocker above was resolved earlier (see `NASM_MULTIPASS_ANALYSIS.md`) and GitHub Actions was declared the canonical build path (see `CI_BUILD_SUMMARY.md`, `CI_WORKFLOW_AUDIT_2026-09-01.md`). This entry records the results of validating four fixes applied to `flutter-build.yml`/`flutter-ci.yml`/`flutter-nightly.yml` on 2026-09-01: Bug A (wrong `if` condition blocking correct release-publish gating), Bug B (misleading default release tag), Bug C (missing `permissions: contents: write`), and the addition of an AppImage artifact-upload step.
+
+**Run:** [Full Flutter CI #8](https://github.com/xyz99002/rustdesk-direct-ip-remote-support/actions/runs/33537701026), commit `aae2da7`, 1h 5m 20s, 18 artifacts.
+
+### Per-job results
+
+| Job | Result | Notes |
+|---|---|---|
+| `generate-bridge` (both Flutter-version variants) | ✅ Pass | |
+| `build-for-windows-sciter` | ✅ Pass | |
+| `build-rustdesk-linux` (.deb, x86_64 + aarch64) | ✅ Pass | |
+| `build-RustDeskTempTopMostWindow` (x64 + ARM64) | ✅ Pass | |
+| `build-rustdesk-linux-sciter` — armv7 | ✅ Pass | 1h5m14s (QEMU); never reaches the AVX2 code path, so unaffected by the known aom issue below |
+| `build-rustdesk-linux-sciter` — **x86_64** | ❌ **Fail** | 4m5s — **known, pre-existing, unrelated issue**: aom 3.12.1's `disflow_avx2.c` uses the `_mm256_set_m128i` AVX2 intrinsic, undeclared in GCC before version 8; this container pins GCC 7.5.0. Documented in `CI_WORKFLOW_AUDIT_2026-09-01.md` Section 6, Failure 2. Not addressed in this round — remediation options were documented, not implemented, per instruction. |
+| `build-for-macOS` (x64 + arm64) | ✅ Pass | |
+| `build-rustdesk-android` (3 targets) | ✅ Pass | |
+| `build rustdesk ios ipa` | ✅ Pass | |
+| `build-for-windows-flutter` (x64 + x86) | ✅ Pass | |
+| `build-flatpak` | ✅ Pass | |
+| **`build-appimage`** (x86_64 + aarch64) | ✅ **Pass** | **Both the fix and the new feature confirmed together** — see below |
+| `build rustdesk android universal apk` | ✅ Pass | 8m57s |
+| `publish_unsigned` | ⊘ Skipped | expected — gated on signing-related condition, not evaluated here |
+| `build-rustdesk-web` | ⊘ Skipped | expected — path-filtered |
+
+### Bug/feature verification, confirmed via job step inspection
+
+- **Bug A (fixed):** `build-appimage`'s "Publish appimage package" step shows the skipped (⊘) icon at 0s in both matrix legs — it correctly did not attempt a release, since `flutter-ci.yml` sets `upload-release: false` and the condition now correctly checks `env.UPLOAD_RELEASE`.
+- **Bug B (fixed):** no unintended "nightly"-tag release attempts observed anywhere in the run.
+- **Bug C (fixed):** zero HTTP 403 / "Too many retries" errors anywhere in the 18-job run — every step that used to fail this way is now either skipped correctly (per Bug A) or would succeed with write permissions if it ran.
+- **AppImage artifact upload (new):** `build-appimage`'s new "Upload appimage package" step succeeded in both legs; the run's Artifacts tab lists `rustdesk-direct-ip-1.4.9-x86_64.AppImage` and `rustdesk-direct-ip-1.4.9-aarch64.AppImage` as directly downloadable files — present despite `upload-release: false`, satisfying "AppImage must be available whether or not a release is published."
+
+### Outstanding item
+
+`build-rustdesk-linux-sciter` (x86_64) remains failing on the GCC 7.5.0 / aom AVX2 intrinsic incompatibility. This is unrelated to Direct-IP fork changes and was scoped out of this fix round; see `CI_WORKFLOW_AUDIT_2026-09-01.md` for the four documented remediation options (recommended: a small compatibility-macro overlay patch on the `aom` vcpkg port, matching the precedent of the existing `aom-disable-multipass-check.diff`).

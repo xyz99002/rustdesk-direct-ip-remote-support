@@ -238,51 +238,33 @@ target/release/.fingerprint/  (dependency tracking)
 
 ## Packaging Paths
 
+**Status as of 2026-09-01:** implemented and verified via GitHub Actions (`flutter-build.yml`, invoked by `flutter-ci.yml`/`flutter-nightly.yml`/`release.yml`). The "Phase 6 — not yet implemented" framing below is superseded; see `CI_WORKFLOW_AUDIT_2026-09-01.md` and `BUILD_VERIFICATION_RESULTS.md` for verification evidence.
+
 ### Windows Packaging
 
-**Current State:** ❌ Not implemented (Phase 6)
+**Current state:** ✅ Implemented — portable Flutter build (`build-for-windows-flutter`, x64 + x86) and Sciter build (`build-for-windows-sciter`), both producing `rustdesk-direct-ip-${VERSION}-...` artifacts uploaded via GitHub Actions.
 
-**Target Outputs:**
-- MSI Installer: `build/windows/installer/rustdesk-direct-ip-*.msi`
-- Portable Executable: `build/windows/portable/rustdesk-direct-ip-*.exe`
-- Zip Archive: `build/windows/archive/rustdesk-direct-ip-*.zip`
-
-**Dependencies:**
-- WIX toolset (for MSI)
-- Code signing certificate (for production)
+**Not yet implemented:** MSI installer, code signing. `release.yml` currently produces unsigned Windows builds (noted in its generated release notes).
 
 ### Linux Packaging
 
-**Current State:** ❌ Not implemented (Phase 6)
+**Current state:** ✅ Implemented, three formats:
+- **`.deb`** (`build-rustdesk-linux`): `rustdesk-direct-ip-${VERSION}-${arch}.deb` — proper Debian package with declared runtime dependencies, built inside a pinned Ubuntu 18.04 container for broad compatibility.
+- **`.deb` (sciter variant)** (`build-rustdesk-linux-sciter`): same naming with a `-sciter` suffix. **Known issue:** the `x86_64` leg currently fails on a GCC 7.5.0 / aom AVX2-intrinsic incompatibility (see `CI_WORKFLOW_AUDIT_2026-09-01.md` Section 6); `armv7` is unaffected and passes.
+- **AppImage** (`build-appimage`, fixed 2026-09-01): `rustdesk-direct-ip-${VERSION}-${arch}.AppImage` — a portable, self-contained, directly-runnable binary requiring no installation. Now uploaded as a GitHub Actions artifact regardless of whether a release is published (previously it was silently discarded — see `CI_WORKFLOW_AUDIT_2026-09-01.md` Section 9/10).
 
-**Target Outputs:**
-- DEB package: `build/linux/rustdesk-direct-ip-*.deb`
-- RPM package: `build/linux/rustdesk-direct-ip-*.rpm`
-- Tarball: `build/linux/rustdesk-direct-ip-*.tar.gz`
+**Not yet implemented:** RPM package.
 
-**Dependencies:**
-- fpm (Effing Package Management)
-- dpkg-deb
-- rpm build tools
+**Contrast with `direct-ip-build.yml`:** that Direct-IP-scoped workflow's Linux job uploads only a bare `target/x86_64-unknown-linux-gnu/release/rustdesk` binary — dynamically linked, no bundled dependencies, not self-contained. The AppImage produced by `flutter-build.yml` is the recommended artifact for portable manual testing.
 
 ### Release Artifact Paths
 
-**Releases Directory (proposed):**
-```
-releases/
-  v1.4.9-direct-ip-001/
-    windows/
-      rustdesk-direct-ip-1.4.9-001-x64.exe
-      rustdesk-direct-ip-1.4.9-001-x64.msi
-      rustdesk-direct-ip-1.4.9-001-x64.zip
-      CHECKSUMS.txt
-    linux/
-      rustdesk-direct-ip-1.4.9-001-x64.deb
-      rustdesk-direct-ip-1.4.9-001-x64.rpm
-      rustdesk-direct-ip-1.4.9-001-x64.tar.gz
-      CHECKSUMS.txt
-    release-notes.md
-```
+**Implemented via `release.yml`** (`workflow_dispatch` with a `direct-ip-version` input):
+1. `determine-version` job computes the release tag as `v{rustdesk-version}-direct-ip.{direct-ip-version}` (e.g. `v1.4.9-direct-ip.1.0.0`), reading the RustDesk baseline from `flutter-build.yml`'s `env.VERSION`.
+2. `build` job invokes `flutter-build.yml` with `upload-release: true` and that combined tag.
+3. `finalize-release` job sets the GitHub Release title/notes and marks it non-prerelease.
+
+All platform artifacts attach directly to that GitHub Release (via `softprops/action-gh-release`), named per-platform as `rustdesk-direct-ip-{VERSION}-{arch}.{ext}` (deb/AppImage/apk/exe/etc.) — there is no separate `releases/` directory in this repository; GitHub Releases is the artifact store.
 
 ---
 
