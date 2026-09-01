@@ -145,5 +145,30 @@ After Phase 1 upgrades:
 | Phase | Actions | Effort | Risk | Timeline | Status |
 |---|---|---|---|---|---|
 | Phase 1 | checkout (patch), download-artifact (patch), upload-artifact (patch) | ~20 lines | ✅ LOW | Now | ✅ DONE (2026-09-01) |
-| Phase 2 | github-script (minor), cache (minor), softprops (major) | ~10 lines | ⚠️ MEDIUM | Post-release | 📋 PLAN |
+| Phase 2 | github-script (minor), cache (minor), softprops (major) | ~10 lines | ⚠️ MEDIUM | Post-release | 📋 PLANNED (deferred to post-release) |
+
+---
+
+## Phase 2 Implementation Status (Deferred Post-Release)
+
+**Decision:** Phase 2 upgrades are deferred to post-Release Hardening completion. Rationale: medium-risk upgrades require testing; can land after first release is stable.
+
+### Phase 2 Upgrade Details
+
+| Action | Current | Target | Files Affected | Test Required | Notes |
+|--------|---------|--------|-----------------|---|---|
+| **actions/github-script** | v6 (Node 16, EOL) | v7 (Node 20, deprecated but stable) | ci.yml (1), direct-ip-build.yml (2), flutter-build.yml (5), playground.yml (1), vcpkg-cache-warmer.yml (2) | ✅ Run ci.yml, direct-ip-build.yml to verify script execution works | Minor API changes; no breaking changes expected for current usage |
+| **actions/cache** | v3 (Node 16, deprecated) | v4 (current) | bridge.yml (1) | ✅ Verify cache hit/miss behavior; run bridge workflow | Backward compatible; no breaking changes expected |
+| **softprops/action-gh-release** | v1 (no version pin) | v2 (current) | fdroid.yml (2), flutter-build.yml (10), playground.yml (2), release.yml (2) | ⚠️ **DRY-RUN TEST REQUIRED** | Major version; has breaking changes in output variables; test on a non-production release first |
+
+### Phase 2 Rollback Plan
+
+Each action can be reverted independently by changing the version pin and re-pushing. No state is stored; rollback is a simple version change.
+
+### Phase 2 Go/No-Go Criteria (Post-Release)
+
+- [ ] Release Hardening Phase 1 production release is stable
+- [ ] Sciter Linux builds are verified passing
+- [ ] At least one full flutter-ci.yml run completes without errors
+- [ ] Team agrees Phase 2 can land without blocking the next release
 | Phase 3 | apple-actions, lukka/run-vcpkg | TBD | ⚠️ MEDIUM | Q4 2026 | 🔄 WATCH |
