@@ -1,7 +1,7 @@
 # Release Naming Specification
 
 **Date:** 2026-09-01  
-**Status:** Specification + Gap Analysis (not yet fully fixed)  
+**Status:** Specification + Gap Analysis (Decision Finalized: Option 3 chosen for v1.4.9-direct-ip release; Options 1–2 deferred post-release)  
 **Context:** RustDesk Direct-IP fork release artifacts need consistent naming across three contexts: Git tags, GitHub Releases, and downloadable asset filenames.
 
 ---
@@ -153,9 +153,6 @@ The filenames are whatever the build process produces (`rustdesk-{VERSION}-{arch
 
 ## Decision Point
 
-**Question for the team:** For release asset filenames, is the `direct-ip` branding important in the downloaded filename (option 1–2), or is it acceptable to keep Release assets as plain `rustdesk-{VERSION}-{arch}` (option 3)?
+**Final Decision: Option 3 (Keep Upstream Naming)**
 
-- **Option 1–2** (branded asset names): Higher clarity for end users ("I'm downloading the Direct-IP version"), but requires changes across ~30 build steps
-- **Option 3** (upstream asset names): Simpler; `direct-ip` branding remains in the Git tag and Release title, and in internal Actions artifacts; end users still know they're downloading from a Direct-IP release
-
-**Recommended:** **Option 3** (simplest, lowest risk for this release cycle; document it clearly in release notes).
+**Rationale:** Option 3 is selected for the v1.4.9-direct-ip release cycle because it aligns with the Release Hardening timeline, where `finalize-release` job fixes and Node.js security patches are in-flight. The full `direct-ip` branding is preserved in the Git tag (`v1.4.9-direct-ip.X`), the GitHub Release title (`RustDesk Direct-IP v1.4.9-direct-ip.X`), and internal Actions artifact metadata — which is what end users see on the Releases page and what identifies the source of the binaries. Asset filenames remain the standard `rustdesk-{VERSION}-{arch}.{ext}` format, eliminating the need to touch ~30+ build steps across 12 platform jobs (reducing merge-conflict risk and reversibility). Release notes will explicitly document: "These are the Direct-IP builds; binaries are the standard RustDesk names within the Direct-IP release context." **Options 1–2 can be revisited post-release**, once `finalize-release` and Node.js fixes have landed cleanly and the team wants to refresh the Release Hardening workflow for future release cycles.
