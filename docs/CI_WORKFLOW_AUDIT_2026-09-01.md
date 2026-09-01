@@ -202,10 +202,11 @@ This gives every CI run (regardless of whether it's a release) a directly downlo
 | 3 | `direct-ip-build.yml` repo structure | ✅ Verified clean, no changes needed |
 | 4 | `flutter-ci.yml` behavior | ✅ Documented |
 | 5 | `flutter-ci` artifact/release support | ✅ Documented |
-| 6 | `flutter-ci` build failure root cause | ✅ Fixed (Bugs A, B, C) and **verified in CI** — see Section 10 |
-| 7 | `release.yml` version/tag strategy | ✅ Fixed (combined tag) — dry-run pending, see Section 10 |
+| 6 | `flutter-ci` build failure root cause | ✅ Fixed (Bugs A, B, C) and **verified in CI**; sciter aom/GCC fix implemented (verification pending) — see Sections 10–11 |
+| 7 | `release.yml` version/tag strategy | ✅ Tag fixed and **dry-run verified** (`v1.4.9-direct-ip.0.0.1-test`); **new gap found**: release finalization is skipped when any build leg fails — see Section 11 |
 | 8 | `flutter-nightly` failure | ✅ Fixed via the same Bug C fix — not yet re-run (nightly is schedule-only + manual dispatch; the fix was verified via `flutter-ci.yml`, which shares the same permissions gap and the same underlying `flutter-build.yml`) |
 | 9 | Linux artifact format | ✅ **Implemented** — AppImage upload step added and verified in CI, see Section 10 |
+| 10 | Sciter aom/GCC fix, AppImage validation, release-workflow deep audit, dev onboarding | ✅ Four parallel workstreams completed — see Section 11 |
 
 ---
 
@@ -221,6 +222,55 @@ All four approved fixes were implemented in commit `aae2da7b7` and validated end
 | **Item 4** (AppImage upload) | Added an `actions/upload-artifact` step to `build-appimage`, gated on `env.UPLOAD_ARTIFACT`, uploading `./appimage/rustdesk-${{ env.VERSION }}-*.AppImage` | ✅ `rustdesk-direct-ip-1.4.9-x86_64.AppImage` and `rustdesk-direct-ip-1.4.9-aarch64.AppImage` both appear as directly downloadable artifacts, despite `upload-release: false` |
 
 **Unrelated, pre-existing failure confirmed still present (expected, out of scope for this round):** `build-rustdesk-linux-sciter` (x86_64-unknown-linux-gnu) still fails in 4m5s on the GCC 7.5.0 / aom 3.12.1 AVX2-intrinsic incompatibility documented in Section 6, Failure 2. Its `armv7` sibling passes, consistent with the root-cause analysis (armv7 never compiles the x86 AVX2 intrinsics file).
+
+---
+
+## 11. Four Parallel Workstreams + `release.yml` Dry Run (2026-09-01, continued)
+
+Four independent investigations ran in parallel (commit `f2b7a0942`), followed by completion of the `release.yml` dry run (`Create Direct-IP Release #1`, commit `c451320`, 1h7m33s) that had been left running throughout. None touched Direct-IP architecture, transport, authentication, voice call, the Support/Desktop workflow, or the configuration schema.
+
+### 11.1 Linux sciter aom/GCC fix — implemented, verification pending
+
+`res/vcpkg/aom/aom-gcc7-avx2-compat.diff` (new overlay patch, registered in `res/vcpkg/aom/portfile.cmake`) implements Section 6 Failure 2's recommended remediation option 1: a `__GNUC__ < 8`-guarded compatibility shim for `_mm256_set_m128i`, verified against the real upstream file content at the pinned commit (not guessed from the compiler error). Full detail: `docs/LINUX_SCITER_FIX_2026-09-01.md`.
+
+**Verification result (from the `release.yml` dry run below): the fix has NOT yet taken effect** — `build-rustdesk-linux-sciter` (x86_64-unknown-linux-gnu) still failed with the identical error signature in `Create Direct-IP Release #1`. This is expected: the dry run was triggered from commit `c451320` (before the sciter-fix commit `f2b7a0942` existed) — the run was already in flight when the fix was written. **A fresh CI run from `f2b7a0942` or later is needed to actually verify the fix; this has not happened yet.**
+
+### 11.2 AppImage validation — recipe confirmed complete, runtime execution untested
+
+Static analysis in `docs/APPIMAGE_VALIDATION_2026-09-01.md` confirms both `AppImageBuilder-{arch}.yml` recipes bundle every hard runtime dependency the `.deb` declares, with one non-blocking gap (`libayatana-appindicator3-1`, tray icon, not bundled). Artifact sizes from Full Flutter CI #8 confirmed sane (80.4/77.7 MB). Actual runtime execution remains untested — requires a Linux host, which this session doesn't have; a manual verification checklist is documented for a human or future Linux CI job to run.
+
+### 11.3 Release workflow audit — two new bugs found and fixed, one new gap documented
+
+`docs/RELEASE_WORKFLOW_AUDIT_2026-09-01.md` found and fixed two new bugs of the same class as Bug A (wrong `if` condition):
+- Android's "Publish signed apk package" step (both matrix legs, `flutter-build.yml:1190`/`:1374`) checked `env.UPLOAD_ARTIFACT` instead of `env.UPLOAD_RELEASE`.
+- `build-flatpak`'s artifact-download step (`flutter-build.yml:2056`) requested the pre-rename `rustdesk-{VERSION}-...deb` filename instead of the actual uploaded `rustdesk-direct-ip-{VERSION}-...deb` — a real functional break, not cosmetic.
+
+It also documented (not fixed, judgment calls):
+- A latent, unmonitored race-window risk from many parallel jobs publishing to the same release tag via `softprops/action-gh-release`.
+- **Confirmed for real by the `release.yml` dry run** (see 11.4 below): a widespread Actions-artifact-name vs. release-asset-filename branding inconsistency, and a `finalize-release` gap when any build leg fails.
+
+### 11.4 `release.yml` dry run — tag verified correct; two real gaps confirmed
+
+Run: `Create Direct-IP Release #1`, `direct-ip-version=0.0.1-test`, commit `c451320`, 1h7m33s, **Failure** (due solely to the already-tracked sciter x86_64 leg — see 11.1), 18 artifacts, 24 release assets.
+
+| Check | Result |
+|---|---|
+| Tag computed as `v{rustdesk-version}-direct-ip.{direct-ip-version}` | ✅ Exactly `v1.4.9-direct-ip.0.0.1-test`, confirmed via the `determine-version` job's log output |
+| GitHub Release created | ✅ Yes (at https://github.com/xyz99002/rustdesk-direct-ip-remote-support/releases) |
+| Release finalized (title set, notes set, `prerelease: false`) | ❌ **No** — confirms Section 11.3's documented gap. `finalize-release` shows 0s (skipped) because `needs: [determine-version, build]` and the `build` reusable-workflow-call job reported overall Failure (from the one failing sciter leg), even though every other leg succeeded. The release is left with the raw tag as its title and still marked Pre-release. |
+| Release asset filenames follow `rustdesk-direct-ip-{VERSION}-{arch}` | ❌ **No** — confirms Section 11.3's documented gap, concretely. All 24 actual downloadable assets use plain upstream naming (`rustdesk-1.4.9-x86_64.deb`, `rustdesk-1.4.9-x86_64.AppImage`, `rustdesk-1.4.9-universal.apk`, etc.) — the `direct-ip` branding exists **only** in the internal GitHub Actions artifact-zip names (visible in the Artifacts tab), never in what an end user actually downloads from the Releases page. |
+
+**Net conclusion:** the tag-computation fix (Section 7) works exactly as intended. Two pre-existing structural gaps in `flutter-build.yml`/`release.yml` — release-asset naming and finalize-on-partial-failure — are now confirmed with concrete evidence rather than just documented as theoretical risks. Both are logged as open items requiring a design decision (see `docs/RELEASE_WORKFLOW_AUDIT_2026-09-01.md` for options), not fixed in this pass — they're broader/more invasive changes than the mechanical one-line bugs fixed elsewhere today.
+
+### 11.5 Developer onboarding
+
+`docs/DEVELOPER_ONBOARDING.md` (new) and `docs/QUICK_START_FOR_NEW_DEVELOPER.md` (new) give new contributors an entry point synthesized from existing docs and the verified workflow YAMLs — see those files directly.
+
+### Open items after this round
+
+1. Re-run CI from commit `f2b7a0942` (or later) to actually verify the sciter aom/GCC fix.
+2. Decide how to fix release-asset naming (rename at the `files:`/`path:` level across ~12 build steps, or accept upstream naming for release assets and reserve "direct-ip" branding for Actions-artifact names only — needs a decision, see the audit doc for the full file:line table).
+3. Decide how to handle `finalize-release` on partial failure — e.g. `if: ${{ !cancelled() }}` so it still finalizes (with a note about which legs failed) rather than leaving the release un-finalized indefinitely.
 
 **Remaining work:**
 - `release.yml` dry run with `direct-ip-version=0.0.1-test` — in progress, see below for results once available.

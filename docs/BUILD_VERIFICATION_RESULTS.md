@@ -1,5 +1,7 @@
 # Build Verification Results (2026-08-29)
 
+> **2026-09-01 note:** the local-build blocker recorded below is historical. GitHub Actions is now the canonical build path (see the 2026-09-01 update appended at the end of this file, and `docs/CI_WORKFLOW_AUDIT_2026-09-01.md`). This local-build procedure is kept for reference and for the "emergency local debugging" case only — see `docs/LOCAL_BUILD_DECOMMISSION_PLAN.md` for what local tooling is still worth keeping for that purpose.
+
 **Status:** BLOCKED — New blocker discovered during Step 1 execution.
 
 **Execution Date:** 2026-08-29
@@ -285,3 +287,45 @@ vcpkg install --triplet x64-windows-static
 ### Outstanding item
 
 `build-rustdesk-linux-sciter` (x86_64) remains failing on the GCC 7.5.0 / aom AVX2 intrinsic incompatibility. This is unrelated to Direct-IP fork changes and was scoped out of this fix round; see `CI_WORKFLOW_AUDIT_2026-09-01.md` for the four documented remediation options (recommended: a small compatibility-macro overlay patch on the `aom` vcpkg port, matching the precedent of the existing `aom-disable-multipass-check.diff`).
+
+---
+
+## 2026-09-01 Update: `release.yml` Dry Run + Four Parallel Workstreams
+
+**Status:** ✅ Tag-computation fix verified correct. ❌ Two real, newly-confirmed gaps in release finalization and artifact naming. ✅ Sciter fix implemented (verification still pending a fresh CI run). ✅ AppImage recipe completeness confirmed via static analysis.
+
+### `release.yml` dry run
+
+Run: [Create Direct-IP Release #1](https://github.com/xyz99002/rustdesk-direct-ip-remote-support/actions), `direct-ip-version=0.0.1-test`, commit `c451320`, 1h7m33s, 18 Actions artifacts, 24 Release assets.
+
+| Job/leg | Result |
+|---|---|
+| `determine-version` (tag computation) | ✅ Pass — `RustDesk baseline: 1.4.9`, `Combined release tag: v1.4.9-direct-ip.0.0.1-test` |
+| `build-rustdesk-linux-sciter` — armv7 | ✅ Pass |
+| `build-rustdesk-linux-sciter` — **x86_64** | ❌ Fail — same known GCC/aom AVX2 issue (see below) |
+| Every other leg (Windows x64/x86, macOS x64/arm64, Linux .deb, Android x3, iOS, Flatpak, AppImage x2) | ✅ Pass |
+| `finalize-release` | ⊘ **Skipped** (0s) — because the overall `build` job reported Failure from the one failing leg |
+
+**Overall workflow status:** Failure (attributable entirely to the pre-existing sciter x86_64 issue, not a new regression).
+
+**GitHub Release verification** (https://github.com/xyz99002/rustdesk-direct-ip-remote-support/releases):
+- Tag: `v1.4.9-direct-ip.0.0.1-test` — ✅ exactly correct.
+- Still marked **Pre-release**, title is the raw tag (not "RustDesk Direct-IP v0.0.1-test") — ❌ `finalize-release` never ran to fix this.
+- All 24 release assets use plain upstream naming (`rustdesk-1.4.9-x86_64.deb`, `rustdesk-1.4.9-x86_64.AppImage`, `rustdesk-1.4.9-universal.apk`, etc.) — ❌ none carry `direct-ip` branding. That branding exists only in the internal GitHub Actions artifact-zip names, not in what a user actually downloads from the Releases page.
+
+Both gaps are documented with remediation options in `docs/RELEASE_WORKFLOW_AUDIT_2026-09-01.md` and `docs/CI_WORKFLOW_AUDIT_2026-09-01.md` Section 11 — not fixed in this pass, as they require a naming/design decision rather than a mechanical one-line fix.
+
+### Linux sciter aom/GCC fix — implemented, not yet verified
+
+`res/vcpkg/aom/aom-gcc7-avx2-compat.diff` was written and registered in `res/vcpkg/aom/portfile.cmake` (commit `f2b7a0942`), but the `release.yml` run above was already in flight from an earlier commit (`c451320`) when the fix landed, so it could not have taken effect in that run. The identical failure signature in that run is expected, not a sign the fix is wrong. **A fresh CI run from `f2b7a0942` or later is required to actually verify the fix** — this has not happened yet. See `docs/LINUX_SCITER_FIX_2026-09-01.md`.
+
+### AppImage recipe validation
+
+Confirmed via static analysis (no Linux host available in this session) that both `AppImageBuilder-{arch}.yml` recipes bundle every hard runtime dependency the `.deb` declares, with one non-blocking gap (system tray icon library not bundled). Artifact sizes (80.4/77.7 MB from Full Flutter CI #8) are sane, not truncated. See `docs/APPIMAGE_VALIDATION_2026-09-01.md` for the full analysis and a manual runtime-verification checklist for whenever a Linux host is available.
+
+### Two additional bugs found and fixed (same class as the earlier Bug A)
+
+- Android's "Publish signed apk package" step (both matrix legs) checked `env.UPLOAD_ARTIFACT` instead of `env.UPLOAD_RELEASE`.
+- `build-flatpak`'s artifact-download step requested the wrong (pre-rename) filename, which would have broken every flatpak build regardless of the release/artifact flags.
+
+Both fixed in commit `f2b7a0942`; not yet re-verified in a fresh CI run (see above).

@@ -3,6 +3,8 @@
 **Date:** 2026-08-29
 **Purpose:** Complete source-to-release traceability for Direct-IP fork
 
+**See also:** `docs/LOCAL_BUILD_DECOMMISSION_PLAN.md` — the artifacts described below are all produced by GitHub Actions, not local builds; that plan covers moving development off local build tooling entirely.
+
 ---
 
 ## Source Repositories
@@ -262,9 +264,16 @@ target/release/.fingerprint/  (dependency tracking)
 **Implemented via `release.yml`** (`workflow_dispatch` with a `direct-ip-version` input):
 1. `determine-version` job computes the release tag as `v{rustdesk-version}-direct-ip.{direct-ip-version}` (e.g. `v1.4.9-direct-ip.1.0.0`), reading the RustDesk baseline from `flutter-build.yml`'s `env.VERSION`.
 2. `build` job invokes `flutter-build.yml` with `upload-release: true` and that combined tag.
-3. `finalize-release` job sets the GitHub Release title/notes and marks it non-prerelease.
+3. `finalize-release` job sets the GitHub Release title/notes and marks it non-prerelease — **but only if every build leg succeeds** (see caveat below).
 
-All platform artifacts attach directly to that GitHub Release (via `softprops/action-gh-release`), named per-platform as `rustdesk-direct-ip-{VERSION}-{arch}.{ext}` (deb/AppImage/apk/exe/etc.) — there is no separate `releases/` directory in this repository; GitHub Releases is the artifact store.
+All platform artifacts attach directly to that GitHub Release (via `softprops/action-gh-release`) — there is no separate `releases/` directory in this repository; GitHub Releases is the artifact store.
+
+**Verified 2026-09-01** via a `release.yml` dry run (`direct-ip-version=0.0.1-test`, tag `v1.4.9-direct-ip.0.0.1-test`):
+- The tag itself is computed correctly. ✅
+- **Release asset filenames do NOT carry `direct-ip` branding.** The `rustdesk-direct-ip-{VERSION}-{arch}.{ext}` naming convention only applies to internal GitHub Actions artifact-zip names (visible in a run's Artifacts tab) — the actual files a user downloads from the Releases page keep plain upstream names: `rustdesk-1.4.9-x86_64.deb`, `rustdesk-1.4.9-x86_64.AppImage`, `rustdesk-1.4.9-universal.apk`, etc. ❌
+- **`finalize-release` is skipped entirely if any single build leg fails** (`needs: [determine-version, build]`, and the reusable-workflow-call `build` job only reports success if every inner job succeeds) — leaving the release with the raw tag as its title and permanently marked Pre-release. This happened in the 2026-09-01 dry run because of the already-tracked `build-rustdesk-linux-sciter` x86_64 failure. ❌
+
+Both gaps are open items — see `docs/RELEASE_WORKFLOW_AUDIT_2026-09-01.md` and `docs/CI_WORKFLOW_AUDIT_2026-09-01.md` Section 11 for remediation options; neither has been fixed yet, as both require a naming/design decision rather than a mechanical fix.
 
 ---
 
