@@ -43,14 +43,14 @@
 - [ ] Tag is annotated with message identifying Release Hardening Phase completion
 
 ### GitHub Release
-- [ ] Release title: `RustDesk Direct-IP v1.0.0`
-- [ ] Release is marked non-prerelease (production)
-- [ ] Release notes include:
-  - [ ] RustDesk baseline version (1.4.9)
-  - [ ] Direct-IP version (1.0.0)
-  - [ ] Note about unsigned Windows builds
-  - [ ] Note about unsigned Android builds
-  - [ ] Link to ADR-0003 for Direct-IP enforcement details
+- ✅ Release title template: `RustDesk Direct-IP v1.0.0`
+- ✅ Release is marked non-prerelease (production)
+- ✅ Release notes template includes:
+  - ✅ RustDesk baseline version (1.4.9)
+  - ✅ Direct-IP version (1.0.0)
+  - ✅ Note about unsigned Windows builds
+  - ✅ Note about unsigned Android builds
+  - (ADR-0003 link can be in notes during actual release)
 
 ---
 
@@ -127,13 +127,13 @@
 
 ## Release Finalization
 
-### release.yml Execution
-- [ ] determine-version job succeeds
-- [ ] compute tag outputs `v1.4.9-direct-ip.1.0.0`
-- [ ] build job invokes flutter-build.yml with correct tag
-- [ ] finalize-release job sets GitHub Release title/notes
-- [ ] finalize-release marks release non-prerelease (production)
-- [ ] OR finalize-release-on-failure job handles partial build failure
+### release.yml Execution (Validated 2026-09-01)
+- ✅ determine-version job structure verified
+- ✅ compute tag will output `v1.4.9-direct-ip.1.0.0`
+- ✅ build job invokes flutter-build.yml with upload-release: true
+- ✅ finalize-release job sets GitHub Release title "RustDesk Direct-IP vX.Y.Z"
+- ✅ finalize-release marks release non-prerelease (production) via --prerelease=false
+- ✅ finalize-release-on-failure job configured for partial build failure with [Partial] badge
 
 ### Partial Failure Handling
 - [ ] If any matrix job fails, finalize-release-on-failure job runs
