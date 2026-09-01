@@ -1993,13 +1993,15 @@ jobs:
           # run appimage-builder
           pushd appimage
           sudo appimage-builder --skip-tests --recipe ./AppImageBuilder-${{ matrix.job.arch }}.yml
+          # rename to include direct-ip branding
+          sudo mv rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.AppImage rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}.AppImage
 
       - name: Upload appimage package
         uses: actions/upload-artifact@v7.1.0
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
           name: rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}.AppImage
-          path: ./appimage/rustdesk-${{ env.VERSION }}-*.AppImage
+          path: ./appimage/rustdesk-direct-ip-${{ env.VERSION }}-*.AppImage
 
       - name: Publish appimage package
         if: env.UPLOAD_RELEASE == 'true'
@@ -2008,7 +2010,7 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            ./appimage/rustdesk-${{ env.VERSION }}-*.AppImage
+            ./appimage/rustdesk-direct-ip-${{ env.VERSION }}-*.AppImage
 
   build-flatpak:
     name: Build flatpak ${{ matrix.job.target }}${{ matrix.job.suffix }}
