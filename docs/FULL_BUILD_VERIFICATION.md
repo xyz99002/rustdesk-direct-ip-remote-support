@@ -6,6 +6,8 @@
 
 **Status:** Awaiting execution — build blocker fix applied; verification checklist ready.
 
+> **2026-09-01 note:** this local, step-by-step procedure is **superseded as the default path** for regular development — GitHub Actions now builds, tests, packages, and releases this fork on every push and on-demand (see `docs/CI_WORKFLOW_AUDIT_2026-09-01.md`, `docs/DEVELOPER_ONBOARDING.md`). Keep this document for two specific cases: a CI maintainer trying to reproduce a build failure by hand, or genuine emergency local debugging when GitHub Actions itself is unavailable. See `docs/LOCAL_BUILD_DECOMMISSION_PLAN.md` for which of the tools this procedure requires are worth keeping installed for those cases versus safe to remove.
+
 ---
 
 ## Environment Checklist
