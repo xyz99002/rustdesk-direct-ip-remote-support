@@ -90,9 +90,9 @@ Not performed. Requires either:
 **Recommended follow-up:** once CI run #13 completes, download the Windows `.exe` and Linux
 `.AppImage` artifacts and confirm: (a) the executable launches without missing-DLL/missing-`.so`
 errors, (b) the Direct-IP connection screen (Support/Desktop buttons, no peer list, no
-Account/Network tabs) renders as expected per `FORK_PROFILE_SPEC.md`, (c) `fork_config.toml`
-placed next to the executable is actually picked up (per `docs/CONFIG_REFERENCE.md` Section 2's
-search path).
+Account/Network tabs) renders as expected per `FORK_PROFILE_SPEC.md`, (c) a pre-seeded
+`RustDesk2.toml` with `direct-ip-*` options is actually picked up (per `docs/CONFIG_REFERENCE.md`
+Section 2).
 
 ---
 

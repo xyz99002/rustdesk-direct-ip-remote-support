@@ -144,7 +144,8 @@ flutter build windows --release  # or macos/linux
 - Code signing tools (if signing is desired)
 
 **Template files:**
-- `fork_config.toml` (sample/default config for each role)
+- `RustDesk2.toml` pre-seeded with `direct-ip-*` options (sample/default config for each role —
+  see `configs/example-local.toml`/`configs/example-remote.toml`)
 - Installer scripts/specifications (NSIS script, pkgbuild plist, etc.)
 - License/README files
 

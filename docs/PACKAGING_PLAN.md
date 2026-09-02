@@ -1,6 +1,14 @@
 # Packaging Plan
 
-**Status:** In planning — awaiting build readiness.
+**Status:** In planning — awaiting build readiness. **Historical note (2026-09-02): this plan's
+two-executable premise (`rustdesk-local`/`rustdesk-remote`) was never the architecture actually
+built — the real fork ships ONE executable with role selected by config (see
+`docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md` and `docs/architecture.md`). Additionally, every
+`fork_config.toml` reference below is now stale: that file was retired and its contents merged
+into upstream's own `RustDesk2.toml` (`[options]` table, `direct-ip-*` keys) — see
+`docs/CONFIG_REFERENCE.md`. This document is kept for its packaging-tooling ideas (installers,
+per-role pre-seeded config) but should not be followed literally for either the executable split
+or the config filename.**
 
 **Date:** 2026-08-29
 

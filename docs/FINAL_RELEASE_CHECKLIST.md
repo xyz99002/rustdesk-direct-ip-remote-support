@@ -91,7 +91,7 @@
 ## Direct-IP Enforcement Verification
 
 ### Local Role (Outbound Only)
-- [ ] Role config loads from `fork_config.toml`
+- [ ] Role config loads from `direct-ip-role` in `RustDesk2.toml`
 - [ ] `role: "local"` disables inbound listeners
 - [ ] Rendezvous registration bypassed
 - [ ] Relay participation bypassed
@@ -101,7 +101,7 @@
 - [ ] Only Direct-IP outbound dial works
 
 ### Remote Role (Inbound Only)
-- [ ] Role config loads from `fork_config.toml`
+- [ ] Role config loads from `direct-ip-role` in `RustDesk2.toml`
 - [ ] `role: "remote"` enables inbound listener
 - [ ] Rendezvous registration bypassed
 - [ ] Relay participation bypassed

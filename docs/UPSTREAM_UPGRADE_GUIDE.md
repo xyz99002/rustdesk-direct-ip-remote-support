@@ -150,9 +150,9 @@ A clean `cargo build`/`cargo test` of the full `rustdesk` binary on this Windows
 
 **After successful builds, prepare release artifacts:**
 
-1. **Ensure fork_config.toml template is up-to-date** (see `docs/PACKAGING_PLAN.md`).
-   - Verify the schema matches `src/fork_config.rs`'s ForkConfig struct.
-   - Provide both local and remote examples.
+1. **Ensure the `configs/*.toml` samples are up-to-date** (see `docs/PACKAGING_PLAN.md`).
+   - Verify the `direct-ip-*` key set matches `src/fork_config.rs`'s `ForkConfig` struct.
+   - Provide both local and remote examples (`configs/example-local.toml`/`example-remote.toml`).
 
 2. **Build platform-specific installers/packages** (see `docs/PACKAGING_PLAN.md` for detailed steps):
    - Windows: NSIS or MSI installer (e.g., rustdesk-local-[version]-x64.exe)
