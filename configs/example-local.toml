@@ -1,33 +1,50 @@
-# Example fork_config.toml — Local role
+# Example RustDesk2.toml — Local role
 #
-# "local" means this instance may only INITIATE outbound direct-IP connections;
-# it will never accept an inbound session. Typical use: the machine a support
-# agent or end user sits at to reach out to a remote host.
+# THIS FILE IS RustDesk2.toml — the ONE config file upstream RustDesk already uses.
+# (2026-09-02: fork_config.toml was retired; direct-ip-* fork options now live in this same
+# file's [options] table instead of a second file. See docs/CONFIG_REFERENCE.md and
+# docs/UPSTREAM_CONFIG_REFERENCE.md.)
 #
-# All fields below are REQUIRED — fork_config.rs has no implicit defaults.
-# See docs/CONFIG_REFERENCE.md for the full, source-verified option reference.
+# "local" means this instance may only INITIATE outbound direct-IP connections; it will never
+# accept an inbound session. Typical use: the machine an operator sits at to reach out to a
+# remote host.
 #
-# NOTE ON ORDERING: [authentication] must stay the LAST section in this file.
-# Any "key = value" line placed after a "[table]" header belongs to that table,
-# not the top level.
+# File location (written by RustDesk itself; this sample can pre-seed a fresh deployment):
+#   Windows: %APPDATA%\RustDesk\config\RustDesk2.toml
+#   Linux:   ~/.config/RustDesk/RustDesk2.toml
+#   macOS:   ~/Library/Application Support/RustDesk/RustDesk2.toml
+#
+# All direct-ip-* fields below are REQUIRED (except direct-ip-show-setup-ui) — src/fork_config.rs
+# has no implicit defaults for the others. See docs/CONFIG_REFERENCE.md for the full reference.
 
-version = 1
-role = "local"
+rendezvous_server = ""
+nat_type = 0
+serial = 0
+unlock_pin = ""
+trusted_devices = ""
 
-# At least one of these two must be true (enforced by fork_config.rs).
-# For a local/outbound-only client, both are typically true so the operator
-# can choose Support or Desktop mode when connecting out.
-support_enabled = true
-desktop_share_enabled = true
+[options]
+# --- Direct-IP fork configuration (src/fork_config.rs) ---
+direct-ip-config-version = "1"
+direct-ip-role = "local"
 
-# Parsed and validated, but NOT YET WIRED to any behavior (see
-# docs/CONFIG_REFERENCE.md Section 4.7-4.11). Safe to leave at these values.
-listen_address = "0.0.0.0"
-listen_port = 21118
-video_quality = "medium"
-audio_quality = "medium"
-log_level = "info"
+# At least one of these two must be true.
+direct-ip-support-enabled = "Y"
+direct-ip-desktop-share-enabled = "Y"
 
-[authentication]
-# "ask" | "password" | "ask_and_password"
-mode = "ask"
+# Optional — defaults to "Y" (shown) if omitted.
+direct-ip-show-setup-ui = "Y"
+
+# Parsed and validated, but NOT YET WIRED to any behavior (see docs/CONFIG_REFERENCE.md).
+direct-ip-listen-address = "0.0.0.0"
+direct-ip-listen-port = "21118"
+direct-ip-video-quality = "medium"
+direct-ip-audio-quality = "medium"
+direct-ip-log-level = "info"
+direct-ip-auth-mode = "ask"
+
+# --- Resulting upstream options (written by fork_config.rs::apply() at every startup;
+#     shown here for reference only — do not hand-edit these three, they will be overwritten) ---
+# approve-mode = "click"            # <- from direct-ip-auth-mode
+# enable-camera = "Y"               # <- from direct-ip-support-enabled
+# enable-lan-discovery = "N"        # <- unconditional, ADR-0003

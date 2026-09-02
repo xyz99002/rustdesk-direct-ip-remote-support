@@ -1,9 +1,12 @@
 # Upstream RustDesk Configuration Reference — `RustDesk2.toml`
 
-**This is a different file from `fork_config.toml`.** See `docs/CONFIG_REFERENCE.md` for the
-fork's own small config file (10 keys). This document covers upstream RustDesk's own, much larger
-configuration system, which this fork does not replace — `fork_config.rs::apply()` writes into
-this same system via `Config::set_option(...)` calls (see Section 3).
+**2026-09-02: this is now the ONLY config file.** The fork previously used a separate
+`fork_config.toml` alongside this file; that has been retired (see `docs/CONFIG_REFERENCE.md`).
+The fork's own settings now live in this same `[options]` table, under `direct-ip-*`-prefixed
+keys, read via the exact same `Config::get_option()` mechanism documented below. This document
+covers upstream RustDesk's own, much larger configuration system, which this fork does not
+replace — `fork_config.rs::apply()` writes into this same system via `Config::set_option(...)`
+calls (see Section 3).
 
 **Source:** `libs/hbb_common/src/config.rs`. Not modified by this fork.
 
@@ -27,11 +30,10 @@ line 72).
 - Linux: `~/.config/RustDesk/`
 - macOS: `~/Library/Application Support/RustDesk/` (or under an org-specific path if `ORG` is set)
 
-This is **not** a file a deployer typically hand-authors before first run the way
-`fork_config.toml` is designed to be — it's RustDesk's own persisted settings store, normally
-written by the app itself as the user changes settings in the UI. It *can* be pre-seeded (the app
-will happily read a hand-written file matching this schema on first launch), which is presumably
-why sample files are being requested here.
+This file is normally written by the app itself as the user changes settings in the UI — but it
+*can* be pre-seeded (the app will happily read a hand-written file matching this schema on first
+launch), which is exactly how this fork's `direct-ip-*` keys are meant to be supplied: see
+`configs/example-local.toml`/`configs/example-remote.toml`.
 
 ---
 
@@ -62,11 +64,23 @@ seconds) — see the per-key notes in Section 4 where the name alone doesn't mak
 
 ## 3. Overlap With This Fork
 
-`fork_config.rs::apply()` sets exactly four of the keys below via `Config::set_option`:
+`fork_config.rs::apply()` sets exactly five of the keys below via `Config::set_option`:
 `approve-mode`, `enable-camera`, `enable-lan-discovery`, and the fork-specific
-`desktop-share-enabled` (not an upstream key — see `docs/CONFIG_REFERENCE.md` Section 4.5). Every
-other key in this reference is **upstream behavior, untouched by this fork**, but still active and
-configurable via `RustDesk2.toml` on any deployment.
+`desktop-share-enabled` and `show-setup-ui` (neither is an upstream key — see
+`docs/CONFIG_REFERENCE.md` Sections 4.5 and 4.7). Every other key in this reference is
+**upstream behavior, untouched by this fork**, but still active and configurable via
+`RustDesk2.toml` on any deployment.
+
+**No key-name collision is possible** between the fork's own inputs and any upstream key: the
+fork reads its inputs from `direct-ip-*`-prefixed keys (a namespace verified against every
+`OPTION_*` constant in this file to guarantee no overlap) and writes its outputs to the *different*
+keys named above. `direct-ip-auth-mode`, `direct-ip-support-enabled`, and
+`direct-ip-desktop-share-enabled` are never the same string as `approve-mode`, `enable-camera`,
+or `desktop-share-enabled` — so both the "source" and "destination" of each translation live in
+this one file without ambiguity. The only thing to know: `approve-mode`, `enable-camera`, and
+`enable-lan-discovery` are overwritten from their `direct-ip-*` counterparts every startup — a
+hand-edited value for those three specific keys will not survive a restart while the
+corresponding `direct-ip-*` key is also present and valid.
 
 ---
 
@@ -294,7 +308,7 @@ since they're part of the same overall settings-visibility system:*
 
 ## 6. Related Files
 
-- `configs/rustdesk2-example.toml` — sample file using a subset of the keys above
+- `configs/example-local.toml`, `configs/example-remote.toml`, `configs/all-options-reference.toml` — sample files using a subset of the keys above, plus every `direct-ip-*` key
 - `docs/CONFIG_REFERENCE.md` — the separate, much smaller `fork_config.toml` schema
 - `docs/CONFIG_FEATURE_VALIDATION.md` — behavioral validation of `whitelist`,
   `enable-lan-discovery`, and other options this fork's audit already touched
