@@ -114,9 +114,8 @@ error: building aom:x64-linux failed with: BUILD_FAILED
 ```
 **Root cause:** the sciter/legacy-compat Linux build container pins a very old host compiler (reported: **GCC 7.5.0**, for maximum binary compatibility with old distros). GCC's `<immintrin.h>` did not declare the `_mm256_set_m128i` AVX2 intrinsic until GCC 8. vcpkg's pinned `aom` port (3.12.1) uses that intrinsic in `disflow_avx2.c`. Under GCC 7.5.0 the compiler implicitly declares the function as returning `int`, so every `__m256i` variable it initializes becomes a type mismatch — a genuine compiler/library-version incompatibility, not a Direct-IP-specific regression (this would fail identically on unmodified upstream RustDesk built with this same toolchain pin).
 
-**Remediation — option 1 implemented (2026-09-01):** a new vcpkg overlay patch, `res/vcpkg/aom/aom-gcc7-avx2-compat.diff`, has been added and registered in `res/vcpkg/aom/portfile.cmake`'s `PATCHES` list (alongside `aom-uninitialized-pointer.diff`, `aom-install.diff`, and `aom-disable-multipass-check.diff`). It inserts a small `static inline __m256i _mm256_set_m128i(...)` shim into `aom_dsp/flow_estimation/x86/disflow_avx2.c`, guarded by `#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ < 8`, defined in terms of `_mm256_insertf128_si256`/`_mm256_castsi128_si256`. See `docs/LINUX_SCITER_FIX_2026-09-01.md` for full details, exact patch content, and rationale versus the other three options below (kept here for reference). **CI verification: Flutter CI Run #9 (Run ID 33563032059) triggered 2026-09-01 21:48:20Z, in progress (estimated completion 22:48Z)**. Both `build-rustdesk-linux-sciter` x86_64 and armv7 legs are currently in compilation. Results will be documented in BUILD_VERIFICATION_RESULTS.md upon completion.
-
-Other options considered (not implemented):
+**Remediation options (documented, not implemented, per your instruction):**
+1. **Recommended:** add a small compatibility shim (a one-line macro `#define _mm256_set_m128i(hi,lo) _mm256_insertf128_si256(_mm256_castsi128_si256(lo), (hi), 1)` guarded by `__GNUC__ < 8`) via a new vcpkg overlay patch on the `aom` port — mirrors the precedent already set by `res/vcpkg/aom/aom-disable-multipass-check.diff` in this same repo. Lowest risk, no behavior change on compilers that already have the intrinsic.
 2. Upgrade the sciter/legacy container's GCC to 8+ — higher risk if the old GCC was pinned specifically for glibc/ABI compatibility with older target distros; needs the original rationale confirmed before touching it.
 3. Pin an older `aom` release predating this AVX2 code path — re-opens the exact class of version-pinning fragility already seen with the NASM multipass issue; not preferred.
 4. Strip the AVX2-optimized file from the sciter Linux build via CFLAGS/exclude — functional but causes an AV1 performance regression on that specific build only.
@@ -202,76 +201,12 @@ This gives every CI run (regardless of whether it's a release) a directly downlo
 | 3 | `direct-ip-build.yml` repo structure | ✅ Verified clean, no changes needed |
 | 4 | `flutter-ci.yml` behavior | ✅ Documented |
 | 5 | `flutter-ci` artifact/release support | ✅ Documented |
-| 6 | `flutter-ci` build failure root cause | ✅ Fixed (Bugs A, B, C) and **verified in CI**; sciter aom/GCC fix implemented (verification pending) — see Sections 10–11 |
-| 7 | `release.yml` version/tag strategy | ✅ Tag fixed and **dry-run verified** (`v1.4.9-direct-ip.0.0.1-test`); **new gap found**: release finalization is skipped when any build leg fails — see Section 11 |
-| 8 | `flutter-nightly` failure | ✅ Fixed via the same Bug C fix — not yet re-run (nightly is schedule-only + manual dispatch; the fix was verified via `flutter-ci.yml`, which shares the same permissions gap and the same underlying `flutter-build.yml`) |
-| 9 | Linux artifact format | ✅ **Implemented** — AppImage upload step added and verified in CI, see Section 10 |
-| 10 | Sciter aom/GCC fix, AppImage validation, release-workflow deep audit, dev onboarding | ✅ Four parallel workstreams completed — see Section 11 |
+| 6 | `flutter-ci` build failure root cause | ✅ Documented (Bugs A, B, C) — **not fixed**, per instruction |
+| 7 | `release.yml` version/tag strategy | ✅ Fixed (combined tag), **not yet test-run** |
+| 8 | `flutter-nightly` failure | ✅ Documented — same Bug C, **not fixed** (no fix requested) |
+| 9 | Linux artifact format | ✅ Investigated, AppImage recommended — **not implemented**, pending approval |
 
----
-
-## 10. Approved Fixes — Implemented and Verified (2026-09-01)
-
-All four approved fixes were implemented in commit `aae2da7b7` and validated end-to-end in [Full Flutter CI #8](https://github.com/xyz99002/rustdesk-direct-ip-remote-support/actions/runs/33537701026) (1h5m20s, 18 artifacts). Full per-job results are recorded in `docs/BUILD_VERIFICATION_RESULTS.md` (2026-09-01 update). Summary:
-
-| Fix | Change | Verified |
-|---|---|---|
-| **Bug A** | `build-appimage`'s "Publish appimage package" step now checks `env.UPLOAD_RELEASE == 'true'` instead of `env.UPLOAD_ARTIFACT == 'true'` | ✅ Step shows skipped (⊘) in both matrix legs, since `flutter-ci.yml` sets `upload-release: false` |
-| **Bug B** | `flutter-build.yml`'s `upload-tag` input default changed from `"nightly"` to `""` | ✅ No unintended nightly-tag release attempts observed |
-| **Bug C** | Added `permissions: contents: write` to `flutter-ci.yml` and `flutter-nightly.yml` (`release.yml` already had it) | ✅ Zero HTTP 403 / "Too many retries" errors anywhere in the 18-job run |
-| **Item 4** (AppImage upload) | Added an `actions/upload-artifact` step to `build-appimage`, gated on `env.UPLOAD_ARTIFACT`, uploading `./appimage/rustdesk-${{ env.VERSION }}-*.AppImage` | ✅ `rustdesk-direct-ip-1.4.9-x86_64.AppImage` and `rustdesk-direct-ip-1.4.9-aarch64.AppImage` both appear as directly downloadable artifacts, despite `upload-release: false` |
-
-**Unrelated, pre-existing failure confirmed still present (expected, out of scope for this round):** `build-rustdesk-linux-sciter` (x86_64-unknown-linux-gnu) still fails in 4m5s on the GCC 7.5.0 / aom 3.12.1 AVX2-intrinsic incompatibility documented in Section 6, Failure 2. Its `armv7` sibling passes, consistent with the root-cause analysis (armv7 never compiles the x86 AVX2 intrinsics file).
-
----
-
-## 11. Four Parallel Workstreams + `release.yml` Dry Run (2026-09-01, continued)
-
-Four independent investigations ran in parallel (commit `f2b7a0942`), followed by completion of the `release.yml` dry run (`Create Direct-IP Release #1`, commit `c451320`, 1h7m33s) that had been left running throughout. None touched Direct-IP architecture, transport, authentication, voice call, the Support/Desktop workflow, or the configuration schema.
-
-### 11.1 Linux sciter aom/GCC fix — implemented, verification pending
-
-`res/vcpkg/aom/aom-gcc7-avx2-compat.diff` (new overlay patch, registered in `res/vcpkg/aom/portfile.cmake`) implements Section 6 Failure 2's recommended remediation option 1: a `__GNUC__ < 8`-guarded compatibility shim for `_mm256_set_m128i`, verified against the real upstream file content at the pinned commit (not guessed from the compiler error). Full detail: `docs/LINUX_SCITER_FIX_2026-09-01.md`.
-
-**Verification result (from the `release.yml` dry run below): the fix has NOT yet taken effect** — `build-rustdesk-linux-sciter` (x86_64-unknown-linux-gnu) still failed with the identical error signature in `Create Direct-IP Release #1`. This is expected: the dry run was triggered from commit `c451320` (before the sciter-fix commit `f2b7a0942` existed) — the run was already in flight when the fix was written. **A fresh CI run from `f2b7a0942` or later is needed to actually verify the fix; this has not happened yet.**
-
-### 11.2 AppImage validation — recipe confirmed complete, runtime execution untested
-
-Static analysis in `docs/APPIMAGE_VALIDATION_2026-09-01.md` confirms both `AppImageBuilder-{arch}.yml` recipes bundle every hard runtime dependency the `.deb` declares, with one non-blocking gap (`libayatana-appindicator3-1`, tray icon, not bundled). Artifact sizes from Full Flutter CI #8 confirmed sane (80.4/77.7 MB). Actual runtime execution remains untested — requires a Linux host, which this session doesn't have; a manual verification checklist is documented for a human or future Linux CI job to run.
-
-### 11.3 Release workflow audit — two new bugs found and fixed, one new gap documented
-
-`docs/RELEASE_WORKFLOW_AUDIT_2026-09-01.md` found and fixed two new bugs of the same class as Bug A (wrong `if` condition):
-- Android's "Publish signed apk package" step (both matrix legs, `flutter-build.yml:1190`/`:1374`) checked `env.UPLOAD_ARTIFACT` instead of `env.UPLOAD_RELEASE`.
-- `build-flatpak`'s artifact-download step (`flutter-build.yml:2056`) requested the pre-rename `rustdesk-{VERSION}-...deb` filename instead of the actual uploaded `rustdesk-direct-ip-{VERSION}-...deb` — a real functional break, not cosmetic.
-
-It also documented (not fixed, judgment calls):
-- A latent, unmonitored race-window risk from many parallel jobs publishing to the same release tag via `softprops/action-gh-release`.
-- **Confirmed for real by the `release.yml` dry run** (see 11.4 below): a widespread Actions-artifact-name vs. release-asset-filename branding inconsistency, and a `finalize-release` gap when any build leg fails.
-
-### 11.4 `release.yml` dry run — tag verified correct; two real gaps confirmed
-
-Run: `Create Direct-IP Release #1`, `direct-ip-version=0.0.1-test`, commit `c451320`, 1h7m33s, **Failure** (due solely to the already-tracked sciter x86_64 leg — see 11.1), 18 artifacts, 24 release assets.
-
-| Check | Result |
-|---|---|
-| Tag computed as `v{rustdesk-version}-direct-ip.{direct-ip-version}` | ✅ Exactly `v1.4.9-direct-ip.0.0.1-test`, confirmed via the `determine-version` job's log output |
-| GitHub Release created | ✅ Yes (at https://github.com/xyz99002/rustdesk-direct-ip-remote-support/releases) |
-| Release finalized (title set, notes set, `prerelease: false`) | ❌ **No** — confirms Section 11.3's documented gap. `finalize-release` shows 0s (skipped) because `needs: [determine-version, build]` and the `build` reusable-workflow-call job reported overall Failure (from the one failing sciter leg), even though every other leg succeeded. The release is left with the raw tag as its title and still marked Pre-release. |
-| Release asset filenames follow `rustdesk-direct-ip-{VERSION}-{arch}` | ❌ **No** — confirms Section 11.3's documented gap, concretely. All 24 actual downloadable assets use plain upstream naming (`rustdesk-1.4.9-x86_64.deb`, `rustdesk-1.4.9-x86_64.AppImage`, `rustdesk-1.4.9-universal.apk`, etc.) — the `direct-ip` branding exists **only** in the internal GitHub Actions artifact-zip names (visible in the Artifacts tab), never in what an end user actually downloads from the Releases page. |
-
-**Net conclusion:** the tag-computation fix (Section 7) works exactly as intended. Two pre-existing structural gaps in `flutter-build.yml`/`release.yml` — release-asset naming and finalize-on-partial-failure — are now confirmed with concrete evidence rather than just documented as theoretical risks. Both are logged as open items requiring a design decision (see `docs/RELEASE_WORKFLOW_AUDIT_2026-09-01.md` for options), not fixed in this pass — they're broader/more invasive changes than the mechanical one-line bugs fixed elsewhere today.
-
-### 11.5 Developer onboarding
-
-`docs/DEVELOPER_ONBOARDING.md` (new) and `docs/QUICK_START_FOR_NEW_DEVELOPER.md` (new) give new contributors an entry point synthesized from existing docs and the verified workflow YAMLs — see those files directly.
-
-### Open items after this round
-
-1. Re-run CI from commit `f2b7a0942` (or later) to actually verify the sciter aom/GCC fix.
-2. Decide how to fix release-asset naming (rename at the `files:`/`path:` level across ~12 build steps, or accept upstream naming for release assets and reserve "direct-ip" branding for Actions-artifact names only — needs a decision, see the audit doc for the full file:line table).
-3. Decide how to handle `finalize-release` on partial failure — e.g. `if: ${{ !cancelled() }}` so it still finalizes (with a note about which legs failed) rather than leaving the release un-finalized indefinitely.
-
-**Remaining work:**
-- `release.yml` dry run with `direct-ip-version=0.0.1-test` — in progress, see below for results once available.
-- The aom/GCC AVX2 fix (Section 6, remediation option 1) remains unimplemented, as it was out of scope for this approval.
+**Awaiting your decision on:**
+- Whether to fix Bug A/B/C in `flutter-build.yml`/`flutter-nightly.yml`/`flutter-ci.yml` (Section 6/8)
+- Whether to implement the AppImage artifact-upload fix (Section 9)
+- Whether to test-run the corrected `release.yml` with a placeholder version

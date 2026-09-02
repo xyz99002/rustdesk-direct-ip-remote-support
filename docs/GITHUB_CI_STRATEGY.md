@@ -1,7 +1,5 @@
 # GitHub Actions CI Strategy for Direct-IP RustDesk Fork
 
-**2026-09-01 status update:** this strategy is no longer just proposed — it is implemented and verified. See `docs/CI_WORKFLOW_AUDIT_2026-09-01.md` for the working workflows (`direct-ip-build.yml`, `flutter-ci.yml`, `flutter-nightly.yml`, `release.yml`, `vcpkg-cache-warmer.yml`), their verified behavior, and known issues; see `docs/LOCAL_BUILD_DECOMMISSION_PLAN.md` for the corresponding move away from local build tooling now that this strategy is live.
-
 ## Overview
 
 This document outlines the CI/CD strategy for the Direct-IP RustDesk fork, based on analysis of upstream workflows and the fork's specific build requirements.
