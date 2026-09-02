@@ -122,6 +122,41 @@ error: building aom:x64-linux failed with: BUILD_FAILED
 
 **Preferred fix:** Option 1.
 
+### Follow-Up (2026-09-02) — Option 1 Attempted, Reverted, Root Cause Still Confirmed Unresolved
+
+Option 1's compatibility shim (`res/vcpkg/aom/aom-gcc7-avx2-compat.diff`, registered in
+`res/vcpkg/aom/portfile.cmake`'s `PATCHES` list) was implemented and pushed. It caused an
+unrelated, new failure on the **Windows i686 sciter** job ("`Applying patch failed: error:
+corrupt patch at ...`" during vcpkg dependency install) that did not exist before the patch was
+added. The patch was reverted rather than debugged further at that time, in favor of resetting
+the whole repository tree to the last confirmed-good commit (`aae2da7b7`) after a separate,
+more severe incident (see below) made a full reset the safer path forward.
+
+**Separately, and more seriously:** during the same work session, the "Node.js modernization"
+changes applied to `.github/workflows/*.yml` (see `docs/GITHUB_ACTIONS_RUNTIME_AUDIT.md`)
+included two **fabricated action versions** — `actions/upload-artifact@v7.1.0` and
+`actions/download-artifact@v8.1.0` — neither of which exists upstream. This broke `Full Flutter
+CI` run #10 immediately at the `generate-bridge` setup step, before any actual build logic ran.
+The recovery was to reset the entire workflow/vcpkg/code tree to commit `aae2da7b7` (the last run,
+#8, where everything passed except this same x86_64 Sciter issue), which also reverted the
+GCC7/AOM patch attempt above as a side effect.
+
+**Verification run (Full Flutter CI #13, re-run of failed jobs only, commit `4894fd6d8`):**
+confirmed the reset tree reproduces baseline exactly — every job green except
+`build-rustdesk-linux-sciter x86_64` failing with the identical error signature and timing
+(3m39s here vs. 4m5s in the original baseline run). See `docs/BUILD_VERIFICATION_RESULTS.md`
+for the full run comparison, including proof (via raw-log diff) that a second, apparently-related
+armv7 failure seen mid-session was unrelated network flakiness, not a code regression.
+
+**Status:** Option 1's fix is **not currently applied**. The "corrupt patch" failure it caused on
+the Windows i686 job was never root-caused — re-attempting Option 1 requires diagnosing that
+failure first (candidate causes not yet investigated: CRLF/line-ending handling of the patch file
+across Windows vs. Linux vcpkg runners, or a `vcpkg_from_git` patch-application edge case
+specific to how that particular runner applies patches). This is flagged as the next concrete
+step for resolving the x86_64 Sciter issue, but is deferred pending an explicit decision to
+resume release-engineering work — current priority (per project direction) is configuration,
+UI, and support-mode correctness, not release readiness.
+
 ---
 
 ## 7. `release.yml` — Verified, Tested, and Fixed
@@ -205,6 +240,7 @@ This gives every CI run (regardless of whether it's a release) a directly downlo
 | 7 | `release.yml` version/tag strategy | ✅ Fixed (combined tag), **not yet test-run** |
 | 8 | `flutter-nightly` failure | ✅ Documented — same Bug C, **not fixed** (no fix requested) |
 | 9 | Linux artifact format | ✅ Investigated, AppImage recommended — **not implemented**, pending approval |
+| 10 | Sciter x86_64 GCC7/AOM fix (2026-09-02 follow-up) | ⚠️ Attempted, caused unrelated Windows i686 failure, **reverted**; root cause of that failure not yet diagnosed. Verified via CI run #13 that the underlying x86_64 issue is unchanged and matches baseline exactly — not a regression, still open |
 
 **Awaiting your decision on:**
 - Whether to fix Bug A/B/C in `flutter-build.yml`/`flutter-nightly.yml`/`flutter-ci.yml` (Section 6/8)
