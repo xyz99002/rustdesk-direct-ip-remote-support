@@ -120,8 +120,8 @@ Fully hidden by `hide-network-settings=Y`. No action needed.
    feature in the remote-session toolbar (`toolbar.dart:490`) — not just the Settings page.
    "ID/Relay Server" is gated by `hide-network-settings` on both platforms too
    (`settings_page.dart:715` on mobile; nested inside the already-removed `network()` tab
-   function on desktop). No gap found — these depend on `fork_config.toml` being present and
-   valid at runtime, same as everything else in this document.
+   function on desktop). No gap found — these depend on valid `direct-ip-*` configuration being
+   present in `RustDesk2.toml` at runtime, same as everything else in this document.
 
 ---
 

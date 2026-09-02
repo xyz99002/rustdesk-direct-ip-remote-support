@@ -63,19 +63,19 @@
 
 ## Functional Verification — Configuration
 
-### fork_config.toml Parsing
+### `direct-ip-*` Options Parsing (RustDesk2.toml — formerly a separate `fork_config.toml`, see docs/CONFIG_REFERENCE.md)
 
 - [ ] **Valid config loads without error**
-  - Test: Place `fork_config.toml` with correct schema in app config directory
-  - Expected: App starts, logs "loaded fork config version 1"
+  - Test: Place `direct-ip-*` options with correct schema in `RustDesk2.toml`'s `[options]` table
+  - Expected: App starts, logs "fork_config: applied role=... auth_mode=..."
 
 - [ ] **Invalid config is rejected**
-  - Test: Edit `fork_config.toml` with invalid `role` (e.g., `role = "admin"`)
-  - Expected: App exits with error message referencing the invalid field
+  - Test: Set `direct-ip-role` to an invalid value (e.g., `"admin"`)
+  - Expected: `log::error!` referencing the invalid field; falls back to upstream default behavior (does not exit)
 
 - [ ] **Missing required field is rejected**
-  - Test: Remove `version` key from `fork_config.toml`
-  - Expected: App exits with error message about missing `version`
+  - Test: Remove `direct-ip-config-version` from the `[options]` table
+  - Expected: `log::error!` about missing `direct-ip-config-version`; falls back to upstream default behavior
 
 - [ ] **Unsupported version is rejected**
   - Test: Set `version = 2` (or higher)
@@ -184,7 +184,7 @@
 ### Configuration
 
 - [ ] **support_enabled = true renders the Support button**
-  - Test: Local instance with `support_enabled = true` in fork_config.toml
+  - Test: Local instance with `direct-ip-support-enabled = "Y"` in `RustDesk2.toml`
   - Expected: "Support" button visible on connection screen
 
 - [ ] **support_enabled = false hides the Support button**
@@ -350,7 +350,7 @@
   - Caveat: AV1 codec may be unavailable (vcpkg/aom blocker); fallback to VP9/H.265 should work
 
 - [ ] **No crashes on invalid input**
-  - Test: Malformed fork_config.toml, missing fields, invalid IPs, etc.
+  - Test: Malformed `direct-ip-*` values, missing fields, invalid IPs, etc.
   - Expected: Graceful error messages, no segfault or panic
   - Verify: Check application logs
 
@@ -362,12 +362,12 @@
 ### Fork Configuration Integrity
 
 - [ ] **Config persists across restarts**
-  - Test: Set `support_enabled = true` in fork_config.toml, restart app, check it's still true
+  - Test: Set `direct-ip-support-enabled = "Y"` in `RustDesk2.toml`, restart app, check it's still true
   - Expected: Confirmed via logs or UI state
 
 - [ ] **Invalid config is not silently modified**
-  - Test: Invalid fork_config.toml; restart app
-  - Expected: Error on startup; config file unchanged (not auto-corrected or repaired)
+  - Test: Invalid `direct-ip-*` value in `RustDesk2.toml`; restart app
+  - Expected: Error logged on startup; file unchanged (not auto-corrected or repaired)
 
 ---
 
@@ -435,7 +435,7 @@
 ### Windows 10/11
 
 - Install RustDesk fork (release binary or portable ZIP)
-- Create/edit `%APPDATA%\RustDesk\fork_config.toml` with test configuration
+- Create/edit `%APPDATA%\RustDesk\config\RustDesk2.toml` with test `direct-ip-*` options
 - For network testing: use a secondary machine or VM as the remote instance
 
 ### Virtual Network Simulation

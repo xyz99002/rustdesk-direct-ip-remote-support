@@ -309,6 +309,6 @@ since they're part of the same overall settings-visibility system:*
 ## 6. Related Files
 
 - `configs/example-local.toml`, `configs/example-remote.toml`, `configs/all-options-reference.toml` — sample files using a subset of the keys above, plus every `direct-ip-*` key
-- `docs/CONFIG_REFERENCE.md` — the separate, much smaller `fork_config.toml` schema
+- `docs/CONFIG_REFERENCE.md` — the fork's own `direct-ip-*` keys within this same file
 - `docs/CONFIG_FEATURE_VALIDATION.md` — behavioral validation of `whitelist`,
   `enable-lan-discovery`, and other options this fork's audit already touched

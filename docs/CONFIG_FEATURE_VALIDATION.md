@@ -99,7 +99,7 @@ root-cause only.**
 Investigated for a fork-specific "allow client list" or "IP filter" option. **None exists in
 `fork_config.rs` or anywhere in the fork-authored code.**
 
-What *does* exist is fully upstream, unrelated to `fork_config.toml`:
+What *does* exist is fully upstream, unrelated to the fork's `direct-ip-*` options:
 
 **Option:** `whitelist` (`OPTION_WHITELIST` constant, `libs/hbb_common/src/config.rs:2920`)
 
@@ -142,8 +142,9 @@ RustDesk-cloud-account cruft, so the working recommendation is **KEEP**.
 Cross-referenced against the actual inbound listener setup. The real bind address/port for
 incoming connections comes from upstream's own existing listener code
 (`src/rendezvous_mediator.rs` / `src/server/mod.rs`), which this fork does not modify for
-listener binding. `fork_config.toml`'s `listen_address`/`listen_port` fields are validated at
-parse time but never read afterward (`#[allow(dead_code)]` in `src/fork_config.rs:104-106`).
+listener binding. The fork's `direct-ip-listen-address`/`direct-ip-listen-port` options are
+validated at load time but never read afterward (`#[allow(dead_code)]` on the corresponding
+`ForkConfig` fields in `src/fork_config.rs`).
 
 **This is not a bug** — the module doc comment explicitly states these are "parsed and validated
 now so the file format is stable across phases; not read by any caller yet," reserved for a

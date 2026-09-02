@@ -92,21 +92,20 @@ with one change, rather than hunting down every `Icons.settings` tap handler ind
 
 ## Default Value Question — RESOLVED: Option B Chosen
 
-Every other `fork_config.toml` field today is **required** with no implicit default — a missing
-field is a hard validation error. Two choices for `show_setup_ui`:
+Every other `direct-ip-*` option is **required** with no implicit default — a missing key is a
+hard validation error. Two choices were weighed for `direct-ip-show-setup-ui`:
 
-| Choice | Behavior when field is absent from an existing `fork_config.toml` | Consistency |
+| Choice | Behavior when the key is absent | Consistency |
 |---|---|---|
-| **A. Required, like all other fields** | Every existing deployment's config file becomes invalid until updated — the whole file falls back to pure upstream behavior (per `load_and_apply()`'s existing fail-safe), which **also re-enables Account/Network tabs and LAN discovery** — a much bigger regression than just Settings visibility | Consistent with current schema philosophy, but has an outsized blast radius for a small new field |
-| **B. `#[serde(default = "default_true")]`, defaulting to `true`** | Existing deployments keep working unchanged; only deployments that explicitly opt into `show_setup_ui = false` get the new behavior | Breaks the "no implicit defaults" rule that's been deliberate since `fork_config.rs`'s original design (module doc: "every field is optional at the parse layer so that a missing/invalid field is reported explicitly during validation") |
+| **A. Required, like all other keys** | Every existing deployment's config becomes invalid until updated — the whole configuration falls back to pure upstream behavior (per `load_and_apply()`'s existing fail-safe), which **also re-enables Account/Network tabs and LAN discovery** — a much bigger regression than just Settings visibility | Consistent with current schema philosophy, but has an outsized blast radius for a small new field |
+| **B. `unwrap_or(true)` in `validate()`, defaulting to shown** | Existing deployments keep working unchanged; only deployments that explicitly opt into `direct-ip-show-setup-ui = "N"` get the new behavior | Breaks the "no implicit defaults" rule that's been deliberate since `fork_config.rs`'s original design (module doc: "every field is optional... so that a missing/invalid field is reported explicitly during validation") |
 
-**Recommendation:** Option B, as a deliberate, documented exception — the existing "no defaults"
-policy exists to catch *typos and incomplete configs for security-relevant fields*
-(role, authentication mode, permissions). `show_setup_ui` is a UI-convenience field with a safe
-default (`true` = current behavior, nothing hidden), which is exactly the kind of field a default
-is appropriate for. This should be called out explicitly in `fork_config.example.toml`'s
-comments and `docs/CONFIG_REFERENCE.md` if implemented, so the exception is documented, not
-silent.
+**Chosen: Option B**, as a deliberate, documented exception — the existing "no defaults" policy
+exists to catch *typos and incomplete configs for security-relevant fields* (role, authentication
+mode, permissions). `direct-ip-show-setup-ui` is a UI-convenience field with a safe default
+(shown = current behavior, nothing hidden), which is exactly the kind of field a default is
+appropriate for. Documented in `configs/all-options-reference.toml` and
+`docs/CONFIG_REFERENCE.md` Section 4.7, so the exception is explicit, not silent.
 
 ---
 
