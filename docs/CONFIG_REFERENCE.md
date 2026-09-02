@@ -205,6 +205,32 @@ No deprecated options exist yet — schema version 1 is the only version ever sh
 
 ---
 
+## 6a. Per-Key Compliance Table (name / type / default / source file / code path / status flags)
+
+"Default" is listed as **none** for every key except `version`, because `RawForkConfig`
+(`src/fork_config.rs:118-130`) gives every field type `Option<T>` with no `#[serde(default)]` —
+a missing key is a hard `ConfigError::MissingField`, not a silently-substituted default. `version`
+has an implicit *accepted* value (not a serde default) in that only `1` passes validation.
+
+| Name | Type | Default | Source file | Code path | Verified working? | Unused? | Partially implemented? |
+|---|---|---|---|---|---|---|---|
+| `version` | integer (`u32`) | None (must equal `1`, or `ConfigError::UnsupportedVersion`) | `src/fork_config.rs` | parse: `:238-241` → gates rest of `validate()` | ✅ Yes | No | No |
+| `role` | string enum (`"local"` \| `"remote"`) | None (required) | `src/fork_config.rs` | parse: `:174-183` → validate: `:243-244` → apply: `:339-346` → `HARD_SETTINGS["conn-type"]` → consumed by `hbb_common::config::is_incoming_only()`/`is_outgoing_only()` (`src/client.rs`, `src/rendezvous_mediator.rs`) | ✅ Yes (unit-tested) | No | No |
+| `authentication.mode` | string enum (`"ask"` \| `"password"` \| `"ask_and_password"`), nested under `[authentication]` | None (required) | `src/fork_config.rs` | parse: `:185-195` → validate: `:249-252` → apply: `:348-355` → `Config::set_option("approve-mode", ...)` → consumed by `libs/hbb_common/src/password_security.rs:77-86` | ✅ Yes (unit-tested) | No | No |
+| `support_enabled` | boolean | None (required) | `src/fork_config.rs` | parse: `:254-256` → apply: `:361-364` → `Config::set_option("enable-camera", ...)` → consumed locally by `flutter/lib/desktop/pages/connection_page.dart:110` and remotely by `src/server/connection.rs:2544-2551` | ✅ Yes (unit-tested; local UI gate AND remote protocol enforcement both confirmed) | No | No |
+| `desktop_share_enabled` | boolean | None (required) | `src/fork_config.rs` | parse: `:257-259` → apply: `:370-378` → `Config::set_option("desktop-share-enabled", ...)` (fork-specific key, no upstream meaning) → consumed only by `connection_page.dart:114` | ⚠️ Partially — local UI gate confirmed working; no remote/protocol enforcement exists (see `docs/CONFIG_FEATURE_VALIDATION.md` Section 2) | No | **Yes** — local half implemented, remote half never was |
+| `listen_address` | string (IP address) | None (required) | `src/fork_config.rs` | parse+validate: `:223-232`, `:264-267`; stored on `ForkConfig.listen_address` (`:104`) marked `#[allow(dead_code)]` | No | **Yes** — parsed and validated, never read by any caller | No |
+| `listen_port` | integer (`u16`, nonzero) | None (required) | `src/fork_config.rs` | parse+validate: `:269-277`; stored on `ForkConfig.listen_port` (`:106`) marked `#[allow(dead_code)]` | No | **Yes** | No |
+| `video_quality` | string enum (`"low"` \| `"medium"` \| `"high"`) | None (required) | `src/fork_config.rs` | parse: `:197-207`; validate: `:279-282`; stored on `ForkConfig.video_quality` (`:108`) marked `#[allow(dead_code)]` | No | **Yes** | No |
+| `audio_quality` | string enum (`"low"` \| `"medium"` \| `"high"`) | None (required) | `src/fork_config.rs` | parse: `:197-207` (shared `parse_quality`); validate: `:284-287`; stored on `ForkConfig.audio_quality` (`:110`) marked `#[allow(dead_code)]` | No | **Yes** | No |
+| `log_level` | string enum (`"error"` \| `"warn"` \| `"info"` \| `"debug"` \| `"trace"`) | None (required) | `src/fork_config.rs` | parse: `:209-221`; validate: `:289-292`; stored on `ForkConfig.log_level` (`:112`) marked `#[allow(dead_code)]` | No | **Yes** | No |
+
+**No option was inferred.** Every row above traces to an exact struct field, `match` arm, or
+function call in `src/fork_config.rs` — the only file that parses `fork_config.toml`. No other
+file in this repository reads or validates TOML for this fork.
+
+---
+
 ## 7. Related Documents
 
 - `docs/FORK_PROFILE_SPEC.md` — product-level behavior spec
