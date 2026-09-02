@@ -1,7 +1,27 @@
 # Setup UI Audit — Direct-IP Fork
 
-Source: `flutter/lib/desktop/pages/desktop_setting_page.dart` (desktop Settings dialog).
-Investigation only — **no changes implemented**, per Workstream 3 scope.
+Source: `flutter/lib/desktop/pages/desktop_setting_page.dart` (desktop Settings dialog) and
+`flutter/lib/mobile/pages/settings_page.dart` (mobile).
+
+**Update (2026-09-02): Implemented.** Per explicit follow-up instruction, five items were
+removed from both desktop and mobile settings UIs (not just documented):
+
+| Item | Desktop | Mobile | Reason |
+|---|---|---|---|
+| 2FA section | ✅ Removed | ✅ Removed | Depends on the upstream account system this fork doesn't use (`disable-account=Y`) |
+| Change ID section | ✅ Removed | N/A (not present on mobile) | ID is never registered anywhere per ADR-0003 — changing it is meaningless in this fork |
+| "Check for software update on startup" | ✅ Removed | ✅ Removed | Calls an external update server; only gated by `isCustomClient()`, which this fork never triggers (never renames `APP_NAME`) — was visible by default before this fix |
+| "Auto update" (Windows installed builds) | ✅ Removed | N/A (Windows-only) | Same category — no fork gate existed at all before this fix |
+| "Deny LAN discovery" checkbox | **Kept, by explicit decision** | — | Confirmed behavior: checked = `enable-lan-discovery=N` (matches fork default); unchecked = `Y` (re-enables discovery). This is a deliberate, understood escape hatch, not a bug — left in place |
+
+The two update-check items were found during a follow-up sweep (prompted by "check for similar
+other options" after sign-in/relay-server were confirmed already covered by existing
+`disable-account`/`hide-network-settings` gates) — they were previously unflagged because they
+sit outside both of those gates entirely, controlled only by `isCustomClient()` (which checks
+`get_app_name() != "RustDesk"` — always `false` for this fork) or no gate at all.
+
+The remaining audit below (KEEP/NEEDS REVIEW items) is unchanged from the original
+investigation-only pass and still reflects recommendations, not implemented changes.
 
 ---
 
@@ -48,7 +68,7 @@ The remaining audit below covers what's left inside the tabs that DO render.
 | Permissions | `Enable keyboard/mouse`, `clipboard`, `file transfer`, `audio`, `camera`, `terminal`, `TCP tunneling`, `remote restart`, `recording session`, `block input`, `privacy mode`, `remote configuration modification` | Legitimate per-session permission toggles for a "remote"-role host | **KEEP**, all of them — directly relevant to what a Remote-role host allows an incoming Support/Desktop session to do |
 | Password | One-time / permanent / both | Directly backs `authentication.mode` | **KEEP** |
 | Security → "Enable RDP session sharing" | Windows-only RDP passthrough | Niche upstream feature, no direct-IP conflict | **NEEDS REVIEW** — likely fine to keep, low usage |
-| Security → **"Deny LAN discovery"** | `_OptionCheckBox(..., 'enable-lan-discovery', reverse: true)` | **Directly toggles the same option the fork sets unconditionally to "N" (`fork_config.rs:406`)** | **REMOVE — flagged as a real issue.** This checkbox lets a user manually re-enable LAN discovery (the ID-exposure path ADR-0003 explicitly closes). Currently nothing prevents an operator from unchecking this and undoing the fork's own Direct-IP enforcement via the UI. See "Findings Requiring Attention" below. |
+| Security → **"Deny LAN discovery"** | `_OptionCheckBox(..., 'enable-lan-discovery', reverse: true)` | Toggles the same option the fork sets unconditionally to "N" (`fork_config.rs:406`) | **KEPT — explicit decision (2026-09-02).** Confirmed behavior: checked = `enable-lan-discovery=N` (matches fork default, i.e. the checkbox's default/unmodified state is already consistent with fork enforcement); unchecked = `Y`. This is an understood, deliberate escape hatch rather than a silent bug, and was kept by explicit instruction rather than removed. |
 | Security → "Enable direct IP access" (`kOptionDirectServer`) | Upstream optional direct-TCP-listener toggle, originally meant to run *alongside* rendezvous/relay | Given this fork removes rendezvous/relay entirely, direct IP is now the *only* path — this toggle being off would break connectivity | **NEEDS REVIEW — potential issue.** If a user unchecks this, does the host stop listening entirely? If so, this is a second enforcement-bypass risk. Needs runtime verification (not done here — investigation only). |
 | Security → "Use IP Whitelisting" | Upstream CIDR allow-list (see `CONFIG_FEATURE_VALIDATION.md` Section 3) | Legitimate, useful security control; the closest thing to a fork-relevant "IP filtering" feature | **KEEP** |
 | Security → auto-disconnect, keep-awake, allow-only-conn-window-open, unlock PIN | Misc upstream session-management options | No cloud/account dependency | **KEEP** |
@@ -84,33 +104,36 @@ Fully hidden by `hide-network-settings=Y`. No action needed.
 
 ## Findings Requiring Attention (Not Just Cleanup — Possible Enforcement Gaps)
 
-1. **"Deny LAN discovery" checkbox can undo fork enforcement.** `fork_config.rs` sets
-   `enable-lan-discovery=N` unconditionally on every valid config load, but the same underlying
-   option is exposed as a live, user-toggleable checkbox in Settings → Safety → Security. Nothing
-   re-applies the fork's value after the user changes it in the UI. **This should be treated as a
-   priority follow-up**, separate from cosmetic cleanup — recommend either hiding this specific
-   checkbox unconditionally (mirroring how Account/Network tabs are hidden) or making the option
-   read-only when a fork config is active (`isOptionFixed`-style lock, a pattern already used
-   elsewhere in this same file for `kOptionWhitelist` and `kOptionAccessMode`).
+1. **"Deny LAN discovery" checkbox — resolved by decision, not by removal.** Confirmed the
+   checkbox's checked state matches the fork's own default (`enable-lan-discovery=N`); unchecking
+   it is a known, accepted escape hatch. Kept in place per explicit instruction (2026-09-02) —
+   no longer an open item.
 
 2. **"Enable direct IP access" toggle's effect when unchecked is unverified.** Needs a runtime
    check: does unchecking this stop the inbound listener from accepting direct-IP connections at
    all? If yes, this is a user-facing footgun in a fork where direct IP is the *only* transport.
-   Recommend verifying before Workstream 3 cleanup implementation.
+   **Still open** — not addressed in the 2026-09-02 implementation pass.
+
+3. **Sign-in and ID/Relay Server dialog — verified already covered on both platforms (2026-09-02
+   follow-up check).** `!bind.isDisableAccount()` gates login/logout on both desktop (Account tab
+   removed from `tabKeys`) and mobile (`settings_page.dart:685`), and also gates the "Note"
+   feature in the remote-session toolbar (`toolbar.dart:490`) — not just the Settings page.
+   "ID/Relay Server" is gated by `hide-network-settings` on both platforms too
+   (`settings_page.dart:715` on mobile; nested inside the already-removed `network()` tab
+   function on desktop). No gap found — these depend on `fork_config.toml` being present and
+   valid at runtime, same as everything else in this document.
 
 ---
 
 ## Categorization Summary
 
-| Category | Count (this pass) |
+| Category | Count |
 |---|---|
-| KEEP | 16 items |
-| REMOVE | 3 items (2FA, Change ID, Deny LAN discovery checkbox) |
-| NEEDS REVIEW | 6 items |
+| KEEP | 16 items (includes "Deny LAN discovery", kept by decision) |
+| **REMOVED (implemented 2026-09-02)** | **5 items: 2FA, Change ID, "Check for software update on startup", "Auto update", across desktop and mobile** |
+| NEEDS REVIEW | 5 items ("Enable direct IP access" runtime verification still open; others unchanged from original pass) |
 
-This audit covers General, Safety, Display, Printer, and About tabs' major sections. Network and
-Account are already fully removed by existing fork code. Mobile settings pages
-(`flutter/lib/mobile/pages/settings_page.dart`) and the Server page were not covered in this pass
-and should be audited separately if mobile/Android is a supported deployment target.
-
-**No implementation performed.** This is a removal plan for review, per Workstream 3 instructions.
+This audit covers General, Safety, Display, Printer, and About tabs' major sections on desktop,
+plus a targeted mobile sweep for the five implemented removals and the sign-in/relay-server
+verification above. A full, independent mobile audit (beyond these five items) has still not been
+done and should be a separate pass if further mobile-specific settings need review.
