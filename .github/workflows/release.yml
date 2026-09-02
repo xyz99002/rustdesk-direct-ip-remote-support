@@ -53,7 +53,6 @@ jobs:
   finalize-release:
     name: Finalize GitHub Release
     needs: [determine-version, build]
-    if: success()
     runs-on: ubuntu-latest
 
     steps:
@@ -90,50 +89,3 @@ jobs:
             --title "RustDesk Direct-IP v${{ inputs.direct-ip-version }}" \
             --notes-file release-notes.md \
             --prerelease=false
-
-  finalize-release-on-failure:
-    name: Finalize GitHub Release (Partial - Build Failed)
-    needs: [determine-version, build]
-    if: failure()
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Create partial release notes
-        shell: bash
-        run: |
-          cat > release-notes.md <<EOF
-          ## RustDesk Direct-IP v${{ inputs.direct-ip-version }} [Partial]
-
-          **Warning: This release was only partially completed due to build failures on one or more platforms.**
-
-          Direct-IP release version: **${{ inputs.direct-ip-version }}**
-
-          Based on RustDesk: **${{ needs.determine-version.outputs.rustdesk-version }}**
-
-          ### Build information
-
-          - RustDesk baseline: \`${{ needs.determine-version.outputs.rustdesk-version }}\`
-          - Direct-IP version: \`${{ inputs.direct-ip-version }}\`
-          - Release tag: \`${{ needs.determine-version.outputs.tag }}\`
-          - Windows builds are unsigned.
-          - Android builds are unsigned unless Android signing credentials are configured.
-
-          ### Build Status
-
-          Some platforms did not build successfully. Please check Actions run ${{ github.run_id }} for details on which platforms failed.
-
-          This release was built automatically by the repository's
-          \`flutter-build.yml\` workflow.
-          EOF
-
-      - name: Finalize release (partial)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="${{ needs.determine-version.outputs.tag }}"
-
-          gh release edit "$TAG" \
-            --repo "${{ github.repository }}" \
-            --title "RustDesk Direct-IP v${{ inputs.direct-ip-version }} [Partial]" \
-            --notes-file release-notes.md \
-            --prerelease=true
