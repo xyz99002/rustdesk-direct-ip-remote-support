@@ -1,0 +1,141 @@
+# fork_config.toml — Full Options Reference
+#
+# Every option below is verified against src/fork_config.rs as of this commit.
+# Nothing here is invented. See docs/CONFIG_REFERENCE.md for file-and-line
+# citations and consumer details for each key.
+#
+# This file documents the schema; it is not meant to be used as-is (some
+# combinations, e.g. both role examples, are mutually exclusive — pick one
+# role per deployment). Copy configs/example-local.toml or
+# configs/example-remote.toml as your starting point instead.
+#
+# CRITICAL ORDERING RULE: [authentication] MUST be the LAST section in the
+# file. In TOML, every "key = value" line after a "[table]" header belongs to
+# that table, not the top level — putting any key below after [authentication]
+# would silently nest it under authentication.* instead of where you intended.
+
+# ---------------------------------------------------------------------------
+# version (integer, REQUIRED)
+# Only schema version currently understood. Any other value is rejected
+# (ConfigError::UnsupportedVersion). A future incompatible schema change must
+# bump this and add explicit migration/rejection logic.
+# ---------------------------------------------------------------------------
+version = 1
+
+# ---------------------------------------------------------------------------
+# role (string enum, REQUIRED)
+#   "local"  -> may only INITIATE outbound direct-IP connections; never
+#               accepts an inbound session.
+#   "remote" -> may only ACCEPT inbound direct-IP connections; never
+#               initiates an outbound session.
+# Maps to hbb_common::config::HARD_SETTINGS["conn-type"] ("outgoing" /
+# "incoming"), which upstream's own is_incoming_only()/is_outgoing_only()
+# already gate outbound connects (src/client.rs) and the inbound listener
+# (src/rendezvous_mediator.rs) on. STATUS: working.
+# ---------------------------------------------------------------------------
+role = "local"
+
+# ---------------------------------------------------------------------------
+# support_enabled (boolean, REQUIRED)
+# Shows/hides the Support button in the local UI. Support always opens a
+# VIEW_CAMERA session plus a Voice Call on it, and additionally a DEFAULT_CONN
+# session when desktop_share_enabled is also true.
+# Maps to Config::set_option("enable-camera", "Y"/"N"), reused by upstream's
+# own login handler (src/server/connection.rs:2544-2551) to accept/reject
+# VIEW_CAMERA (and therefore Voice Call) at the protocol level.
+# STATUS: working, both locally (button visibility) and remotely (protocol
+# enforcement).
+#
+# At least one of support_enabled / desktop_share_enabled MUST be true, or
+# the whole config file is rejected (ConfigError::NoConnectionModeEnabled) —
+# there is no valid configuration with both buttons hidden.
+# ---------------------------------------------------------------------------
+support_enabled = true
+
+# ---------------------------------------------------------------------------
+# desktop_share_enabled (boolean, REQUIRED)
+# Shows/hides the Desktop button in the local UI, and controls whether
+# onSupport() also opens a plain DEFAULT_CONN session alongside VIEW_CAMERA.
+# Maps to Config::set_option("desktop-share-enabled", "Y"/"N") — a
+# fork-specific key with NO upstream meaning.
+# STATUS: partially working. No existing upstream permission rejects a plain
+# DEFAULT_CONN login outright, so this value has NO remote-side enforcement:
+# a client that connects directly (bypassing this fork's UI) can still open
+# a DEFAULT_CONN session against a "remote"-role host even if that host's
+# own fork_config.toml sets desktop_share_enabled = false. See
+# docs/CONFIG_FEATURE_VALIDATION.md for detail and recommended fix options.
+# ---------------------------------------------------------------------------
+desktop_share_enabled = true
+
+# ---------------------------------------------------------------------------
+# listen_address (string, IP address, REQUIRED)
+# Validated as a parseable IPv4/IPv6 address (std::net::IpAddr) but NOT YET
+# WIRED to any behavior in this codebase (#[allow(dead_code)] in
+# src/fork_config.rs). Reserved for a future Direct-IP transport phase.
+# STATUS: not wired — accepted and validated only, has no runtime effect.
+# ---------------------------------------------------------------------------
+listen_address = "0.0.0.0"
+
+# ---------------------------------------------------------------------------
+# listen_port (integer 1-65535, REQUIRED)
+# Validated as nonzero but NOT YET WIRED to any behavior.
+# STATUS: not wired.
+# ---------------------------------------------------------------------------
+listen_port = 21118
+
+# ---------------------------------------------------------------------------
+# video_quality (string enum: "low" | "medium" | "high", REQUIRED)
+# Parsed and validated but NOT YET WIRED to any behavior. Reserved for a
+# future media-quality phase.
+# STATUS: not wired.
+# ---------------------------------------------------------------------------
+video_quality = "medium"
+
+# ---------------------------------------------------------------------------
+# audio_quality (string enum: "low" | "medium" | "high", REQUIRED)
+# Parsed and validated but NOT YET WIRED to any behavior.
+# STATUS: not wired.
+# ---------------------------------------------------------------------------
+audio_quality = "medium"
+
+# ---------------------------------------------------------------------------
+# log_level (string enum: "error" | "warn" | "info" | "debug" | "trace", REQUIRED)
+# Parsed and validated but NOT YET WIRED to any behavior. Reserved for a
+# future minimal-UI/logging phase.
+# STATUS: not wired.
+# ---------------------------------------------------------------------------
+log_level = "info"
+
+# ---------------------------------------------------------------------------
+# [authentication] — MUST BE THE LAST SECTION IN THE FILE.
+# ---------------------------------------------------------------------------
+[authentication]
+
+# mode (string enum, REQUIRED)
+#   "ask"              -> Config::set_option("approve-mode", "click")
+#                          (upstream ApproveMode::Click — operator must click
+#                          Accept on each incoming session)
+#   "password"         -> Config::set_option("approve-mode", "password")
+#                          (upstream ApproveMode::Password)
+#   "ask_and_password" -> Config::set_option("approve-mode", "") (empty
+#                          clears the option; upstream's own approve_mode()
+#                          then falls through to its ApproveMode::Both
+#                          default — both click-to-accept AND password work)
+# Consumed by libs/hbb_common/src/password_security.rs:77-86.
+# STATUS: working.
+mode = "ask"
+
+# ---------------------------------------------------------------------------
+# UNCONDITIONAL SETTINGS — not TOML keys, cannot be configured or disabled
+# from this file. Listed here for completeness only. Applied every time ANY
+# valid fork_config.toml loads, regardless of field values:
+#
+#   HARD_SETTINGS["disable-account"]        = "Y"   (hides Account tab)
+#   BUILTIN_SETTINGS["hide-network-settings"] = "Y" (hides Network tab)
+#   Config::set_option("enable-lan-discovery", "N")  (suppresses LAN discovery
+#                                                      broadcast replies)
+#
+# If fork_config.toml is absent or invalid, NONE of the above apply either —
+# the app falls back to pure upstream behavior. See
+# docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md.
+# ---------------------------------------------------------------------------

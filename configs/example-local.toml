@@ -1,0 +1,33 @@
+# Example fork_config.toml — Local role
+#
+# "local" means this instance may only INITIATE outbound direct-IP connections;
+# it will never accept an inbound session. Typical use: the machine a support
+# agent or end user sits at to reach out to a remote host.
+#
+# All fields below are REQUIRED — fork_config.rs has no implicit defaults.
+# See docs/CONFIG_REFERENCE.md for the full, source-verified option reference.
+#
+# NOTE ON ORDERING: [authentication] must stay the LAST section in this file.
+# Any "key = value" line placed after a "[table]" header belongs to that table,
+# not the top level.
+
+version = 1
+role = "local"
+
+# At least one of these two must be true (enforced by fork_config.rs).
+# For a local/outbound-only client, both are typically true so the operator
+# can choose Support or Desktop mode when connecting out.
+support_enabled = true
+desktop_share_enabled = true
+
+# Parsed and validated, but NOT YET WIRED to any behavior (see
+# docs/CONFIG_REFERENCE.md Section 4.7-4.11). Safe to leave at these values.
+listen_address = "0.0.0.0"
+listen_port = 21118
+video_quality = "medium"
+audio_quality = "medium"
+log_level = "info"
+
+[authentication]
+# "ask" | "password" | "ask_and_password"
+mode = "ask"

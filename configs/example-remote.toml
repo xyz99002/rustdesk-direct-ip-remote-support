@@ -1,0 +1,34 @@
+# Example fork_config.toml — Remote role
+#
+# "remote" means this instance may only ACCEPT inbound direct-IP connections;
+# it will never initiate an outbound session. Typical use: the machine being
+# supported or shared, waiting for a Local-role peer to connect in.
+#
+# All fields below are REQUIRED — fork_config.rs has no implicit defaults.
+# See docs/CONFIG_REFERENCE.md for the full, source-verified option reference.
+#
+# NOTE ON ORDERING: [authentication] must stay the LAST section in this file.
+
+version = 1
+role = "remote"
+
+# support_enabled: gates acceptance of VIEW_CAMERA (and the Voice Call that
+#   rides on it) at the protocol level via the existing upstream
+#   "enable-camera" permission (src/server/connection.rs:2544-2551).
+# desktop_share_enabled: LOCAL UI HINT ONLY on this host — see
+#   docs/CONFIG_REFERENCE.md Section 4.5. There is currently no remote-side
+#   enforcement that rejects a plain DEFAULT_CONN login when this is false.
+# At least one of the two must be true.
+support_enabled = true
+desktop_share_enabled = true
+
+# Parsed and validated, but NOT YET WIRED to any behavior.
+listen_address = "0.0.0.0"
+listen_port = 21118
+video_quality = "medium"
+audio_quality = "medium"
+log_level = "info"
+
+[authentication]
+# "ask" | "password" | "ask_and_password"
+mode = "password"
