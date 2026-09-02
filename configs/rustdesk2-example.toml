@@ -1,0 +1,82 @@
+# Example RustDesk2.toml — upstream RustDesk's own configuration file.
+#
+# THIS IS A DIFFERENT FILE from fork_config.toml. See docs/UPSTREAM_CONFIG_REFERENCE.md
+# for full details, and docs/CONFIG_REFERENCE.md for fork_config.toml's own, separate schema.
+#
+# File identity: Config2 struct (libs/hbb_common/src/config.rs:242-261), serialized to
+# "RustDesk2.toml" in the OS-standard per-user config directory:
+#   Windows: %APPDATA%\RustDesk\config\RustDesk2.toml
+#   Linux:   ~/.config/RustDesk/RustDesk2.toml
+#   macOS:   ~/Library/Application Support/RustDesk/RustDesk2.toml
+#
+# IMPORTANT PRECEDENCE NOTE: if fork_config.toml is also present and valid, its apply()
+# function (src/fork_config.rs) unconditionally overwrites approve-mode, enable-camera, and
+# enable-lan-discovery in this file's [options] table on every app startup. Hand-edited values
+# for those three specific keys will be silently replaced. All other keys below are untouched
+# by the fork and behave exactly as upstream RustDesk documents.
+#
+# Scalar top-level fields (rendezvous_server, nat_type, serial, unlock_pin, trusted_devices,
+# socks) are normally written by the app itself; shown here for completeness with safe/empty
+# defaults. The [options] table is the part most deployments actually want to pre-seed.
+
+rendezvous_server = ""
+nat_type = 0
+serial = 0
+unlock_pin = ""
+trusted_devices = ""
+
+# Optional SOCKS5 proxy — omit the whole [socks] table if not using one.
+# [socks]
+# proxy = "127.0.0.1:1080"
+# username = ""
+# password = ""
+
+[options]
+# --- Session / remote-control permissions (Y/N unless noted) ---
+# Read at login time by src/server/connection.rs — same enforcement mechanism this fork
+# reuses for enable-camera (see docs/CONFIG_FEATURE_VALIDATION.md).
+enable-keyboard = "Y"
+enable-clipboard = "Y"
+enable-file-transfer = "Y"
+enable-camera = "Y"          # NOTE: overwritten by fork_config.toml's support_enabled if present
+enable-terminal = "Y"
+enable-audio = "Y"
+enable-tunnel = "Y"
+enable-remote-restart = "Y"
+enable-record-session = "N"
+enable-block-input = "N"
+enable-privacy-mode = "N"
+access-mode = ""             # "" = custom/per-permission, "full", or "view"
+
+# --- Security / network ---
+approve-mode = "click"       # NOTE: overwritten by fork_config.toml's authentication.mode if present
+verification-method = ""
+whitelist = ""                # Comma-separated CIDR list, e.g. "192.168.1.0/24,10.0.0.5"
+enable-lan-discovery = "Y"    # NOTE: overwritten to "N" unconditionally by fork_config.toml if present
+direct-server = "N"
+direct-access-port = ""
+custom-rendezvous-server = ""
+relay-server = ""
+api-server = ""
+key = ""
+
+# --- Display / media ---
+image_quality = "balanced"
+codec-preference = "auto"
+enable-hwcodec = "Y"
+enable-abr = "Y"
+show_remote_cursor = "Y"
+
+# --- File transfer / recording ---
+file-transfer-max-files = "0"   # 0 = built-in default limit; positive N = explicit cap
+allow-auto-record-incoming = "N"
+allow-auto-record-outgoing = "N"
+
+# --- UI visibility (custom-client mechanism; see docs/CONFIG_REFERENCE.md Section 5 for the
+#     related HARD_SETTINGS/BUILTIN_SETTINGS variants this fork already sets unconditionally) ---
+hide-security-settings = "N"
+hide-server-settings = "N"
+hide-proxy-settings = "N"
+
+# See docs/UPSTREAM_CONFIG_REFERENCE.md Section 4 for the full ~130-key catalog — this file
+# intentionally seeds only the keys most relevant to a Direct-IP deployment, not every option.

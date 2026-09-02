@@ -593,21 +593,9 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
           gFFI.invokeMethod(AndroidChannel.kSetStartOnBootOpt, toValue);
         }));
 
-    if (!bind.isCustomClient()) {
-      enhancementsTiles.add(
-        SettingsTile.switchTile(
-          initialValue: _checkUpdateOnStartup,
-          title:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(translate('Check for software update on startup')),
-          ]),
-          onToggle: (bool toValue) async {
-            await mainSetLocalBoolOption(kOptionEnableCheckUpdate, toValue);
-            setState(() => _checkUpdateOnStartup = toValue);
-          },
-        ),
-      );
-    }
+    // Direct-IP fork: "Check for software update on startup" removed — calls an external
+    // update server, inconsistent with this fork's no-cloud, Direct-IP-only design.
+    // See docs/SETUP_UI_AUDIT.md.
 
     enhancementsTiles.add(
       SettingsTile.switchTile(
@@ -928,11 +916,8 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
               ),
             ],
           ),
-        if (isAndroid &&
-            !disabledSettings &&
-            !outgoingOnly &&
-            !hideSecuritySettings)
-          SettingsSection(title: Text('2FA'), tiles: tfaTiles),
+        // Direct-IP fork: 2FA removed — depends on the upstream account system this fork
+        // does not use (no account system per disable-account=Y). See docs/SETUP_UI_AUDIT.md.
         if (isAndroid &&
             !disabledSettings &&
             !outgoingOnly &&

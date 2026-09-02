@@ -485,7 +485,6 @@ class _GeneralState extends State<_General> {
   Widget other() {
     final incomingOnly = bind.isIncomingOnly();
     final outgoingOnly = bind.isOutgoingOnly();
-    final showAutoUpdate = isWindows && bind.mainIsInstalled();
     final children = <Widget>[
       if (!isWeb && !incomingOnly)
         _OptionCheckBox(context, 'Confirm before closing multiple tabs',
@@ -544,20 +543,10 @@ class _GeneralState extends State<_General> {
             ),
           ),
       ],
-      if (!isWeb && !bind.isCustomClient())
-        _OptionCheckBox(
-          context,
-          'Check for software update on startup',
-          kOptionEnableCheckUpdate,
-          isServer: false,
-        ),
-      if (showAutoUpdate)
-        _OptionCheckBox(
-          context,
-          'Auto update',
-          kOptionAllowAutoUpdate,
-          isServer: true,
-        ),
+      // Direct-IP fork: "Check for software update on startup" and "Auto update" removed —
+      // both call an external update server, which is inconsistent with this fork's no-cloud,
+      // Direct-IP-only design (no rendezvous, no relay, no other calls to non-peer servers).
+      // See docs/SETUP_UI_AUDIT.md.
       if (isWindows && !outgoingOnly)
         _OptionCheckBox(
           context,
@@ -898,9 +887,10 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
               child: Column(children: [
                 permissions(context),
                 password(context),
-                _Card(title: '2FA', children: [tfa()]),
-                if (!isChangeIdDisabled())
-                  _Card(title: 'ID', children: [changeId()]),
+                // Direct-IP fork: 2FA and Change ID removed — both depend on the upstream
+                // account/rendezvous-registration system this fork does not use (no account
+                // system per disable-account=Y; ID is never registered anywhere per
+                // ADR-0003-DIRECT-IP-ENFORCEMENT.md). See docs/SETUP_UI_AUDIT.md.
                 more(context),
               ]),
             ),
