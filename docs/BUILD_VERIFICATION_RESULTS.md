@@ -1,4 +1,32 @@
-# Build Verification Results (2026-08-29)
+# Build Verification Results
+
+## CI Verification Update (2026-09-02) — Sciter GCC7/AOM Matrix
+
+**Context:** Full Flutter CI run #13 (`workflow_dispatch`, commit `4894fd6d8` — reset to
+last-known-good baseline `aae2da7b7`), re-run of the two failed jobs from the original run.
+
+**Final result:** `Failure` overall, `1h 8m 17s` total duration, 18 artifacts produced.
+
+| Job | Result | Duration | Notes |
+|---|---|---|---|
+| `build-rustdesk-linux-sciter armv7-unknown-linux-gnueabihf` | ✅ **Passed** | 1h 8m | Confirms the earlier failure (`git fetch` exit 128 fetching `tauri-apps/tray-icon` at commit `0a5835b0e6828e37a1f781de9c2d671ae7a939e6`) was **transient network flakiness**, not a code or configuration regression — verified by comparing raw logs byte-for-byte against the successful baseline run, which fetched the identical repository and commit hash |
+| `build-rustdesk-linux-sciter x86_64-unknown-linux-gnu` | ❌ **Failed** | 3m 39s | Same failure signature and timing as the original baseline run (`aae2da7b7`, 4m 5s) and every other attempt this session — fails at the `Build rustdesk sciter binary for x86_64` step. This is the **known, pre-existing GCC 7.5.0 / aom 3.12.1 `_mm256_set_m128i` AVX2-intrinsic incompatibility**, not a regression introduced by anything in this session |
+
+**Conclusion:** the repository, after being reset to commit `aae2da7b7` and verified byte-identical
+for all workflow/vcpkg/code paths, reproduces baseline CI behavior exactly: every job green
+except the one pre-existing Sciter x86_64 issue. The overall run shows `Failure` only because of
+that one known job — this is expected and matches the documented baseline, not a new problem.
+
+**A fix for the x86_64 issue exists** (`res/vcpkg/aom/aom-gcc7-avx2-compat.diff`, a GCC<8
+compatibility shim for `_mm256_set_m128i`) but was pulled back out after it caused an unrelated
+new failure on the Windows i686 sciter job ("corrupt patch" error) when first applied. The patch
+itself was not root-caused before being reverted; re-applying it requires diagnosing that
+corrupt-patch failure first, which was not the priority for this documentation pass. See
+`docs/CI_WORKFLOW_AUDIT_2026-09-01.md` for the full incident history.
+
+---
+
+# Build Verification Results (2026-08-29) — Historical: Local Build Blocker
 
 **Status:** BLOCKED — New blocker discovered during Step 1 execution.
 
