@@ -25,7 +25,6 @@ vcpkg_from_git(
         # Can be dropped when https://bugs.chromium.org/p/aomedia/issues/detail?id=3029 is merged into the upstream
         aom-install.diff
         aom-disable-multipass-check.diff
-        aom-gcc7-avx2-compat.diff
 )
 
 set(aom_target_cpu "")
