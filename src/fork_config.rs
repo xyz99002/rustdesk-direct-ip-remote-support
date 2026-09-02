@@ -1,49 +1,75 @@
 //! Configuration and role-restriction layer for the RustDesk direct-IP fork.
 //!
-//! This module owns a small, versioned TOML file (`fork_config.toml`, looked up next to the
-//! executable using the same convention as the existing `load_custom_client()`/`custom.txt`
-//! mechanism in `src/common.rs`) and translates it into upstream RustDesk's own, unmodified
-//! mechanisms:
+//! **2026-09-02: consolidated from a separate `fork_config.toml` file into upstream's own
+//! `RustDesk2.toml` (`hbb_common::config::Config2`).** This module no longer parses or looks up
+//! any file of its own — every value it needs is read via the existing
+//! `Config::get_option()`/`Config::set_option()` mechanism, under a set of `direct-ip-*`-prefixed
+//! keys stored in `Config2`'s own `options` table (the same table that holds `approve-mode`,
+//! `enable-camera`, and every other upstream option). This eliminates the second config file
+//! entirely, along with the "which file wins" precedence question that existed while there were
+//! two files. See `docs/CONFIG_REFERENCE.md` and `docs/UPSTREAM_CONFIG_REFERENCE.md`.
 //!
-//! - `role` -> `hbb_common::config::HARD_SETTINGS["conn-type"]` (`"outgoing"` / `"incoming"`),
-//!   which upstream's own `is_incoming_only()`/`is_outgoing_only()` already gate outbound
-//!   connects (`src/client.rs`) and the inbound listener (`src/rendezvous_mediator.rs`) on.
-//! - `authentication.mode` -> `hbb_common::config::Config::set_option("approve-mode", ...)`,
-//!   which upstream's own `password_security::approve_mode()` already reads.
-//! - `support_enabled` -> `hbb_common::config::Config::set_option("enable-camera", ...)`, which
-//!   upstream's own login handler (`src/server/connection.rs:2544-2551`) already reads to
-//!   accept/reject `VIEW_CAMERA` (and therefore Voice Call, which rides on it) connections.
-//! - Minimal UI (unconditional, not config-driven): `HARD_SETTINGS["disable-account"]` and
-//!   `BUILTIN_SETTINGS["hide-network-settings"]` are set so the Flutter UI's own existing
-//!   conditionals (`DesktopSettingPage.tabKeys` in `flutter/lib/desktop/pages/
-//!   desktop_setting_page.dart`) hide the Account and Network (relay/rendezvous server
-//!   address) settings tabs — reusing upstream's own custom-client hiding mechanism, the
-//!   same one `is_disable_account()`/`get_builtin_option()` already read for any other
-//!   RustDesk custom client build. No new Dart-side logic was needed for this.
+//! The `direct-ip-*` keys below are **inputs** this module reads; they are translated into
+//! upstream's own, unmodified mechanisms via a **different** set of keys (never the same name,
+//! so there is no key-level collision even though everything now lives in one file):
 //!
-//! - Direct-IP enforcement (unconditional): `Config::set_option("enable-lan-discovery", "N")`
-//!   closes the LAN-broadcast public-ID exposure path in `src/lan.rs` (existing upstream
-//!   option). This complements the rendezvous-registration/relay-participation removal in
-//!   `src/rendezvous_mediator.rs::start_all()` — search that file for "DIRECT-IP FORK". See
-//!   `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md`.
+//! - `direct-ip-role` -> `hbb_common::config::HARD_SETTINGS["conn-type"]` (`"outgoing"` /
+//!   `"incoming"`), which upstream's own `is_incoming_only()`/`is_outgoing_only()` already gate
+//!   outbound connects (`src/client.rs`) and the inbound listener
+//!   (`src/rendezvous_mediator.rs`) on. `HARD_SETTINGS` is in-memory only, never persisted to
+//!   `RustDesk2.toml`.
+//! - `direct-ip-auth-mode` -> `Config::set_option("approve-mode", ...)`, which upstream's own
+//!   `password_security::approve_mode()` already reads.
+//! - `direct-ip-support-enabled` -> `Config::set_option("enable-camera", ...)`, which upstream's
+//!   own login handler (`src/server/connection.rs:2544-2551`) already reads to accept/reject
+//!   `VIEW_CAMERA` (and therefore Voice Call, which rides on it) connections.
+//! - `direct-ip-desktop-share-enabled` -> `Config::set_option("desktop-share-enabled", ...)` —
+//!   still a fork-specific key with no upstream meaning (see `docs/CONFIG_FEATURE_VALIDATION.md`
+//!   Section 2 for why this has no remote-side enforcement).
+//! - `direct-ip-show-setup-ui` -> `Config::set_option("show-setup-ui", ...)` — new (see
+//!   `docs/GUI_CONFIGURATION_CONTROL.md`). **Optional**, defaults to `"Y"` (shown) if absent —
+//!   a deliberate, documented exception to this module's usual "every field required" rule,
+//!   since this field is UI convenience, not a security-relevant setting, and a missing key
+//!   should not regress an existing deployment's Settings visibility.
 //!
-//! No authentication, transport, encryption, password storage, or Voice Call/VIEW_CAMERA code
-//! is modified or reimplemented here. Rendezvous registration and relay participation *are*
-//! removed (not modified — the client-side registration loop is deleted), by explicit,
-//! documented decision — see `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md`. See also
-//! `docs/architecture.md` and `docs/upstream-analysis.md`.
+//! Minimal UI (unconditional, not config-driven): `HARD_SETTINGS["disable-account"]` and
+//! `BUILTIN_SETTINGS["hide-network-settings"]` are set so the Flutter UI's own existing
+//! conditionals (`DesktopSettingPage.tabKeys` in
+//! `flutter/lib/desktop/pages/desktop_setting_page.dart`) hide the Account and Network
+//! (relay/rendezvous server address) settings tabs — reusing upstream's own custom-client hiding
+//! mechanism. Direct-IP enforcement (also unconditional): `Config::set_option("enable-lan-discovery", "N")`
+//! closes the LAN-broadcast public-ID exposure path in `src/lan.rs`. See
+//! `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md`.
+//!
+//! No authentication, transport, encryption, password storage, or Voice Call/VIEW_CAMERA code is
+//! modified or reimplemented here.
 
 use hbb_common::config::{Config, BUILTIN_SETTINGS, HARD_SETTINGS};
 use hbb_common::log;
-use serde_derive::Deserialize;
-use std::path::PathBuf;
 
-/// The only configuration schema version understood today. A future incompatible schema
-/// change must bump this and add explicit migration/rejection logic rather than silently
-/// reinterpreting old files.
+/// The only configuration schema version understood today. A future incompatible schema change
+/// must bump this and add explicit migration/rejection logic rather than silently reinterpreting
+/// old values.
 pub const SUPPORTED_CONFIG_VERSION: u32 = 1;
 
-const CONFIG_FILE_NAME: &str = "fork_config.toml";
+/// `direct-ip-*` option keys read from `Config2.options` (i.e. `RustDesk2.toml`'s `[options]`
+/// table). Every key here is a distinct string from any upstream `OPTION_*` constant in
+/// `libs/hbb_common/src/config.rs` — verified by grep against that file at the time this was
+/// written, to guarantee no collision with the ~130 existing upstream keys.
+mod keys {
+    pub const CONFIG_VERSION: &str = "direct-ip-config-version";
+    pub const ROLE: &str = "direct-ip-role";
+    pub const AUTH_MODE: &str = "direct-ip-auth-mode";
+    pub const SUPPORT_ENABLED: &str = "direct-ip-support-enabled";
+    pub const DESKTOP_SHARE_ENABLED: &str = "direct-ip-desktop-share-enabled";
+    pub const LISTEN_ADDRESS: &str = "direct-ip-listen-address";
+    pub const LISTEN_PORT: &str = "direct-ip-listen-port";
+    pub const VIDEO_QUALITY: &str = "direct-ip-video-quality";
+    pub const AUDIO_QUALITY: &str = "direct-ip-audio-quality";
+    pub const LOG_LEVEL: &str = "direct-ip-log-level";
+    /// Optional; see module doc comment for the default-value rationale.
+    pub const SHOW_SETUP_UI: &str = "direct-ip-show-setup-ui";
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
@@ -82,9 +108,9 @@ pub enum LogLevel {
 /// Fully parsed and validated fork configuration.
 ///
 /// `listen_address`, `listen_port`, `video_quality`, `audio_quality`, and `log_level` are
-/// validated here (so the file format is stable and won't need a version bump later) but are
-/// **not yet** wired to any behavior — that happens in the phases that own them (Direct-IP
-/// transport, minimal UI).
+/// validated here (so the schema is stable and won't need a version bump later) but are **not
+/// yet** wired to any behavior — that happens in the phases that own them (Direct-IP transport,
+/// minimal UI).
 #[derive(Debug, Clone)]
 pub struct ForkConfig {
     pub version: u32,
@@ -96,10 +122,12 @@ pub struct ForkConfig {
     /// Gates the Desktop button (local UI only — no existing upstream permission rejects
     /// `DEFAULT_CONN` outright, so this cannot be enforced remotely; see `docs/FORK_PROFILE_SPEC.md`).
     pub desktop_share_enabled: bool,
-    // Parsed and validated now so the file format is stable across phases; not read by any
-    // caller yet. Each will lose this `allow` when its owning phase wires it up:
-    // Direct-IP transport (listen_address, listen_port), Media (video_quality, audio_quality),
-    // minimal UI (log_level).
+    /// Gates whether the Settings UI entry point is reachable at all. Defaults to `true` if the
+    /// `direct-ip-show-setup-ui` key is absent. See `docs/GUI_CONFIGURATION_CONTROL.md`.
+    pub show_setup_ui: bool,
+    // Parsed and validated now so the schema is stable across phases; not read by any caller
+    // yet. Each will lose this `allow` when its owning phase wires it up: Direct-IP transport
+    // (listen_address, listen_port), Media (video_quality, audio_quality), minimal UI (log_level).
     #[allow(dead_code)]
     pub listen_address: String,
     #[allow(dead_code)]
@@ -112,16 +140,18 @@ pub struct ForkConfig {
     pub log_level: LogLevel,
 }
 
-/// Raw, unvalidated shape of `fork_config.toml`. Every field is optional at the parse layer so
-/// that a missing/invalid field is reported explicitly during validation, rather than silently
-/// substituted by `#[serde(default)]` or a blanket `Default` impl.
-#[derive(Debug, Deserialize, Default)]
+/// Raw, unvalidated values looked up from `Config2.options`. Every field is optional at this
+/// layer (`None` means "key absent") so that a missing/invalid value is reported explicitly
+/// during validation, rather than silently substituted — except `show_setup_ui`, which is a
+/// deliberate, documented exception (see module doc comment).
+#[derive(Debug, Default)]
 struct RawForkConfig {
     version: Option<u32>,
     role: Option<String>,
-    authentication: Option<RawAuthConfig>,
+    auth_mode: Option<String>,
     support_enabled: Option<bool>,
     desktop_share_enabled: Option<bool>,
+    show_setup_ui: Option<bool>,
     listen_address: Option<String>,
     listen_port: Option<u16>,
     video_quality: Option<String>,
@@ -129,15 +159,8 @@ struct RawForkConfig {
     log_level: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct RawAuthConfig {
-    mode: Option<String>,
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum ConfigError {
-    Io(String),
-    Parse(String),
     UnsupportedVersion(u32),
     MissingField(&'static str),
     InvalidValue {
@@ -148,25 +171,27 @@ pub enum ConfigError {
     /// shown, so the configuration is rejected outright rather than silently producing a
     /// connection screen with nothing on it.
     NoConnectionModeEnabled,
+    /// No `direct-ip-*` keys are present at all — treated the same as "no config supplied" by
+    /// the caller, not a hard error (see `load_and_apply()`).
+    NotConfigured,
 }
 
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConfigError::Io(e) => write!(f, "failed to read fork config file: {e}"),
-            ConfigError::Parse(e) => write!(f, "failed to parse fork config as TOML: {e}"),
             ConfigError::UnsupportedVersion(v) => write!(
                 f,
-                "unsupported fork config version {v} (supported: {SUPPORTED_CONFIG_VERSION})"
+                "unsupported direct-ip config version {v} (supported: {SUPPORTED_CONFIG_VERSION})"
             ),
-            ConfigError::MissingField(field) => write!(f, "missing required field '{field}'"),
+            ConfigError::MissingField(field) => write!(f, "missing required option '{field}'"),
             ConfigError::InvalidValue { field, value } => {
                 write!(f, "invalid value for '{field}': '{value}'")
             }
             ConfigError::NoConnectionModeEnabled => write!(
                 f,
-                "at least one of 'support_enabled' or 'desktop_share_enabled' must be true"
+                "at least one of 'direct-ip-support-enabled' or 'direct-ip-desktop-share-enabled' must be true"
             ),
+            ConfigError::NotConfigured => write!(f, "no direct-ip-* options configured"),
         }
     }
 }
@@ -176,7 +201,7 @@ fn parse_role(s: &str) -> Result<Role, ConfigError> {
         "local" => Ok(Role::Local),
         "remote" => Ok(Role::Remote),
         _ => Err(ConfigError::InvalidValue {
-            field: "role",
+            field: "direct-ip-role",
             value: s.to_owned(),
         }),
     }
@@ -188,7 +213,7 @@ fn parse_auth_mode(s: &str) -> Result<AuthMode, ConfigError> {
         "password" => Ok(AuthMode::Password),
         "ask_and_password" => Ok(AuthMode::AskAndPassword),
         _ => Err(ConfigError::InvalidValue {
-            field: "authentication.mode",
+            field: "direct-ip-auth-mode",
             value: s.to_owned(),
         }),
     }
@@ -214,7 +239,7 @@ fn parse_log_level(s: &str) -> Result<LogLevel, ConfigError> {
         "debug" => Ok(LogLevel::Debug),
         "trace" => Ok(LogLevel::Trace),
         _ => Err(ConfigError::InvalidValue {
-            field: "log_level",
+            field: "direct-ip-log-level",
             value: s.to_owned(),
         }),
     }
@@ -225,70 +250,70 @@ fn validate_listen_address(s: &str) -> Result<(), ConfigError> {
         Ok(())
     } else {
         Err(ConfigError::InvalidValue {
-            field: "listen_address",
+            field: "direct-ip-listen-address",
             value: s.to_owned(),
         })
     }
 }
 
-/// Validate a raw, parsed TOML document into a [`ForkConfig`]. Every field is required; there
-/// are no implicit defaults at this layer (deployments must state their configuration
-/// explicitly). Returns the first validation error encountered.
+/// Validate raw, looked-up option values into a [`ForkConfig`]. Every field is required except
+/// `show_setup_ui` — there are no other implicit defaults at this layer (deployments must state
+/// their configuration explicitly). Returns the first validation error encountered.
 fn validate(raw: RawForkConfig) -> Result<ForkConfig, ConfigError> {
-    let version = raw.version.ok_or(ConfigError::MissingField("version"))?;
+    let version = raw.version.ok_or(ConfigError::MissingField(keys::CONFIG_VERSION))?;
     if version != SUPPORTED_CONFIG_VERSION {
         return Err(ConfigError::UnsupportedVersion(version));
     }
 
-    let role = raw.role.ok_or(ConfigError::MissingField("role"))?;
+    let role = raw.role.ok_or(ConfigError::MissingField(keys::ROLE))?;
     let role = parse_role(&role)?;
 
-    let auth = raw
-        .authentication
-        .ok_or(ConfigError::MissingField("authentication"))?;
-    let mode = auth
-        .mode
-        .ok_or(ConfigError::MissingField("authentication.mode"))?;
+    let mode = raw
+        .auth_mode
+        .ok_or(ConfigError::MissingField(keys::AUTH_MODE))?;
     let auth_mode = parse_auth_mode(&mode)?;
 
     let support_enabled = raw
         .support_enabled
-        .ok_or(ConfigError::MissingField("support_enabled"))?;
+        .ok_or(ConfigError::MissingField(keys::SUPPORT_ENABLED))?;
     let desktop_share_enabled = raw
         .desktop_share_enabled
-        .ok_or(ConfigError::MissingField("desktop_share_enabled"))?;
+        .ok_or(ConfigError::MissingField(keys::DESKTOP_SHARE_ENABLED))?;
     if !support_enabled && !desktop_share_enabled {
         return Err(ConfigError::NoConnectionModeEnabled);
     }
 
+    // Documented exception: defaults to true (shown) rather than erroring when absent.
+    let show_setup_ui = raw.show_setup_ui.unwrap_or(true);
+
     let listen_address = raw
         .listen_address
-        .ok_or(ConfigError::MissingField("listen_address"))?;
+        .ok_or(ConfigError::MissingField(keys::LISTEN_ADDRESS))?;
     validate_listen_address(&listen_address)?;
 
     let listen_port = raw
         .listen_port
-        .ok_or(ConfigError::MissingField("listen_port"))?;
+        .ok_or(ConfigError::MissingField(keys::LISTEN_PORT))?;
     if listen_port == 0 {
         return Err(ConfigError::InvalidValue {
-            field: "listen_port",
+            field: keys::LISTEN_PORT,
             value: "0".to_owned(),
         });
     }
 
     let video_quality = raw
         .video_quality
-        .ok_or(ConfigError::MissingField("video_quality"))?;
-    let video_quality = parse_quality("video_quality", &video_quality)?;
+        .ok_or(ConfigError::MissingField(keys::VIDEO_QUALITY))?;
+    let video_quality = parse_quality(keys::VIDEO_QUALITY, &video_quality)?;
 
     let audio_quality = raw
         .audio_quality
-        .ok_or(ConfigError::MissingField("audio_quality"))?;
-    let audio_quality = parse_quality("audio_quality", &audio_quality)?;
+        .ok_or(ConfigError::MissingField(keys::AUDIO_QUALITY))?;
+    let audio_quality = parse_quality(keys::AUDIO_QUALITY, &audio_quality)?;
 
     let log_level = raw
         .log_level
-        .ok_or(ConfigError::MissingField("log_level"))?;
+        .ok_or(ConfigError::MissingField(keys::LOG_LEVEL))?;
     let log_level = parse_log_level(&log_level)?;
 
     Ok(ForkConfig {
@@ -297,6 +322,7 @@ fn validate(raw: RawForkConfig) -> Result<ForkConfig, ConfigError> {
         auth_mode,
         support_enabled,
         desktop_share_enabled,
+        show_setup_ui,
         listen_address,
         listen_port,
         video_quality,
@@ -305,29 +331,41 @@ fn validate(raw: RawForkConfig) -> Result<ForkConfig, ConfigError> {
     })
 }
 
-/// Parse and validate a fork config file's raw TOML text. Exposed separately from filesystem
-/// lookup so it's directly unit-testable.
-pub fn parse_str(text: &str) -> Result<ForkConfig, ConfigError> {
-    let raw: RawForkConfig = toml::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
-    validate(raw)
+fn bool_from_yn(s: &str) -> Option<bool> {
+    match s {
+        "Y" => Some(true),
+        "N" => Some(false),
+        _ => None,
+    }
 }
 
-/// Locate `fork_config.toml` using the same convention as `common::load_custom_client()`:
-/// `./fork_config.toml` in debug builds, `<exe_dir>/fork_config.toml` otherwise.
-fn config_path() -> Option<PathBuf> {
-    #[cfg(debug_assertions)]
-    {
-        let debug_path = PathBuf::from(format!("./{CONFIG_FILE_NAME}"));
-        if debug_path.is_file() {
-            return Some(debug_path);
+/// Look up every `direct-ip-*` key from `Config2.options` (via `Config::get_option`, which
+/// already applies upstream's own `OVERWRITE_SETTINGS` > `Config2.options` > `DEFAULT_SETTINGS`
+/// resolution) and build a [`RawForkConfig`]. `Config::get_option` returns `""` for a fully
+/// absent key, which every field below treats as `None` — none of the valid values for any
+/// field is ever the empty string.
+fn read_raw_from_config2() -> RawForkConfig {
+    let get = |k: &str| -> Option<String> {
+        let v = Config::get_option(k);
+        if v.is_empty() {
+            None
+        } else {
+            Some(v)
         }
-    }
-    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let path = dir.join(CONFIG_FILE_NAME);
-    if path.is_file() {
-        Some(path)
-    } else {
-        None
+    };
+
+    RawForkConfig {
+        version: get(keys::CONFIG_VERSION).and_then(|v| v.parse::<u32>().ok()),
+        role: get(keys::ROLE),
+        auth_mode: get(keys::AUTH_MODE),
+        support_enabled: get(keys::SUPPORT_ENABLED).and_then(|v| bool_from_yn(&v)),
+        desktop_share_enabled: get(keys::DESKTOP_SHARE_ENABLED).and_then(|v| bool_from_yn(&v)),
+        show_setup_ui: get(keys::SHOW_SETUP_UI).and_then(|v| bool_from_yn(&v)),
+        listen_address: get(keys::LISTEN_ADDRESS),
+        listen_port: get(keys::LISTEN_PORT).and_then(|v| v.parse::<u16>().ok()),
+        video_quality: get(keys::VIDEO_QUALITY),
+        audio_quality: get(keys::AUDIO_QUALITY),
+        log_level: get(keys::LOG_LEVEL),
     }
 }
 
@@ -356,8 +394,7 @@ pub fn apply(config: &ForkConfig) {
 
     // Reuses the existing upstream `enable-camera` permission (read at login time by
     // `src/server/connection.rs:2544-2551`) so the remote side rejects VIEW_CAMERA — and
-    // therefore Voice Call, which rides on it — when support_enabled is false. This is
-    // configuration reuse, not a new authentication code path.
+    // therefore Voice Call, which rides on it — when support_enabled is false.
     Config::set_option(
         "enable-camera".to_owned(),
         if config.support_enabled { "Y" } else { "N" }.to_owned(),
@@ -365,8 +402,7 @@ pub fn apply(config: &ForkConfig) {
 
     // No existing upstream permission rejects DEFAULT_CONN outright, so desktop_share_enabled
     // has no remote-side enforcement (see docs/FORK_PROFILE_SPEC.md). This option exists solely
-    // for the local UI to read via the existing main_get_option_sync bridge function, mirroring
-    // how the Dart side already reads other string options — no new FFI surface.
+    // for the local UI to read via the existing main_get_option_sync bridge function.
     Config::set_option(
         "desktop-share-enabled".to_owned(),
         if config.desktop_share_enabled {
@@ -377,16 +413,17 @@ pub fn apply(config: &ForkConfig) {
         .to_owned(),
     );
 
-    // Minimal UI (unconditional — not gated on any config field, since this is a permanent
-    // product decision per docs/FORK_PROFILE_SPEC.md, not a runtime toggle): hide the Account
-    // and Network (relay/rendezvous server address) settings tabs by reusing the exact
-    // mechanism upstream already provides for any custom-client build. Read by
-    // `hbb_common::config::is_disable_account()` and `common::get_builtin_option()`
-    // respectively; both are plain `pub static` maps upstream already exposes, same pattern as
-    // `HARD_SETTINGS`. Note: like everything else in `apply()`, this only takes effect when a
-    // valid `fork_config.toml` is present — an absent/invalid file falls back to pure upstream
-    // behavior (including the Account/Network tabs being visible), consistent with
-    // `load_and_apply()`'s existing fail-safe fallback documented below.
+    // Gates the Settings UI entry point (DesktopSettingPage.switch2page()). See
+    // docs/GUI_CONFIGURATION_CONTROL.md.
+    Config::set_option(
+        "show-setup-ui".to_owned(),
+        if config.show_setup_ui { "Y" } else { "N" }.to_owned(),
+    );
+
+    // Minimal UI (unconditional — a permanent product decision per docs/FORK_PROFILE_SPEC.md,
+    // not a runtime toggle): hide the Account and Network (relay/rendezvous server address)
+    // settings tabs by reusing the exact mechanism upstream already provides for any
+    // custom-client build.
     HARD_SETTINGS
         .write()
         .unwrap()
@@ -397,57 +434,51 @@ pub fn apply(config: &ForkConfig) {
         .insert("hide-network-settings".to_owned(), "Y".to_owned());
 
     // Direct-IP enforcement (unconditional — see docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md).
-    // `enable-lan-discovery` is an existing upstream option (src/lan.rs) gating whether this
-    // host responds to LAN-broadcast discovery pings with its public ID/hostname/username/MAC.
-    // Setting it to "N" here closes that exposure path with zero source changes — the listener
-    // in `src/rendezvous_mediator.rs::start_all()` keeps running but never replies. This
-    // complements, but is independent of, that same file's removal of rendezvous-server
-    // registration and relay participation.
     Config::set_option("enable-lan-discovery".to_owned(), "N".to_owned());
 
     log::info!(
-        "fork_config: applied role={:?} authentication.mode={:?} support_enabled={} desktop_share_enabled={} \
+        "fork_config: applied role={:?} auth_mode={:?} support_enabled={} desktop_share_enabled={} show_setup_ui={} \
          (conn-type={conn_type}, approve-mode={approve_mode:?})",
         config.role,
         config.auth_mode,
         config.support_enabled,
         config.desktop_share_enabled,
+        config.show_setup_ui,
     );
 }
 
-/// Load, validate, and apply the fork configuration. Must be called once, early in startup
-/// (`src/core_main.rs`, immediately after `crate::load_custom_client()`), before the inbound
-/// listener or any outbound-connect capability is reachable.
+/// Load, validate, and apply the fork configuration from `Config2.options` (i.e.
+/// `RustDesk2.toml`'s `[options]` table — the same file/table upstream RustDesk already uses for
+/// every other option). Must be called once, early in startup (`src/core_main.rs`, immediately
+/// after `crate::load_custom_client()`), before the inbound listener or any outbound-connect
+/// capability is reachable.
 ///
-/// A missing config file is not an error: the app runs with pure upstream behavior (no role
-/// restriction, upstream's own default authentication). A present-but-invalid file is logged
-/// loudly and falls back the same way, never leaving the app in a partial/inconsistent state.
+/// No `direct-ip-*` keys present at all is not an error: the app runs with pure upstream
+/// behavior (no role restriction, upstream's own default authentication). Keys present but
+/// invalid are logged loudly and fall back the same way, never leaving the app in a
+/// partial/inconsistent state.
 pub fn load_and_apply() {
-    let Some(path) = config_path() else {
+    let raw = read_raw_from_config2();
+
+    // Distinguish "nothing configured" (silent, expected fallback) from "configured but
+    // invalid" (loud fallback) the same way the old file-based version distinguished "file not
+    // found" from "file present but invalid" — using the presence of `direct-ip-role` as the
+    // sentinel, since it's required in every valid configuration.
+    if raw.role.is_none() {
         log::warn!(
-            "fork_config: '{CONFIG_FILE_NAME}' not found next to the executable; role restriction \
-             and authentication-mode mapping will not be applied (upstream default behavior in effect)"
+            "fork_config: no 'direct-ip-*' options configured in RustDesk2.toml; role \
+             restriction and authentication-mode mapping will not be applied (upstream default \
+             behavior in effect)"
         );
         return;
-    };
+    }
 
-    let text = match std::fs::read_to_string(&path).map_err(|e| ConfigError::Io(e.to_string())) {
-        Ok(text) => text,
-        Err(e) => {
-            log::error!(
-                "fork_config: failed to read '{}': {e}; falling back to upstream default behavior",
-                path.display()
-            );
-            return;
-        }
-    };
-
-    match parse_str(&text) {
+    match validate(raw) {
         Ok(config) => apply(&config),
         Err(e) => {
             log::error!(
-                "fork_config: invalid config at '{}': {e}; falling back to upstream default behavior",
-                path.display()
+                "fork_config: invalid direct-ip-* configuration: {e}; falling back to upstream \
+                 default behavior"
             );
         }
     }
@@ -457,46 +488,36 @@ pub fn load_and_apply() {
 mod tests {
     use super::*;
 
-    fn valid_toml(role: &str, mode: &str) -> String {
-        valid_toml_with_modes(role, mode, true, true)
+    fn valid_raw(role: &str, mode: &str) -> RawForkConfig {
+        valid_raw_with_modes(role, mode, true, true)
     }
 
-    fn valid_toml_with_modes(
+    fn valid_raw_with_modes(
         role: &str,
         mode: &str,
         support_enabled: bool,
         desktop_share_enabled: bool,
-    ) -> String {
-        // NOTE: `[authentication]` must come LAST. In TOML, every `key = value` line after a
-        // `[table]` header belongs to that table, not to the top level — putting scalar keys
-        // after `[authentication]` would silently nest them under it instead of at the root.
-        format!(
-            r#"
-version = 1
-role = "{role}"
-
-support_enabled = {support_enabled}
-desktop_share_enabled = {desktop_share_enabled}
-
-listen_address = "0.0.0.0"
-listen_port = 21118
-
-video_quality = "medium"
-audio_quality = "medium"
-
-log_level = "info"
-
-[authentication]
-mode = "{mode}"
-"#
-        )
+    ) -> RawForkConfig {
+        RawForkConfig {
+            version: Some(1),
+            role: Some(role.to_owned()),
+            auth_mode: Some(mode.to_owned()),
+            support_enabled: Some(support_enabled),
+            desktop_share_enabled: Some(desktop_share_enabled),
+            show_setup_ui: None,
+            listen_address: Some("0.0.0.0".to_owned()),
+            listen_port: Some(21118),
+            video_quality: Some("medium".to_owned()),
+            audio_quality: Some("medium".to_owned()),
+            log_level: Some("info".to_owned()),
+        }
     }
 
     #[test]
     fn parses_all_role_and_mode_combinations() {
         for role in ["local", "remote"] {
             for mode in ["ask", "password", "ask_and_password"] {
-                let cfg = parse_str(&valid_toml(role, mode))
+                let cfg = validate(valid_raw(role, mode))
                     .unwrap_or_else(|e| panic!("role={role} mode={mode}: {e}"));
                 assert_eq!(cfg.version, 1);
                 assert_eq!(
@@ -521,20 +542,19 @@ mode = "{mode}"
 
     #[test]
     fn rejects_unsupported_version() {
-        let text = valid_toml("local", "ask").replace("version = 1", "version = 2");
-        assert_eq!(
-            parse_str(&text).unwrap_err(),
-            ConfigError::UnsupportedVersion(2)
-        );
+        let mut raw = valid_raw("local", "ask");
+        raw.version = Some(2);
+        assert_eq!(validate(raw).unwrap_err(), ConfigError::UnsupportedVersion(2));
     }
 
     #[test]
     fn rejects_invalid_role() {
-        let text = valid_toml("sideways", "ask");
+        let mut raw = valid_raw("local", "ask");
+        raw.role = Some("sideways".to_owned());
         assert_eq!(
-            parse_str(&text).unwrap_err(),
+            validate(raw).unwrap_err(),
             ConfigError::InvalidValue {
-                field: "role",
+                field: "direct-ip-role",
                 value: "sideways".to_owned()
             }
         );
@@ -542,11 +562,12 @@ mode = "{mode}"
 
     #[test]
     fn rejects_invalid_auth_mode() {
-        let text = valid_toml("local", "maybe");
+        let mut raw = valid_raw("local", "ask");
+        raw.auth_mode = Some("maybe".to_owned());
         assert_eq!(
-            parse_str(&text).unwrap_err(),
+            validate(raw).unwrap_err(),
             ConfigError::InvalidValue {
-                field: "authentication.mode",
+                field: "direct-ip-auth-mode",
                 value: "maybe".to_owned()
             }
         );
@@ -554,23 +575,22 @@ mode = "{mode}"
 
     #[test]
     fn rejects_missing_required_field() {
-        let text = "version = 1\nrole = \"local\"\n";
+        let mut raw = valid_raw("local", "ask");
+        raw.auth_mode = None;
         assert_eq!(
-            parse_str(text).unwrap_err(),
-            ConfigError::MissingField("authentication")
+            validate(raw).unwrap_err(),
+            ConfigError::MissingField("direct-ip-auth-mode")
         );
     }
 
     #[test]
     fn rejects_invalid_listen_address() {
-        let text = valid_toml("local", "ask").replace(
-            "listen_address = \"0.0.0.0\"",
-            "listen_address = \"not-an-ip\"",
-        );
+        let mut raw = valid_raw("local", "ask");
+        raw.listen_address = Some("not-an-ip".to_owned());
         assert_eq!(
-            parse_str(&text).unwrap_err(),
+            validate(raw).unwrap_err(),
             ConfigError::InvalidValue {
-                field: "listen_address",
+                field: "direct-ip-listen-address",
                 value: "not-an-ip".to_owned()
             }
         );
@@ -578,11 +598,12 @@ mode = "{mode}"
 
     #[test]
     fn rejects_zero_listen_port() {
-        let text = valid_toml("local", "ask").replace("listen_port = 21118", "listen_port = 0");
+        let mut raw = valid_raw("local", "ask");
+        raw.listen_port = Some(0);
         assert_eq!(
-            parse_str(&text).unwrap_err(),
+            validate(raw).unwrap_err(),
             ConfigError::InvalidValue {
-                field: "listen_port",
+                field: "direct-ip-listen-port",
                 value: "0".to_owned()
             }
         );
@@ -590,22 +611,22 @@ mode = "{mode}"
 
     #[test]
     fn rejects_invalid_quality_and_log_level() {
-        let bad_video = valid_toml("local", "ask")
-            .replace("video_quality = \"medium\"", "video_quality = \"ultra\"");
+        let mut bad_video = valid_raw("local", "ask");
+        bad_video.video_quality = Some("ultra".to_owned());
         assert_eq!(
-            parse_str(&bad_video).unwrap_err(),
+            validate(bad_video).unwrap_err(),
             ConfigError::InvalidValue {
-                field: "video_quality",
+                field: "direct-ip-video-quality",
                 value: "ultra".to_owned()
             }
         );
 
-        let bad_log =
-            valid_toml("local", "ask").replace("log_level = \"info\"", "log_level = \"verbose\"");
+        let mut bad_log = valid_raw("local", "ask");
+        bad_log.log_level = Some("verbose".to_owned());
         assert_eq!(
-            parse_str(&bad_log).unwrap_err(),
+            validate(bad_log).unwrap_err(),
             ConfigError::InvalidValue {
-                field: "log_level",
+                field: "direct-ip-log-level",
                 value: "verbose".to_owned()
             }
         );
@@ -613,37 +634,47 @@ mode = "{mode}"
 
     #[test]
     fn rejects_both_support_and_desktop_share_disabled() {
-        let text = valid_toml_with_modes("local", "ask", false, false);
-        assert_eq!(
-            parse_str(&text).unwrap_err(),
-            ConfigError::NoConnectionModeEnabled
-        );
+        let raw = valid_raw_with_modes("local", "ask", false, false);
+        assert_eq!(validate(raw).unwrap_err(), ConfigError::NoConnectionModeEnabled);
     }
 
     #[test]
     fn accepts_either_flag_alone() {
-        assert!(parse_str(&valid_toml_with_modes("local", "ask", true, false)).is_ok());
-        assert!(parse_str(&valid_toml_with_modes("local", "ask", false, true)).is_ok());
+        assert!(validate(valid_raw_with_modes("local", "ask", true, false)).is_ok());
+        assert!(validate(valid_raw_with_modes("local", "ask", false, true)).is_ok());
     }
 
     #[test]
-    fn rejects_malformed_toml() {
-        let text = "this is not valid toml {{{";
-        assert!(matches!(parse_str(text), Err(ConfigError::Parse(_))));
+    fn show_setup_ui_defaults_to_true_when_absent() {
+        let raw = valid_raw("local", "ask");
+        assert_eq!(raw.show_setup_ui, None);
+        let cfg = validate(raw).unwrap();
+        assert!(cfg.show_setup_ui);
     }
 
-    // `cargo test` runs tests in parallel by default; every test below mutates the same
-    // process-global `HARD_SETTINGS`/`Config` options, so without serializing them, one test's
-    // `apply()` can race another's assertion. `GlobalStateGuard` holds this lock for its whole
-    // lifetime (in addition to snapshotting/restoring state) so at most one such test runs at a
-    // time; `Mutex` is deliberately not `parking_lot` — a poisoned lock (from a panicking test)
-    // should surface as failures in subsequent tests, not be silently ignored.
+    #[test]
+    fn show_setup_ui_respects_explicit_false() {
+        let mut raw = valid_raw("local", "ask");
+        raw.show_setup_ui = Some(false);
+        let cfg = validate(raw).unwrap();
+        assert!(!cfg.show_setup_ui);
+    }
+
+    #[test]
+    fn bool_from_yn_only_accepts_y_and_n() {
+        assert_eq!(bool_from_yn("Y"), Some(true));
+        assert_eq!(bool_from_yn("N"), Some(false));
+        assert_eq!(bool_from_yn("yes"), None);
+        assert_eq!(bool_from_yn(""), None);
+    }
+
+    // `cargo test` runs tests in parallel by default; every test below that calls `apply()`
+    // mutates the same process-global `HARD_SETTINGS`/`Config` options, so without serializing
+    // them, one test's `apply()` can race another's assertion. `GlobalStateGuard` holds this
+    // lock for its whole lifetime (in addition to snapshotting/restoring state) so at most one
+    // such test runs at a time.
     static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// Serializes access to, and restores, `HARD_SETTINGS`, `BUILTIN_SETTINGS`, and the
-    /// `approve-mode`/`enable-camera`/`desktop-share-enabled` CONFIG2 options around each test
-    /// that calls `apply()`, so tests don't race or leak global state into each other or into
-    /// other test modules in the same process.
     struct GlobalStateGuard<'a> {
         _lock: std::sync::MutexGuard<'a, ()>,
         original_hard_settings: std::collections::HashMap<String, String>,
@@ -651,6 +682,7 @@ mode = "{mode}"
         original_approve_mode: String,
         original_enable_camera: String,
         original_desktop_share_enabled: String,
+        original_show_setup_ui: String,
         original_enable_lan_discovery: String,
     }
 
@@ -666,6 +698,7 @@ mode = "{mode}"
                 original_approve_mode: Config::get_option("approve-mode"),
                 original_enable_camera: Config::get_option("enable-camera"),
                 original_desktop_share_enabled: Config::get_option("desktop-share-enabled"),
+                original_show_setup_ui: Config::get_option("show-setup-ui"),
                 original_enable_lan_discovery: Config::get_option("enable-lan-discovery"),
             }
         }
@@ -675,10 +708,7 @@ mode = "{mode}"
         fn drop(&mut self) {
             *HARD_SETTINGS.write().unwrap() = self.original_hard_settings.clone();
             *BUILTIN_SETTINGS.write().unwrap() = self.original_builtin_settings.clone();
-            Config::set_option(
-                "approve-mode".to_owned(),
-                self.original_approve_mode.clone(),
-            );
+            Config::set_option("approve-mode".to_owned(), self.original_approve_mode.clone());
             Config::set_option(
                 "enable-camera".to_owned(),
                 self.original_enable_camera.clone(),
@@ -686,6 +716,10 @@ mode = "{mode}"
             Config::set_option(
                 "desktop-share-enabled".to_owned(),
                 self.original_desktop_share_enabled.clone(),
+            );
+            Config::set_option(
+                "show-setup-ui".to_owned(),
+                self.original_show_setup_ui.clone(),
             );
             Config::set_option(
                 "enable-lan-discovery".to_owned(),
@@ -697,7 +731,7 @@ mode = "{mode}"
     #[test]
     fn apply_sets_outgoing_only_for_local_role() {
         let _guard = GlobalStateGuard::new();
-        let cfg = parse_str(&valid_toml("local", "ask")).unwrap();
+        let cfg = validate(valid_raw("local", "ask")).unwrap();
         apply(&cfg);
         assert!(hbb_common::config::is_outgoing_only());
         assert!(!hbb_common::config::is_incoming_only());
@@ -706,7 +740,7 @@ mode = "{mode}"
     #[test]
     fn apply_sets_incoming_only_for_remote_role() {
         let _guard = GlobalStateGuard::new();
-        let cfg = parse_str(&valid_toml("remote", "ask")).unwrap();
+        let cfg = validate(valid_raw("remote", "ask")).unwrap();
         apply(&cfg);
         assert!(hbb_common::config::is_incoming_only());
         assert!(!hbb_common::config::is_outgoing_only());
@@ -716,15 +750,15 @@ mode = "{mode}"
     fn apply_maps_authentication_modes_to_approve_mode_option() {
         let _guard = GlobalStateGuard::new();
 
-        let cfg = parse_str(&valid_toml("local", "ask")).unwrap();
+        let cfg = validate(valid_raw("local", "ask")).unwrap();
         apply(&cfg);
         assert_eq!(Config::get_option("approve-mode"), "click");
 
-        let cfg = parse_str(&valid_toml("local", "password")).unwrap();
+        let cfg = validate(valid_raw("local", "password")).unwrap();
         apply(&cfg);
         assert_eq!(Config::get_option("approve-mode"), "password");
 
-        let cfg = parse_str(&valid_toml("local", "ask_and_password")).unwrap();
+        let cfg = validate(valid_raw("local", "ask_and_password")).unwrap();
         apply(&cfg);
         assert_eq!(Config::get_option("approve-mode"), "");
     }
@@ -733,11 +767,11 @@ mode = "{mode}"
     fn apply_maps_support_enabled_to_enable_camera_permission() {
         let _guard = GlobalStateGuard::new();
 
-        let cfg = parse_str(&valid_toml_with_modes("local", "ask", true, true)).unwrap();
+        let cfg = validate(valid_raw_with_modes("local", "ask", true, true)).unwrap();
         apply(&cfg);
         assert_eq!(Config::get_option("enable-camera"), "Y");
 
-        let cfg = parse_str(&valid_toml_with_modes("local", "ask", false, true)).unwrap();
+        let cfg = validate(valid_raw_with_modes("local", "ask", false, true)).unwrap();
         apply(&cfg);
         assert_eq!(Config::get_option("enable-camera"), "N");
     }
@@ -746,21 +780,34 @@ mode = "{mode}"
     fn apply_maps_desktop_share_enabled_to_local_option() {
         let _guard = GlobalStateGuard::new();
 
-        let cfg = parse_str(&valid_toml_with_modes("local", "ask", true, true)).unwrap();
+        let cfg = validate(valid_raw_with_modes("local", "ask", true, true)).unwrap();
         apply(&cfg);
         assert_eq!(Config::get_option("desktop-share-enabled"), "Y");
 
-        let cfg = parse_str(&valid_toml_with_modes("local", "ask", true, false)).unwrap();
+        let cfg = validate(valid_raw_with_modes("local", "ask", true, false)).unwrap();
         apply(&cfg);
         assert_eq!(Config::get_option("desktop-share-enabled"), "N");
+    }
+
+    #[test]
+    fn apply_maps_show_setup_ui_to_local_option() {
+        let _guard = GlobalStateGuard::new();
+
+        let mut raw = valid_raw("local", "ask");
+        raw.show_setup_ui = Some(false);
+        let cfg = validate(raw).unwrap();
+        apply(&cfg);
+        assert_eq!(Config::get_option("show-setup-ui"), "N");
+
+        let cfg = validate(valid_raw("local", "ask")).unwrap(); // absent -> default true
+        apply(&cfg);
+        assert_eq!(Config::get_option("show-setup-ui"), "Y");
     }
 
     #[test]
     fn apply_hides_account_network_and_lan_discovery_unconditionally() {
         let _guard = GlobalStateGuard::new();
 
-        // Unconditional means unconditional: verify it holds for every role/mode/flag
-        // combination, not just one.
         for role in ["local", "remote"] {
             for mode in ["ask", "password", "ask_and_password"] {
                 for support in [true, false] {
@@ -768,8 +815,8 @@ mode = "{mode}"
                         if !support && !desktop {
                             continue; // invalid combination, rejected by validate()
                         }
-                        let cfg = parse_str(&valid_toml_with_modes(role, mode, support, desktop))
-                            .unwrap();
+                        let cfg =
+                            validate(valid_raw_with_modes(role, mode, support, desktop)).unwrap();
                         apply(&cfg);
                         assert_eq!(
                             HARD_SETTINGS.read().unwrap().get("disable-account"),

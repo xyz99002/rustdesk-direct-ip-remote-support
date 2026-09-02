@@ -1,15 +1,21 @@
 # GUI Configuration Control — `show_setup_ui` Design
 
-**Status: Design only. Not implemented**, per Workstream 4 instructions.
+**Status: ✅ Implemented (2026-09-02).** Originally design-only per Workstream 4; implemented as
+part of the `fork_config.toml` → `RustDesk2.toml` consolidation. Key name is
+`direct-ip-show-setup-ui` (not `show_setup_ui` — see the naming-collision-avoidance rationale in
+`docs/UPSTREAM_CONFIG_REFERENCE.md` Section 3), read via `src/fork_config.rs`, written to the
+upstream-facing `show-setup-ui` option, and consumed by
+`DesktopSettingPage.switch2page()` exactly as designed below (Section "Smallest Hook Point").
+**Mobile is still not gated** — that gap, flagged in the original design, remains open.
 
 ---
 
 ## Goal
 
-Add a `fork_config.toml` option, `show_setup_ui = true|false`, that lets a deployment hide the
-Settings entry point entirely (for a locked-down "remote" host that should never be touched
-locally by whoever is physically at that machine), while defaulting to `true` so existing
-deployments are unaffected.
+Add an option, `direct-ip-show-setup-ui = "Y"|"N"`, that lets a deployment hide the Settings
+entry point entirely (for a locked-down "remote" host that should never be touched locally by
+whoever is physically at that machine), while defaulting to shown (`"Y"`) so existing deployments
+are unaffected.
 
 ---
 
@@ -84,7 +90,7 @@ with one change, rather than hunting down every `Icons.settings` tap handler ind
 
 ---
 
-## Default Value Question (Needs a Decision Before Implementation)
+## Default Value Question — RESOLVED: Option B Chosen
 
 Every other `fork_config.toml` field today is **required** with no implicit default — a missing
 field is a hard validation error. Two choices for `show_setup_ui`:
@@ -108,21 +114,20 @@ silent.
 
 | Page/File | Impact |
 |---|---|
-| `desktop_setting_page.dart` | `switch2page()` gains the guard clause — this is the only required Dart change |
-| `desktop_home_page.dart` | No change needed if the guard is in `switch2page()` — both gear icons naturally become no-ops |
-| Mobile settings (`flutter/lib/mobile/pages/settings_page.dart`) | **Not covered by this design.** Mobile has its own settings entry point, not routed through `DesktopSettingPage.switch2page()`. A separate guard would be needed there if mobile is a target platform. Flagged as a gap, not solved here. |
-| `fork_config.rs` | New field + one `Config::set_option` call in `apply()` |
-| `fork_config.example.toml` | New documented field |
+| `desktop_setting_page.dart` | ✅ Done — `switch2page()` has the guard clause |
+| `desktop_home_page.dart` | ✅ No change needed — both gear icons naturally become no-ops via `switch2page()` |
+| Mobile settings (`flutter/lib/mobile/pages/settings_page.dart`) | ❌ **Still not covered.** Mobile has its own settings entry point, not routed through `DesktopSettingPage.switch2page()`. Remains an open gap. |
+| `fork_config.rs` | ✅ Done — `direct-ip-show-setup-ui` key + `Config::set_option("show-setup-ui", ...)` in `apply()` |
+| `configs/all-options-reference.toml` | ✅ Done — documented field |
 
 ---
 
 ## Impact on Upgrades
 
-- **Existing deployments without the field (if Option B is chosen):** No impact — default `true`
-  preserves current behavior exactly.
-- **Config file format:** No breaking change to `SUPPORTED_CONFIG_VERSION` (still `1`) if the
-  field is optional-with-default; would require a version bump if made required (Option A).
-- **No migration script needed** under Option B.
+- **Existing deployments without the key:** No impact — default `true` (`"Y"`) preserves current
+  behavior exactly.
+- **Config version:** No breaking change to `SUPPORTED_CONFIG_VERSION` (still `1`).
+- **No migration needed.**
 
 ---
 
@@ -133,5 +138,5 @@ silent.
   deployment-time, file-based control, consistent with how `role` and `authentication.mode` work
   today — not meant to be toggled by whoever is sitting at the machine).
 
-**Not implemented.** Awaiting a decision on the default-value question above before any code is
-written.
+**Implemented on desktop (2026-09-02). Mobile remains open** — a separate design/implementation
+pass is needed for `flutter/lib/mobile/pages/settings_page.dart`'s own settings entry point.

@@ -16,11 +16,13 @@ then follow the links for depth.
 ## 1. What this fork is
 
 This is a Direct-IP-only fork of upstream RustDesk. The architecture is
-**one executable, controlled by a TOML role-configuration file
-(`fork_config.toml`)** — there are no separate "Local" and "Remote"
-executables, and no new transport, authentication, or voice-call code was
-written to achieve this. A single binary reads `fork_config.toml` at
-startup and reconfigures itself (via upstream's own existing settings
+**one executable, controlled by TOML role configuration** — there are no
+separate "Local" and "Remote" executables, and no new transport,
+authentication, or voice-call code was written to achieve this.
+(2026-09-02: role configuration lives in upstream's own `RustDesk2.toml`
+under `direct-ip-*` keys — see Section 2 — not a separate `fork_config.toml`
+file as in earlier versions of this fork.) A single binary reads this
+config at startup and reconfigures itself (via upstream's own existing settings
 mechanisms) into either an outbound-only ("local") or inbound-only
 ("remote") role. As of `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md`, this is
 enforced not just in the UI but at the protocol level: rendezvous-server
@@ -60,12 +62,15 @@ up-to-date picture):
 
 **Fork-specific code** (the surface area a new contributor should actually
 touch):
-- `src/fork_config.rs` — parses and validates `fork_config.toml` and
-  applies it onto upstream's existing config/settings mechanisms (role,
-  auth mode, Support/Desktop button gating, minimal-UI settings,
-  `enable-lan-discovery=N`). Read its module doc comment for the mapping
-  table from TOML key to upstream mechanism.
-- `fork_config.example.toml` (repo root) — the sample/reference config file.
+- `src/fork_config.rs` — reads `direct-ip-*` options from `RustDesk2.toml`
+  (via `Config::get_option`, same mechanism as every other upstream option)
+  and applies them onto upstream's existing config/settings mechanisms
+  (role, auth mode, Support/Desktop button gating, Settings UI visibility,
+  minimal-UI settings, `enable-lan-discovery=N`). Read its module doc
+  comment for the mapping table from option key to upstream mechanism.
+- `configs/example-local.toml`, `configs/example-remote.toml`,
+  `configs/all-options-reference.toml` — sample/reference `RustDesk2.toml`
+  files (repo root has no config file of its own since 2026-09-02).
 - `src/rendezvous_mediator.rs` — contains the `--- BEGIN/END DIRECT-IP
   FORK ---` marked blocks that remove rendezvous registration and relay
   participation (ADR-0003). Treat this file as upgrade-sensitive.
@@ -88,21 +93,27 @@ hooks above plus the Minimal UI Dart changes referenced in
 
 ## 3. Configuration
 
-The fork is driven by a single TOML file, `fork_config.toml`, placed next
-to the executable (or at the repo root for local development builds). If
-the file is absent, the app runs as plain upstream RustDesk; if present but
-invalid, the same fallback applies with the error logged.
+The fork is driven by upstream's own `RustDesk2.toml` (the `[options]`
+table), under a set of `direct-ip-*`-prefixed keys — not a separate config
+file (as of 2026-09-02; see `docs/CONFIG_REFERENCE.md` for why the earlier
+two-file design was consolidated). If those keys are absent, the app runs
+as plain upstream RustDesk; if present but invalid, the same fallback
+applies with the error logged.
 
-Top-level keys: `version`, `role` (`"local"`/`"remote"`), `support_enabled`,
-`desktop_share_enabled`, `listen_address`, `listen_port`, `video_quality`,
-`audio_quality`, `log_level`, plus an `[authentication]` table with `mode`
+Keys: `direct-ip-config-version`, `direct-ip-role` (`"local"`/`"remote"`),
+`direct-ip-support-enabled`, `direct-ip-desktop-share-enabled`,
+`direct-ip-show-setup-ui` (optional, defaults to shown),
+`direct-ip-listen-address`, `direct-ip-listen-port`,
+`direct-ip-video-quality`, `direct-ip-audio-quality`,
+`direct-ip-log-level`, `direct-ip-auth-mode`
 (`"ask"` / `"password"` / `"ask_and_password"`). At least one of
-`support_enabled`/`desktop_share_enabled` must be `true`.
+`direct-ip-support-enabled`/`direct-ip-desktop-share-enabled` must be `"Y"`.
 
 This is a summary only — for the authoritative schema and behavioral
-details see `docs/FORK_PROFILE_SPEC.md` and the fully-commented
-`fork_config.example.toml` at the repo root. For how each key is applied
-onto upstream mechanisms, skim `src/fork_config.rs`'s module doc comment.
+details see `docs/CONFIG_REFERENCE.md`, `docs/FORK_PROFILE_SPEC.md`, and
+the fully-commented `configs/all-options-reference.toml`. For how each key
+is applied onto upstream mechanisms, skim `src/fork_config.rs`'s module doc
+comment.
 
 ---
 
@@ -214,7 +225,7 @@ for the reasoning behind each:
   `VIEW_CAMERA` + Voice Call (optionally plus `DEFAULT_CONN`), Desktop
   always opens a plain `DEFAULT_CONN` session; this session model is
   considered settled (see `docs/FORK_PROFILE_SPEC.md` "Session Profile").
-- **The configuration schema shape** — `fork_config.toml`'s key set and
+- **The configuration schema shape** — the `direct-ip-*` key set and
   meaning (Section 3 above) is the stable contract; changing it requires a
   version bump and migration guidance per `FORK_PROFILE_SPEC.md`'s
   "Upgrade Rules."
