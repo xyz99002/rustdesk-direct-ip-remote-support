@@ -27,7 +27,7 @@ Branch: `master`. That's what CI watches and what `release.yml` builds from.
 
 ## What this fork is, in one paragraph
 
-One executable, TOML-controlled role configuration (see `configs/example-local.toml`/`configs/example-remote.toml` and `docs/FORK_PROFILE_SPEC.md`). Config lives in `RustDesk2.toml` (`[options]` table, `direct-ip-*` keys) — no separate `fork_config.toml` file since 2026-09-02. No separate Local/Remote executables, no new transport, no auth/voice-call changes. Full rationale in `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md`.
+One executable, TOML-controlled role configuration (see `configs/local.toml`/`configs/remote.toml` and `docs/FORK_PROFILE_SPEC.md`). Config lives in `RustDesk2.toml` (`[options]` table, `direct-ip-*` keys) — no separate `fork_config.toml` file since 2026-09-02. No separate Local/Remote executables, no new transport, no auth/voice-call changes. Full rationale in `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md`.
 
 ## Making a change
 

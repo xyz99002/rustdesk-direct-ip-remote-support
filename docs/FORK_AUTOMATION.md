@@ -145,7 +145,7 @@ flutter build windows --release  # or macos/linux
 
 **Template files:**
 - `RustDesk2.toml` pre-seeded with `direct-ip-*` options (sample/default config for each role —
-  see `configs/example-local.toml`/`configs/example-remote.toml`)
+  see `configs/local.toml`/`configs/remote.toml`)
 - Installer scripts/specifications (NSIS script, pkgbuild plist, etc.)
 - License/README files
 

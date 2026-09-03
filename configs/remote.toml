@@ -7,7 +7,7 @@
 # "remote" means this instance may only ACCEPT inbound direct-IP connections; it will never
 # initiate an outbound session. Typical use: the machine being supported or shared.
 #
-# File location: same as example-local.toml — see docs/UPSTREAM_CONFIG_REFERENCE.md Section 1.
+# File location: same as local.toml — see docs/UPSTREAM_CONFIG_REFERENCE.md Section 1.
 
 rendezvous_server = ""
 nat_type = 0

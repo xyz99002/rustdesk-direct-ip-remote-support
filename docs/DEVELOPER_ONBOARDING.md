@@ -68,7 +68,7 @@ touch):
   (role, auth mode, Support/Desktop button gating, Settings UI visibility,
   minimal-UI settings, `enable-lan-discovery=N`). Read its module doc
   comment for the mapping table from option key to upstream mechanism.
-- `configs/example-local.toml`, `configs/example-remote.toml`,
+- `configs/local.toml`, `configs/remote.toml`,
   `configs/all-options-reference.toml` — sample/reference `RustDesk2.toml`
   files (repo root has no config file of its own since 2026-09-02).
 - `src/rendezvous_mediator.rs` — contains the `--- BEGIN/END DIRECT-IP
