@@ -4,8 +4,8 @@
 # from a separate fork_config.toml; see docs/CONFIG_REFERENCE.md and
 # docs/UPSTREAM_CONFIG_REFERENCE.md for the full history/rationale of this merge).
 #
-# This file documents the schema; it is not meant to be used as-is. Copy configs/example-local.toml
-# or configs/example-remote.toml as your starting point instead.
+# This file documents the schema; it is not meant to be used as-is. Copy configs/local.toml
+# or configs/remote.toml as your starting point instead.
 #
 # File location:
 #   Windows: %APPDATA%\RustDesk\config\RustDesk2.toml

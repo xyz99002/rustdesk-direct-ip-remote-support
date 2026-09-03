@@ -171,7 +171,7 @@ upstream behavior.
 
 ## 7. Related Files
 
-- `configs/example-local.toml`, `configs/example-remote.toml` — ready-to-use `RustDesk2.toml`
+- `configs/local.toml`, `configs/remote.toml` — ready-to-use `RustDesk2.toml`
   samples
 - `configs/all-options-reference.toml` — every `direct-ip-*` key plus a curated upstream subset,
   fully commented
