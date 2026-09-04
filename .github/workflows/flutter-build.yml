@@ -1676,6 +1676,8 @@ jobs:
 
             # build flutter
             pushd /workspace
+            export LANG=C.UTF-8
+            export LC_ALL=C.UTF-8
             export CARGO_INCREMENTAL=0
             export DEB_ARCH=${{ matrix.job.deb_arch }}
             python3 ./build.py --flutter --skip-cargo
