@@ -296,6 +296,15 @@ jobs:
               Write-Host "Ingore the printer driver error."
           }
 
+      - name: Bundle config samples
+        shell: bash
+        run: |
+          # Copy bundled RustDesk2.toml samples next to the binary
+          # Users choose between these on first run if no config exists
+          cp configs/local.toml ./rustdesk/local.toml
+          cp configs/remote.toml ./rustdesk/remote.toml
+          echo "Config samples bundled: $(ls -la ./rustdesk/*.toml)"
+
       - name: find Runner.res
         # Windows: find Runner.res (compiled from ./flutter/windows/runner/Runner.rc), copy to ./Runner.res
         # Runner.rc does not contain actual version, but Runner.res does
@@ -823,6 +832,17 @@ jobs:
             sed -i -e "s/MACOSX_DEPLOYMENT_TARGET = [0-9]*.[0-9]*;/MACOSX_DEPLOYMENT_TARGET = ${MIN_MACOS_VERSION};/" flutter/macos/Runner.xcodeproj/project.pbxproj
           fi
           ./build.py --flutter --hwcodec --unix-file-copy-paste ${{ matrix.job.extra-build-args }}
+
+      - name: Bundle config samples (macOS)
+        if: env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          # Copy bundled RustDesk2.toml samples into the app bundle's Contents/MacOS
+          # so they're available next to the executable at runtime
+          APP_PATH="./flutter/build/macos/Build/Products/Release/RustDesk.app"
+          cp configs/local.toml "$APP_PATH/Contents/MacOS/local.toml"
+          cp configs/remote.toml "$APP_PATH/Contents/MacOS/remote.toml"
+          echo "Config samples bundled:"
+          ls -la "$APP_PATH/Contents/MacOS/"*.toml
 
       - name: create unsigned dmg
         if: env.UPLOAD_ARTIFACT == 'true'
@@ -1659,6 +1679,13 @@ jobs:
             export CARGO_INCREMENTAL=0
             export DEB_ARCH=${{ matrix.job.deb_arch }}
             python3 ./build.py --flutter --skip-cargo
+
+            # Bundle config samples next to the binary
+            # Copy to the Flutter build output directory so they're included in the .deb
+            cp configs/local.toml ./flutter/build/linux/*/release/bundle/local.toml
+            cp configs/remote.toml ./flutter/build/linux/*/release/bundle/remote.toml
+            echo "Config samples bundled"
+
             for name in rustdesk*??.deb; do
               mv "$name" "${name%%.deb}-${{ matrix.job.arch }}.deb"
             done
@@ -1993,6 +2020,24 @@ jobs:
       - name: Rename Binary
         run: |
           mv rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb appimage/rustdesk.deb
+
+      - name: Bundle config samples into AppImage
+        run: |
+          # Extract the .deb to add config samples
+          cd appimage
+          mkdir -p extract_deb
+          cd extract_deb
+          ar x ../rustdesk.deb
+          tar -xf data.tar.xz
+          # Copy config samples next to the binary in the extracted .deb
+          cp ../../configs/local.toml ./usr/share/rustdesk/local.toml
+          cp ../../configs/remote.toml ./usr/share/rustdesk/remote.toml
+          # Re-create the .deb with config samples included
+          tar -czf data.tar.gz usr/
+          ar rD ../rustdesk.deb debian-binary control.tar.gz data.tar.gz
+          cd ..
+          rm -rf extract_deb
+          echo "Config samples bundled into AppImage .deb"
 
       - name: Build appimage package
         shell: bash

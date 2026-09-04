@@ -46,6 +46,7 @@
 
 use hbb_common::config::{Config, BUILTIN_SETTINGS, HARD_SETTINGS};
 use hbb_common::log;
+use std::path::{Path, PathBuf};
 
 /// The only configuration schema version understood today. A future incompatible schema change
 /// must bump this and add explicit migration/rejection logic rather than silently reinterpreting
@@ -445,6 +446,74 @@ pub fn apply(config: &ForkConfig) {
         config.desktop_share_enabled,
         config.show_setup_ui,
     );
+}
+
+/// Get the directory where the rustdesk executable is located.
+fn get_executable_dir() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|parent| parent.to_path_buf()))
+}
+
+/// Check if `RustDesk2.toml` exists in the executable directory (first-run detection).
+/// Returns `true` if config exists, `false` if it should be created.
+pub fn config_exists() -> bool {
+    if let Some(exe_dir) = get_executable_dir() {
+        exe_dir.join("RustDesk2.toml").exists()
+    } else {
+        // If we can't determine the executable directory, assume config exists
+        // (fallback to normal behavior)
+        true
+    }
+}
+
+/// Get the full path to `RustDesk2.toml` in the executable directory.
+pub fn get_config_path() -> Option<PathBuf> {
+    get_executable_dir().map(|dir| dir.join("RustDesk2.toml"))
+}
+
+/// Copy a bundled sample TOML file to become `RustDesk2.toml`.
+/// `sample_name` should be "local" or "remote" (without .toml extension).
+/// Returns `true` on success, `false` on failure.
+pub fn copy_sample_config(sample_name: &str) -> bool {
+    let exe_dir = match get_executable_dir() {
+        Some(d) => d,
+        None => {
+            log::error!("fork_config: cannot determine executable directory");
+            return false;
+        }
+    };
+
+    let sample_file = exe_dir.join(format!("{}.toml", sample_name));
+    let target_file = exe_dir.join("RustDesk2.toml");
+
+    if !sample_file.exists() {
+        log::error!(
+            "fork_config: bundled sample file not found at {}",
+            sample_file.display()
+        );
+        return false;
+    }
+
+    match std::fs::copy(&sample_file, &target_file) {
+        Ok(_) => {
+            log::info!(
+                "fork_config: copied {} to {}",
+                sample_file.display(),
+                target_file.display()
+            );
+            true
+        }
+        Err(e) => {
+            log::error!(
+                "fork_config: failed to copy {} to {}: {}",
+                sample_file.display(),
+                target_file.display(),
+                e
+            );
+            false
+        }
+    }
 }
 
 /// Load, validate, and apply the fork configuration from `Config2.options` (i.e.

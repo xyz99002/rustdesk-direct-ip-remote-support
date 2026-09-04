@@ -22,6 +22,60 @@ macro_rules! my_println{
     };
 }
 
+/// Handle first-run setup when RustDesk2.toml doesn't exist.
+/// Returns `None` to terminate; the user should run the app again with `--setup-local` or `--setup-remote`.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn handle_first_run_setup() -> Option<Vec<String>> {
+    let args: Vec<String> = std::env::args().collect();
+
+    // Check for explicit setup flags
+    let setup_mode = if args.contains(&"--setup-local".to_string()) {
+        Some("local")
+    } else if args.contains(&"--setup-remote".to_string()) {
+        Some("remote")
+    } else {
+        None
+    };
+
+    if let Some(mode) = setup_mode {
+        // User has specified a mode; create the config
+        if crate::fork_config::copy_sample_config(mode) {
+            log::info!(
+                "fork_config: first-run setup completed for '{}' mode; config file created",
+                mode
+            );
+            // Now load and apply the newly created config
+            crate::fork_config::load_and_apply();
+            // Continue to Flutter startup
+            return Some(vec![]);
+        } else {
+            log::error!(
+                "fork_config: failed to create config for '{}' mode",
+                mode
+            );
+            return None;
+        }
+    } else {
+        // No setup flag; show a message and ask user to run again
+        let msg = "RustDesk Direct-IP: First-run setup required.\n\n\
+                   Please choose your configuration mode by running one of:\n\n\
+                   rustdesk --setup-local    (for outbound-only connections)\n\
+                   rustdesk --setup-remote   (for inbound-only connections)\n\n\
+                   After setup, the application will start normally.";
+
+        #[cfg(target_os = "windows")]
+        {
+            crate::platform::message_box(&msg);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            eprintln!("{}", msg);
+        }
+
+        return None;
+    }
+}
+
 /// shared by flutter and sciter main function
 ///
 /// [Note]
@@ -33,6 +87,12 @@ pub fn core_main() -> Option<Vec<String>> {
         return None;
     }
     crate::load_custom_client();
+
+    // Handle first-run setup if config doesn't exist
+    if !crate::fork_config::config_exists() {
+        return handle_first_run_setup();
+    }
+
     crate::fork_config::load_and_apply();
     #[cfg(windows)]
     if !crate::platform::windows::bootstrap() {
