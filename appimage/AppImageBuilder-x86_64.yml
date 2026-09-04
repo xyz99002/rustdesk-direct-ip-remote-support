@@ -6,6 +6,9 @@ script:
  - tar -xvf ./data.tar.xz
  - mkdir ./AppDir
  - mv ./usr ./AppDir/usr
+ # Bundle config samples next to the binary
+ - cp local.toml ./AppDir/usr/share/rustdesk/local.toml 2>/dev/null || true
+ - cp remote.toml ./AppDir/usr/share/rustdesk/remote.toml 2>/dev/null || true
  # 32x32 icon
  - for i in {32,64,128}; do mkdir -p ./AppDir/usr/share/icons/hicolor/$i\x$i/apps/; cp ../res/$i\x$i.png ./AppDir/usr/share/icons/hicolor/$i\x$i/apps/rustdesk.png; done
  - mkdir -p ./AppDir/usr/share/icons/hicolor/scalable/apps/; cp ../res/scalable.svg ./AppDir/usr/share/icons/hicolor/scalable/apps/rustdesk.svg

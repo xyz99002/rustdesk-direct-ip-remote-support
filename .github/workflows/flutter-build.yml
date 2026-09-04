@@ -1681,10 +1681,15 @@ jobs:
             python3 ./build.py --flutter --skip-cargo
 
             # Bundle config samples next to the binary
-            # Copy to the Flutter build output directory so they're included in the .deb
-            cp configs/local.toml ./flutter/build/linux/*/release/bundle/local.toml
-            cp configs/remote.toml ./flutter/build/linux/*/release/bundle/remote.toml
-            echo "Config samples bundled"
+            # Find and copy to the Flutter build output directory so they're included in the .deb
+            BUNDLE_DIR=$(find ./flutter/build/linux -name bundle -type d | head -1)
+            if [ -n "$BUNDLE_DIR" ]; then
+              cp configs/local.toml "$BUNDLE_DIR/local.toml"
+              cp configs/remote.toml "$BUNDLE_DIR/remote.toml"
+              echo "Config samples bundled to $BUNDLE_DIR"
+            else
+              echo "Warning: bundle directory not found"
+            fi
 
             for name in rustdesk*??.deb; do
               mv "$name" "${name%%.deb}-${{ matrix.job.arch }}.deb"
@@ -2023,21 +2028,12 @@ jobs:
 
       - name: Bundle config samples into AppImage
         run: |
-          # Extract the .deb to add config samples
-          cd appimage
-          mkdir -p extract_deb
-          cd extract_deb
-          ar x ../rustdesk.deb
-          tar -xf data.tar.xz
-          # Copy config samples next to the binary in the extracted .deb
-          cp ../../configs/local.toml ./usr/share/rustdesk/local.toml
-          cp ../../configs/remote.toml ./usr/share/rustdesk/remote.toml
-          # Re-create the .deb with config samples included
-          tar -czf data.tar.gz usr/
-          ar rD ../rustdesk.deb debian-binary control.tar.gz data.tar.gz
-          cd ..
-          rm -rf extract_deb
-          echo "Config samples bundled into AppImage .deb"
+          # The appimage-builder recipe extracts the .deb and builds AppDir
+          # We'll modify the recipe to include config samples during extraction
+          # For now, copy samples to appimage directory so the recipe can access them
+          cp configs/local.toml appimage/local.toml
+          cp configs/remote.toml appimage/remote.toml
+          echo "Config samples copied to appimage directory"
 
       - name: Build appimage package
         shell: bash
