@@ -1680,16 +1680,16 @@ jobs:
             export DEB_ARCH=${{ matrix.job.deb_arch }}
             python3 ./build.py --flutter --skip-cargo
 
-            # Bundle config samples next to the binary
-            # Find and copy to the Flutter build output directory so they're included in the .deb
-            BUNDLE_DIR=$(find ./flutter/build/linux -name bundle -type d | head -1)
-            if [ -n "$BUNDLE_DIR" ]; then
-              cp configs/local.toml "$BUNDLE_DIR/local.toml"
-              cp configs/remote.toml "$BUNDLE_DIR/remote.toml"
-              echo "Config samples bundled to $BUNDLE_DIR"
-            else
-              echo "Warning: bundle directory not found"
-            fi
+            # Bundle config samples next to the binary for .deb packaging
+            # Copy to standard Linux bundle location for both x86_64 and aarch64
+            ls -la ./flutter/build/linux/ 2>/dev/null || echo "Flutter build dir not found"
+            for arch_dir in ./flutter/build/linux/*/release/bundle/; do
+              if [ -d "$arch_dir" ]; then
+                cp configs/local.toml "$arch_dir/local.toml" 2>/dev/null || true
+                cp configs/remote.toml "$arch_dir/remote.toml" 2>/dev/null || true
+                echo "Config samples bundled to $arch_dir"
+              fi
+            done
 
             for name in rustdesk*??.deb; do
               mv "$name" "${name%%.deb}-${{ matrix.job.arch }}.deb"
