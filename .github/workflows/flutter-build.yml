@@ -305,6 +305,13 @@ jobs:
           cp configs/remote.toml ./rustdesk/remote.toml
           echo "Config samples bundled: $(ls -la ./rustdesk/*.toml)"
 
+      - name: Bundle Notices
+        shell: bash
+        run: |
+          # Copy Notices into build output for inclusion in installer
+          cp -r Notices ./rustdesk/
+          echo "Notices bundled: $(ls -la ./rustdesk/Notices/)"
+
       - name: find Runner.res
         # Windows: find Runner.res (compiled from ./flutter/windows/runner/Runner.rc), copy to ./Runner.res
         # Runner.rc does not contain actual version, but Runner.res does
@@ -844,6 +851,15 @@ jobs:
           echo "Config samples bundled:"
           ls -la "$APP_PATH/Contents/MacOS/"*.toml
 
+      - name: Bundle Notices (macOS)
+        if: env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          # Copy Notices into build output for inclusion in DMG
+          APP_PATH="./flutter/build/macos/Build/Products/Release/RustDesk.app"
+          cp -r Notices "$APP_PATH/Contents/MacOS/"
+          echo "Notices bundled:"
+          ls -la "$APP_PATH/Contents/MacOS/Notices/"
+
       - name: create unsigned dmg
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
@@ -1206,6 +1222,14 @@ jobs:
           # env.ANDROID_SIGN_TOOL_VERSION is set by Step "Setup sign tool version variable"
           BUILD_TOOLS_VERSION: ${{ env.ANDROID_SIGN_TOOL_VERSION }}
 
+      - name: Bundle Notices (Android)
+        if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          # Copy Notices into signed-apk directory for artifact upload
+          cp -r Notices ./signed-apk/
+          echo "Notices bundled:"
+          ls -la ./signed-apk/Notices/
+
       - name: Upload Artifacts
         if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1391,6 +1415,14 @@ jobs:
         env:
           # env.ANDROID_SIGN_TOOL_VERSION is set by Step "Setup sign tool version variable"
           BUILD_TOOLS_VERSION: ${{ env.ANDROID_SIGN_TOOL_VERSION }}
+
+      - name: Bundle Notices (Android)
+        if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          # Copy Notices into signed-apk directory for artifact upload
+          cp -r Notices ./signed-apk/
+          echo "Notices bundled:"
+          ls -la ./signed-apk/Notices/
 
       - name: Upload Artifacts
         if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true'
