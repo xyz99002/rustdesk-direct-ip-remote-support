@@ -110,12 +110,12 @@ fn show_setup_choice_dialog() -> Option<String> {
     use winapi::um::winuser::{MessageBoxW, MB_YESNOCANCEL, MB_ICONQUESTION, IDYES, IDNO};
     use winapi::um::winnt::LPCWSTR;
 
-    let title = "RustDesk Direct-IP - First Run Setup\0".encode_utf16(None).collect::<Vec<_>>();
+    let title = "RustDesk Direct-IP - First Run Setup\0".encode_utf16().collect::<Vec<_>>();
     let msg = "Please choose your configuration mode:\n\n\
                [Yes] Local Mode - for outbound-only connections (client mode)\n\
                [No] Remote Mode - for inbound-only connections (server mode)\n\
                [Cancel] Exit without setup\0"
-        .encode_utf16(None)
+        .encode_utf16()
         .collect::<Vec<_>>();
 
     unsafe {
