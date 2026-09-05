@@ -23,7 +23,7 @@ macro_rules! my_println{
 }
 
 /// Handle first-run setup when RustDesk2.toml doesn't exist.
-/// Returns `None` to terminate; the user should run the app again with `--setup-local` or `--setup-remote`.
+/// Shows an interactive dialog for the user to choose configuration mode.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn handle_first_run_setup() -> Option<Vec<String>> {
     let args: Vec<String> = std::env::args().collect();
@@ -56,23 +56,91 @@ fn handle_first_run_setup() -> Option<Vec<String>> {
             return None;
         }
     } else {
-        // No setup flag; show a message and ask user to run again
-        let msg = "RustDesk Direct-IP: First-run setup required.\n\n\
-                   Please choose your configuration mode by running one of:\n\n\
-                   rustdesk --setup-local    (for outbound-only connections)\n\
-                   rustdesk --setup-remote   (for inbound-only connections)\n\n\
-                   After setup, the application will start normally.";
+        // Show interactive dialog to let user choose configuration mode
+        log::info!("fork_config: showing first-run setup dialog");
 
         #[cfg(target_os = "windows")]
         {
-            crate::platform::message_box(&msg);
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            eprintln!("{}", msg);
+            match show_setup_choice_dialog() {
+                Some(mode) => {
+                    // User chose a mode; create the config and continue
+                    if crate::fork_config::copy_sample_config(&mode) {
+                        log::info!(
+                            "fork_config: first-run setup completed for '{}' mode",
+                            mode
+                        );
+                        crate::fork_config::load_and_apply();
+                        return Some(vec![]);
+                    } else {
+                        log::error!(
+                            "fork_config: failed to create config for '{}' mode",
+                            mode
+                        );
+                        return None;
+                    }
+                }
+                None => {
+                    // User cancelled the dialog
+                    log::info!("fork_config: user cancelled first-run setup");
+                    return None;
+                }
+            }
         }
 
-        return None;
+        #[cfg(not(target_os = "windows"))]
+        {
+            // For non-Windows, show message in terminal (TODO: implement native dialogs)
+            let msg = "RustDesk Direct-IP: First-run setup required.\n\n\
+                       Please choose your configuration mode:\n\n\
+                       1. Local mode (outbound-only connections)\n\
+                       2. Remote mode (inbound-only connections)\n\n\
+                       Run one of:\n\
+                       rustdesk --setup-local\n\
+                       rustdesk --setup-remote";
+            eprintln!("{}", msg);
+            return None;
+        }
+    }
+}
+
+/// Show an interactive dialog for user to choose setup mode (Windows)
+#[cfg(target_os = "windows")]
+fn show_setup_choice_dialog() -> Option<String> {
+    use std::ptr;
+    use winapi::um::winuser::{MessageBoxW, MB_YESNOCANCEL, MB_ICONQUESTION, IDYES, IDNO};
+    use winapi::um::winnt::LPCWSTR;
+
+    let title = "RustDesk Direct-IP - First Run Setup\0".encode_utf16(None).collect::<Vec<_>>();
+    let msg = "Please choose your configuration mode:\n\n\
+               [Yes] Local Mode - for outbound-only connections (client mode)\n\
+               [No] Remote Mode - for inbound-only connections (server mode)\n\
+               [Cancel] Exit without setup\0"
+        .encode_utf16(None)
+        .collect::<Vec<_>>();
+
+    unsafe {
+        let result = MessageBoxW(
+            ptr::null_mut(),
+            msg.as_ptr() as LPCWSTR,
+            title.as_ptr() as LPCWSTR,
+            MB_YESNOCANCEL | MB_ICONQUESTION,
+        );
+
+        match result {
+            IDYES => {
+                log::info!("User selected Local mode");
+                Some("local".to_string())
+            }
+            IDNO => {
+                log::info!("User selected Remote mode");
+                Some("remote".to_string())
+            }
+            _ => {
+                // IDCANCEL or other
+                log::info!("User cancelled setup");
+                None
+            }
+        }
     }
 }
 
