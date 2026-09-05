@@ -520,7 +520,6 @@ jobs:
         with:
           name: rustdesk-direct-ip-windows-${{ matrix.job.arch }}
           path: Release
-            Notices
 
       - name: Sign rustdesk files
         if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL != '-2'
@@ -1891,8 +1890,10 @@ jobs:
                clang \
                curl \
                gcc \
+               gcc-8 \
                git \
                g++ \
+               g++-8 \
                libayatana-appindicator3-dev \
                libasound2-dev \
                libclang-dev \
@@ -1986,6 +1987,13 @@ jobs:
             export VCPKG_ROOT=/opt/artifacts/vcpkg
             # remove this when support higher version
             export USE_AOM_391=1
+            # Ubuntu 18.04's default GCC 7 cannot compile aom's AVX2 code
+            # (e.g. _mm256_setr_m128i intrinsics were only added in GCC 8),
+            # so build vcpkg ports and native code with gcc-8 on x64.
+            if [ "${{ matrix.job.vcpkg-triplet }}" != "arm-linux" ]; then
+              export CC=/usr/bin/gcc-8
+              export CXX=/usr/bin/g++-8
+            fi
             if ! $VCPKG_ROOT/vcpkg install --triplet ${{ matrix.job.vcpkg-triplet }} --x-install-root="$VCPKG_ROOT/installed"; then
               find "${VCPKG_ROOT}/" -name "*.log" | while read -r _1; do
                 echo "$_1:"
