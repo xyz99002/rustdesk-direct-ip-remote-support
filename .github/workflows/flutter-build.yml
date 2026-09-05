@@ -340,9 +340,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rustdesk-direct-ip-windows-${{ matrix.job.arch }}
-          path: |
-            rustdesk
-            Notices
+          path: rustdesk
 
       - name: Sign rustdesk files
         if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL != '-2'
@@ -509,13 +507,19 @@ jobs:
             ls -l ./libs/portable/Runner.res;
           fi
 
+      - name: Bundle Notices (Windows Sciter)
+        shell: bash
+        run: |
+          # Copy Notices into build output for inclusion in installer
+          cp -r Notices ./Release/
+          echo "Notices bundled: $(ls -la ./Release/Notices/)"
+
       - name: Upload unsigned
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rustdesk-direct-ip-windows-${{ matrix.job.arch }}
-          path: |
-            Release
+          path: Release
             Notices
 
       - name: Sign rustdesk files
@@ -874,9 +878,7 @@ jobs:
         with:
           name: rustdesk-direct-ip-macos-${{ matrix.job.arch }}
           # can not upload the directory directly or tar.gz, which destroy the link structure, causing the codesign failed
-          path: |
-            rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg
-            Notices
+          path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg
 
       - name: Codesign app and create signed dmg
         if: env.MACOS_P12_BASE64 != null && env.UPLOAD_ARTIFACT == 'true'
@@ -1237,7 +1239,7 @@ jobs:
           name: rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}.apk
           path: |
             ${{steps.sign-rustdesk.outputs.signedReleaseFile}}
-            Notices
+            signed-apk/Notices
 
       - name: Publish signed apk package
         if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true'
@@ -1431,7 +1433,7 @@ jobs:
           name: rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}.apk
           path: |
             ${{steps.sign-rustdesk.outputs.signedReleaseFile}}
-            Notices
+            signed-apk/Notices
 
       - name: Publish signed apk package
         if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true'
@@ -1773,9 +1775,7 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
           name: rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
-          path: |
-            rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
-            Notices
+          path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
 
       # only x86_64 for arch since we can not find newest arm64 docker image to build
       # old arch image does not make sense for arch since it is "arch" which always update to date
@@ -2030,9 +2030,7 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
           name: rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
-          path: |
-            rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
-            Notices
+          path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
 
   build-appimage:
     name: Build appimage ${{ matrix.job.target }}
@@ -2090,9 +2088,7 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
           name: rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}.AppImage
-          path: |
-            ./appimage/rustdesk-${{ env.VERSION }}-*.AppImage
-            Notices
+          path: ./appimage/rustdesk-${{ env.VERSION }}-*.AppImage
 
       - name: Publish appimage package
         if: env.UPLOAD_RELEASE == 'true'
