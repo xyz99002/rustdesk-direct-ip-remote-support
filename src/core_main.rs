@@ -156,9 +156,18 @@ pub fn core_main() -> Option<Vec<String>> {
     }
     crate::load_custom_client();
 
-    // Handle first-run setup if config doesn't exist
+    // Handle first-run setup if config doesn't exist.
+    // Only a plain GUI launch (no CLI args) or an explicit --setup-* flag may show the
+    // interactive dialog; CLI invocations such as `rustdesk --version` (used by CI
+    // packaging scripts like res/msi/preprocess.py) must never block on a modal dialog.
     if !crate::fork_config::config_exists() {
-        return handle_first_run_setup();
+        let arg_count = std::env::args().count();
+        let has_setup_flag = std::env::args()
+            .any(|a| a == "--setup-local" || a == "--setup-remote");
+        if arg_count <= 1 || has_setup_flag {
+            return handle_first_run_setup();
+        }
+        // Other CLI invocations proceed without the fork config (upstream defaults).
     }
 
     crate::fork_config::load_and_apply();
