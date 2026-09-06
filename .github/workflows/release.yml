@@ -2,11 +2,6 @@ name: Create Direct-IP Release
 
 on:
   workflow_dispatch:
-    inputs:
-      direct-ip-version:
-        description: "Direct-IP release version (for example 1.0.0)"
-        required: true
-        type: string
 
 permissions:
   contents: write
@@ -18,12 +13,13 @@ jobs:
     outputs:
       tag: ${{ steps.compute.outputs.tag }}
       rustdesk-version: ${{ steps.compute.outputs.rustdesk-version }}
+      direct-ip-version: ${{ steps.compute.outputs.direct-ip-version }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Compute tag from upstream RustDesk version + Direct-IP suffix
+      - name: Compute tag from upstream RustDesk version + Direct-IP version file
         id: compute
         shell: bash
         run: |
@@ -34,21 +30,33 @@ jobs:
             exit 1
           fi
 
-          TAG="v${RUSTDESK_VERSION}-direct-ip.${{ inputs.direct-ip-version }}"
+          FILE=.github/workflows/direct-ip-version.txt
+          if [ -f "$FILE" ]; then
+            DIRECT_IP_VERSION=$(tr -d '[:space:]' < "$FILE")
+          fi
+          if [ -z "$DIRECT_IP_VERSION" ]; then
+            echo "::warning::$FILE is missing or empty; using fallback version 0.0.0"
+            DIRECT_IP_VERSION="0.0.0"
+          fi
+
+          TAG="v${RUSTDESK_VERSION}-direct-ip.${DIRECT_IP_VERSION}"
 
           echo "rustdesk-version=$RUSTDESK_VERSION" >> "$GITHUB_OUTPUT"
+          echo "direct-ip-version=$DIRECT_IP_VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "RustDesk baseline: $RUSTDESK_VERSION"
+          echo "Direct-IP version: $DIRECT_IP_VERSION"
           echo "Combined release tag: $TAG"
 
   build:
-    name: Build RustDesk Direct-IP ${{ inputs.direct-ip-version }}
+    name: Build RustDesk Direct-IP ${{ needs.determine-version.outputs.direct-ip-version }}
     needs: determine-version
     uses: ./.github/workflows/flutter-build.yml
     with:
       upload-artifact: true
       upload-release: true
       upload-tag: ${{ needs.determine-version.outputs.tag }}
+      direct-ip-version: ${{ needs.determine-version.outputs.direct-ip-version }}
 
   finalize-release:
     name: Finalize GitHub Release
@@ -60,16 +68,16 @@ jobs:
         shell: bash
         run: |
           cat > release-notes.md <<EOF
-          ## RustDesk Direct-IP v${{ inputs.direct-ip-version }}
+          ## RustDesk Direct-IP v${{ needs.determine-version.outputs.direct-ip-version }}
 
-          Direct-IP release version: **${{ inputs.direct-ip-version }}**
+          Direct-IP release version: **${{ needs.determine-version.outputs.direct-ip-version }}**
 
           Based on RustDesk: **${{ needs.determine-version.outputs.rustdesk-version }}**
 
           ### Build information
 
           - RustDesk baseline: \`${{ needs.determine-version.outputs.rustdesk-version }}\`
-          - Direct-IP version: \`${{ inputs.direct-ip-version }}\`
+          - Direct-IP version: \`${{ needs.determine-version.outputs.direct-ip-version }}\`
           - Release tag: \`${{ needs.determine-version.outputs.tag }}\`
           - Windows builds are unsigned.
           - Android builds are unsigned unless Android signing credentials are configured.
@@ -86,6 +94,6 @@ jobs:
 
           gh release edit "$TAG" \
             --repo "${{ github.repository }}" \
-            --title "RustDesk Direct-IP v${{ inputs.direct-ip-version }}" \
+            --title "RustDesk Direct-IP v${{ needs.determine-version.outputs.direct-ip-version }}" \
             --notes-file release-notes.md \
             --prerelease=false
