@@ -269,7 +269,7 @@ pub fn core_main() -> Option<Vec<String>> {
         if args[0] == "--version" {
             println!(
                 "{} (built {})",
-                crate::fork_config::direct_ip_version(),
+                crate::common::direct_ip_version(),
                 crate::BUILD_DATE
             );
             return None;

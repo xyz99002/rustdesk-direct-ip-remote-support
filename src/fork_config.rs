@@ -553,18 +553,6 @@ pub fn load_and_apply() {
     }
 }
 
-/// The Direct-IP fork version, e.g. "1.4.9-direct-ip-1.0.0-nightly".
-/// DIRECT_IP_VERSION and DIRECT_IP_CHANNEL are baked in at compile time by CI
-/// (see .github/workflows/direct-ip-version.txt); local builds show "dev".
-pub fn direct_ip_version() -> String {
-    let dip = option_env!("DIRECT_IP_VERSION").unwrap_or("dev");
-    let channel = match option_env!("DIRECT_IP_CHANNEL") {
-        Some(c) if !c.is_empty() => format!("-{c}"),
-        _ => String::new(),
-    };
-    format!("{}-direct-ip-{}{}", crate::VERSION, dip, channel)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
