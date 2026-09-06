@@ -1107,11 +1107,11 @@ pub fn main_get_version() -> String {
 }
 
 pub fn main_get_direct_ip_version() -> String {
-    crate::fork_config::direct_ip_version()
+    crate::common::direct_ip_version()
 }
 
 pub fn main_get_direct_ip_version_sync() -> SyncReturn<String> {
-    SyncReturn(crate::fork_config::direct_ip_version())
+    SyncReturn(crate::common::direct_ip_version())
 }
 
 pub fn main_get_fav() -> Vec<String> {
