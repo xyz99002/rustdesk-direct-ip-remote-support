@@ -12,6 +12,11 @@ on:
       upload-tag:
         type: string
         default: ""
+      direct-ip-version:
+        # Direct-IP fork release version, resolved by the caller from
+        # .github/workflows/direct-ip-version.txt (see flutter-nightly.yml / release.yml).
+        type: string
+        default: "0.0.0"
 
 # NOTE: F-Droid builder script 'flutter/build_fdroid.sh' reads environment
 # variables from this workflow!
@@ -48,6 +53,10 @@ env:
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
   ARMV7_VCPKG_COMMIT_ID: "6f29f12e82a8293156836ad81cc9bf5af41fe836" # 2025.01.13, got "/opt/artifacts/vcpkg/vcpkg: No such file or directory" with latest version
   VERSION: "1.4.9"
+  # Direct-IP fork version and channel. Both are read at compile time by the Rust
+  # code via option_env! (src/fork_config.rs) and used for release/artifact naming.
+  DIRECT_IP_VERSION: "${{ inputs.direct-ip-version }}"
+  DIRECT_IP_CHANNEL: "${{ inputs.upload-tag == 'nightly' && 'nightly' || '' }}"
   NDK_VERSION: "r28c"
   #signing keys env variable checks
   ANDROID_SIGNING_KEY: "${{ secrets.ANDROID_SIGNING_KEY }}"
@@ -339,7 +348,7 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rustdesk-direct-ip-windows-${{ matrix.job.arch }}
+          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-windows-${{ matrix.job.arch }}
           path: rustdesk
 
       - name: Sign rustdesk files
@@ -371,7 +380,10 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
           pushd ./res/msi
-          python preprocess.py --arp -d ../../rustdesk
+          # Pass the base version explicitly: `rustdesk --version` now prints the extended
+          # direct-ip version string, which is not a valid MSI numeric version, and running
+          # the exe from CI is what previously caused first-run dialog hangs.
+          python preprocess.py --arp -d ../../rustdesk -v ${{ env.VERSION }}
           nuget restore msi.sln
           $msiPlatform = if ('${{ matrix.job.arch }}' -eq 'aarch64') { 'ARM64' } else { 'x64' }
           msbuild msi.sln -p:Configuration=Release -p:Platform=$msiPlatform /p:TargetVersion=Windows10
@@ -390,11 +402,12 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
+          sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
           for f in ./SignOutput/rustdesk-*.msi ./SignOutput/rustdesk-*.exe; do
             d=$(dirname "$f"); b=$(basename "$f")
-            nb="${b/#rustdesk-/rustdesk-direct-ip-}"
-            nb="${nb/${{ env.VERSION }}/${{ env.VERSION }}-${{ env.TAG_NAME }}}"
-            cp -f "$f" "$d/$nb"
+            rest="${b#rustdesk-${{ env.VERSION }}-}"
+            [ "$rest" = "$b" ] && rest="${b#rustdesk-}"
+            cp -f "$f" "$d/rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-windows-${rest}"
           done
 
       - name: Publish Release
@@ -530,7 +543,7 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rustdesk-direct-ip-windows-${{ matrix.job.arch }}
+          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-windows-${{ matrix.job.arch }}
           path: Release
 
       - name: Sign rustdesk files
@@ -562,11 +575,12 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
+          sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
           for f in ./SignOutput/rustdesk-*.exe; do
             d=$(dirname "$f"); b=$(basename "$f")
-            nb="${b/#rustdesk-/rustdesk-direct-ip-}"
-            nb="${nb/${{ env.VERSION }}/${{ env.VERSION }}-${{ env.TAG_NAME }}}"
-            cp -f "$f" "$d/$nb"
+            rest="${b#rustdesk-${{ env.VERSION }}-}"
+            [ "$rest" = "$b" ] && rest="${b#rustdesk-}"
+            cp -f "$f" "$d/rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-windows-${rest}"
           done
 
       - name: Publish Release
@@ -899,7 +913,7 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rustdesk-direct-ip-macos-${{ matrix.job.arch }}
+          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-macos-${{ matrix.job.arch }}
           # can not upload the directory directly or tar.gz, which destroy the link structure, causing the codesign failed
           path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg
 
@@ -933,10 +947,11 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
+          sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
           for f in rustdesk-*-${{ matrix.job.arch }}.dmg; do
-            nb="${f/#rustdesk-/rustdesk-direct-ip-}"
-            nb="${nb/${{ env.VERSION }}/${{ env.VERSION }}-${{ env.TAG_NAME }}}"
-            cp -f "$f" "$nb"
+            rest="${f#rustdesk-${{ env.VERSION }}-}"
+            [ "$rest" = "$f" ] && rest="${f#rustdesk-}"
+            cp -f "$f" "rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-macos-${rest}"
           done
 
       - name: Publish DMG package
@@ -946,7 +961,7 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            rustdesk-direct-ip-*-${{ matrix.job.arch }}.dmg
+            rustdesk-direct-ip-*-macos-*.dmg
 
   publish_unsigned:
     needs:
@@ -959,37 +974,38 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: rustdesk-direct-ip-macos-x86_64
+          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-macos-x86_64
           path: ./
 
       - name: Download Artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: rustdesk-direct-ip-macos-aarch64
+          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-macos-aarch64
           path: ./
 
       - name: Download Artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: rustdesk-direct-ip-windows-x86_64
+          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-windows-x86_64
           path: ./windows-x86_64/
 
       - name: Download Artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: rustdesk-direct-ip-windows-x86
+          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-windows-x86
           path: ./windows-x86/
 
       - name: Combine unsigned app
         run: |
-          tar czf rustdesk-direct-ip-${{ env.VERSION }}-${{ env.TAG_NAME }}-unsigned.tar.gz *.dmg windows-x86_64 windows-x86
+          sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
+          tar czf rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-unsigned.tar.gz *.dmg windows-x86_64 windows-x86
 
       - name: Publish unsigned app
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
-          files: rustdesk-direct-ip-${{ env.VERSION }}-${{ env.TAG_NAME }}-unsigned.tar.gz
+          files: rustdesk-direct-ip-*-unsigned.tar.gz
 
   build-rustdesk-android:
     needs: [generate-bridge]
@@ -1270,7 +1286,7 @@ jobs:
         if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}.apk
+          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-android-${{ matrix.job.arch }}.apk
           path: |
             ${{steps.sign-rustdesk.outputs.signedReleaseFile}}
             signed-apk/Notices
@@ -1279,11 +1295,12 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
+          sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
           for f in signed-apk/rustdesk-*.apk; do
             d=$(dirname "$f"); b=$(basename "$f")
-            nb="${b/#rustdesk-/rustdesk-direct-ip-}"
-            nb="${nb/${{ env.VERSION }}/${{ env.VERSION }}-${{ env.TAG_NAME }}}"
-            cp -f "$f" "$d/$nb"
+            rest="${b#rustdesk-${{ env.VERSION }}-}"
+            [ "$rest" = "$b" ] && rest="${b#rustdesk-}"
+            cp -f "$f" "$d/rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-android-${rest}"
           done
 
       - name: Publish signed apk package
@@ -1475,7 +1492,7 @@ jobs:
         if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}.apk
+          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-android-${{ matrix.job.arch }}.apk
           path: |
             ${{steps.sign-rustdesk.outputs.signedReleaseFile}}
             signed-apk/Notices
@@ -1484,11 +1501,12 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
+          sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
           for f in signed-apk/rustdesk-*.apk; do
             d=$(dirname "$f"); b=$(basename "$f")
-            nb="${b/#rustdesk-/rustdesk-direct-ip-}"
-            nb="${nb/${{ env.VERSION }}/${{ env.VERSION }}-${{ env.TAG_NAME }}}"
-            cp -f "$f" "$d/$nb"
+            rest="${b#rustdesk-${{ env.VERSION }}-}"
+            [ "$rest" = "$b" ] && rest="${b#rustdesk-}"
+            cp -f "$f" "$d/rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-android-${rest}"
           done
 
       - name: Publish signed apk package
@@ -1689,6 +1707,10 @@ jobs:
             # Set UTF-8 locale for proper output encoding in Docker container
             export LANG=C.UTF-8
             export LC_ALL=C.UTF-8
+            # Direct-IP version identity, baked into the binary via option_env!
+            # (the container does not inherit workflow env vars)
+            export DIRECT_IP_VERSION="${{ env.DIRECT_IP_VERSION }}"
+            export DIRECT_IP_CHANNEL="${{ env.DIRECT_IP_CHANNEL }}"
             # disable git safe.directory
             git config --global --add safe.directory "*"
             # rust
@@ -1821,10 +1843,11 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
+          sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
           for f in rustdesk-*.deb rustdesk-*.rpm; do
-            nb="${f/#rustdesk-/rustdesk-direct-ip-}"
-            nb="${nb/${{ env.VERSION }}/${{ env.VERSION }}-${{ env.TAG_NAME }}}"
-            cp -f "$f" "$nb"
+            rest="${f#rustdesk-${{ env.VERSION }}-}"
+            [ "$rest" = "$f" ] && rest="${f#rustdesk-}"
+            cp -f "$f" "rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-linux-${rest}"
           done
 
       - name: Publish debian/rpm package
@@ -1841,7 +1864,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
-          name: rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
+          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-linux-${{ matrix.job.arch }}.deb
           path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
 
       # only x86_64 for arch since we can not find newest arm64 docker image to build
@@ -1868,11 +1891,12 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
+          sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
           for f in res/rustdesk-${{ env.VERSION }}*.zst; do
             d=$(dirname "$f"); b=$(basename "$f")
-            nb="${b/#rustdesk-/rustdesk-direct-ip-}"
-            nb="${nb/${{ env.VERSION }}/${{ env.VERSION }}-${{ env.TAG_NAME }}}"
-            cp -f "$f" "$d/$nb"
+            rest="${b#rustdesk-${{ env.VERSION }}-}"
+            [ "$rest" = "$b" ] && rest="${b#rustdesk-}"
+            cp -f "$f" "$d/rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-linux-${rest}"
           done
 
       - name: Publish archlinux package
@@ -1882,7 +1906,7 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            res/rustdesk-direct-ip-${{ env.VERSION }}*.zst
+            res/rustdesk-direct-ip-*-linux-*.zst
 
   build-rustdesk-linux-sciter:
     if: ${{ inputs.upload-artifact }}
@@ -2047,6 +2071,10 @@ jobs:
             dpkg -i nasm.deb
             rm -f nasm.deb
           run: |
+            # Direct-IP version identity, baked into the binary via option_env!
+            # (the container does not inherit workflow env vars)
+            export DIRECT_IP_VERSION="${{ env.DIRECT_IP_VERSION }}"
+            export DIRECT_IP_CHANNEL="${{ env.DIRECT_IP_CHANNEL }}"
             # disable git safe.directory
             git config --global --add safe.directory "*"
             # set python3.7 as default python3
@@ -2108,8 +2136,9 @@ jobs:
         if: env.UPLOAD_RELEASE == 'true'
         shell: bash
         run: |
+          sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
           cp -f rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb \
-            rustdesk-direct-ip-${{ env.VERSION }}-${{ env.TAG_NAME }}-${{ matrix.job.arch }}-sciter.deb
+            rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-linux-${{ matrix.job.arch }}-sciter.deb
 
       - name: Publish debian package
         if: env.UPLOAD_RELEASE == 'true'
@@ -2118,13 +2147,13 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            rustdesk-direct-ip-${{ env.VERSION }}-${{ env.TAG_NAME }}-${{ matrix.job.arch }}-sciter.deb
+            rustdesk-direct-ip-*-linux-${{ matrix.job.arch }}-sciter.deb
 
       - name: Upload deb
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
-          name: rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
+          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-linux-${{ matrix.job.arch }}-sciter.deb
           path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
 
   build-appimage:
@@ -2147,7 +2176,7 @@ jobs:
       - name: Download Binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
+          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-linux-${{ matrix.job.arch }}.deb
           path: .
 
       - name: Rename Binary
@@ -2182,7 +2211,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
-          name: rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}.AppImage
+          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-linux-${{ matrix.job.arch }}.AppImage
           path: ./appimage/rustdesk-${{ env.VERSION }}-*.AppImage
 
       - name: Rename release files (direct-ip)
@@ -2190,11 +2219,12 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
+          sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
           for f in ./appimage/rustdesk-${{ env.VERSION }}-*.AppImage; do
             d=$(dirname "$f"); b=$(basename "$f")
-            nb="${b/#rustdesk-/rustdesk-direct-ip-}"
-            nb="${nb/${{ env.VERSION }}/${{ env.VERSION }}-${{ env.TAG_NAME }}}"
-            cp -f "$f" "$d/$nb"
+            rest="${b#rustdesk-${{ env.VERSION }}-}"
+            [ "$rest" = "$b" ] && rest="${b#rustdesk-}"
+            cp -f "$f" "$d/rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-linux-${rest}"
           done
 
       - name: Publish appimage package
@@ -2204,7 +2234,7 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            ./appimage/rustdesk-direct-ip-${{ env.VERSION }}-*.AppImage
+            ./appimage/rustdesk-direct-ip-*-linux-*.AppImage
 
   build-flatpak:
     name: Build flatpak ${{ matrix.job.target }}${{ matrix.job.suffix }}
@@ -2249,7 +2279,7 @@ jobs:
       - name: Download Binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: rustdesk-direct-ip-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.deb
+          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-linux-${{ matrix.job.arch }}${{ matrix.job.suffix }}.deb
           path: .
 
       - name: Rename Binary
@@ -2286,8 +2316,9 @@ jobs:
       - name: Rename release files (direct-ip)
         shell: bash
         run: |
+          sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
           cp -f flatpak/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak \
-            flatpak/rustdesk-direct-ip-${{ env.VERSION }}-${{ env.TAG_NAME }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak
+            flatpak/rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-linux-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak
 
       - name: Publish flatpak package
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
@@ -2295,7 +2326,7 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            flatpak/rustdesk-direct-ip-${{ env.VERSION }}-${{ env.TAG_NAME }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak
+            flatpak/rustdesk-direct-ip-*-linux-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak
 
   build-rustdesk-web:
     if: False
@@ -2369,3 +2400,34 @@ jobs:
           tag_name: ${{ env.TAG_NAME }}
           files: |
             flutter/build/rustdesk-${{ env.VERSION }}-${{ env.RELEASE_NAME }}.tar.gz
+
+  finalize-nightly:
+    name: Finalize nightly release notes
+    needs:
+      - publish_unsigned
+      - build-rustdesk-android-universal
+      - build-rustdesk-linux-sciter
+      - build-appimage
+      - build-flatpak
+    if: ${{ always() && inputs.upload-release && inputs.upload-tag == 'nightly' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update nightly release title and notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BUILT=$(date -u +'%Y-%m-%d %H:%M UTC')
+          cat > notes.md <<EOF
+          ## RustDesk Direct-IP v${{ env.DIRECT_IP_VERSION }}-nightly
+
+          Automated nightly build of the Direct-IP fork.
+
+          - Direct-IP version (next planned release): \`${{ env.DIRECT_IP_VERSION }}\`
+          - RustDesk baseline: \`${{ env.VERSION }}\`
+          - Built: $BUILT
+          EOF
+          gh release edit nightly \
+            --repo "${{ github.repository }}" \
+            --title "RustDesk Direct-IP v${{ env.DIRECT_IP_VERSION }}-nightly (RustDesk ${{ env.VERSION }})" \
+            --notes-file notes.md \
+            --prerelease

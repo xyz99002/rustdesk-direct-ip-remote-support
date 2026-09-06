@@ -828,6 +828,14 @@ class RustdeskImpl {
     return Future(() => js.context.callMethod('getByName', ['version']));
   }
 
+  Future<String> mainGetDirectIpVersion({dynamic hint}) {
+    return Future(() => js.context.callMethod('getByName', ['version']));
+  }
+
+  String mainGetDirectIpVersionSync({dynamic hint}) {
+    return js.context.callMethod('getByName', ['version']);
+  }
+
   Future<List<String>> mainGetFav({dynamic hint}) {
     List<String> favs = [];
     try {

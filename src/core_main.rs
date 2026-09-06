@@ -267,7 +267,11 @@ pub fn core_main() -> Option<Vec<String>> {
     }
     if args.len() > 0 {
         if args[0] == "--version" {
-            println!("{}", crate::VERSION);
+            println!(
+                "{} (built {})",
+                crate::fork_config::direct_ip_version(),
+                crate::BUILD_DATE
+            );
             return None;
         } else if args[0] == "--build-date" {
             println!("{}", crate::BUILD_DATE);

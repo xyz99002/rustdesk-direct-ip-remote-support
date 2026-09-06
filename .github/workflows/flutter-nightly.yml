@@ -10,10 +10,36 @@ permissions:
   contents: write
 
 jobs:
+  determine-version:
+    name: Read Direct-IP version
+    runs-on: ubuntu-latest
+    outputs:
+      direct-ip-version: ${{ steps.read.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read direct-ip-version.txt
+        id: read
+        shell: bash
+        run: |
+          FILE=.github/workflows/direct-ip-version.txt
+          if [ -f "$FILE" ]; then
+            VERSION=$(tr -d '[:space:]' < "$FILE")
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "::warning::$FILE is missing or empty; using fallback version 0.0.0"
+            VERSION="0.0.0"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Direct-IP version: $VERSION"
+
   run-flutter-nightly-build:
+    needs: determine-version
     uses: ./.github/workflows/flutter-build.yml
     secrets: inherit
     with:
       upload-artifact: true
       upload-release: true
       upload-tag: "nightly"
+      direct-ip-version: ${{ needs.determine-version.outputs.direct-ip-version }}
