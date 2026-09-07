@@ -87,7 +87,32 @@ class _ConnectionPageState extends State<ConnectionPage>
 
   @override
   Widget build(BuildContext context) {
+    // Fork config: a "remote" role (direct-ip-role, translated to upstream's own
+    // conn-type=incoming by src/fork_config.rs) may only ACCEPT inbound sessions - it can never
+    // initiate one. The IP field and Support/Desktop buttons below all initiate an outbound
+    // connect, so a remote-role instance must not show them at all; showing controls that would
+    // always be rejected is confusing, not merely inert.
+    if (bind.isIncomingOnly()) {
+      return Center(child: _buildRemoteModeStatus(context));
+    }
     return Center(child: _buildConnectPanel(context));
+  }
+
+  /// Shown instead of the connect panel when this instance is restricted to "remote" (incoming
+  /// -only) role: there is nothing here to connect *from*, so no IP field or buttons are shown.
+  Widget _buildRemoteModeStatus(BuildContext context) {
+    return Container(
+      width: 320 + 20 * 2,
+      padding: const EdgeInsets.fromLTRB(20, 24, 20, 22),
+      decoration: BoxDecoration(
+          borderRadius: const BorderRadius.all(Radius.circular(13)),
+          border: Border.all(color: Theme.of(context).colorScheme.background)),
+      child: Text(
+        translate("Waiting for incoming connections"),
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontFamily: 'WorkSans', fontSize: 16),
+      ),
+    );
   }
 
   /// Callback shared by the Support and Desktop buttons. Connects to the

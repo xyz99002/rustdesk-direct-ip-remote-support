@@ -5,7 +5,10 @@
 # file's [options] table instead of a second file.)
 #
 # "remote" means this instance may only ACCEPT inbound direct-IP connections; it will never
-# initiate an outbound session. Typical use: the machine being supported or shared.
+# initiate an outbound session. Typical use: the machine being supported or shared. Because this
+# role can never dial out, the connection page shows neither the hostname/IP field nor the
+# Support/Desktop buttons — only a "waiting for incoming connections" status (see
+# flutter/lib/desktop/pages/connection_page.dart).
 #
 # File location: same as local.toml — see docs/UPSTREAM_CONFIG_REFERENCE.md Section 1.
 
@@ -22,14 +25,29 @@ direct-ip-role = "remote"
 
 # direct-ip-support-enabled: gates acceptance of VIEW_CAMERA (and the Voice Call that rides on
 #   it) at the protocol level via the existing upstream "enable-camera" permission — fully
-#   enforced remotely (see docs/CONFIG_FEATURE_VALIDATION.md Section 1).
+#   enforced remotely (see docs/CONFIG_FEATURE_VALIDATION.md Section 1). On a remote-role
+#   machine this is the setting that actually matters (it has no connect buttons of its own).
 # direct-ip-desktop-share-enabled: LOCAL UI HINT ONLY on this host — no remote-side enforcement
-#   exists yet (see docs/CONFIG_FEATURE_VALIDATION.md Section 2).
+#   exists yet (see docs/CONFIG_FEATURE_VALIDATION.md Section 2). Kept "Y" here since remote-role
+#   has no local button for it to hide; it only affects what a *connecting* local-role peer sees.
 direct-ip-support-enabled = "Y"
 direct-ip-desktop-share-enabled = "Y"
 
 # Optional — set to "N" to hide the Settings entry point entirely on a locked-down remote host.
 direct-ip-show-setup-ui = "Y"
+
+# direct-ip-auth-mode: how an inbound session on THIS machine is approved, and whether the
+#   temporary password is generated/shown (Settings > temporary password, and the system tray).
+#   "ask"              -> Approval is a manual click in the connection-manager popup; no password
+#                          is checked at all, so the temporary password is NOT generated/shown.
+#                          Use this when someone is physically present to click Accept.
+#   "password"         -> Approval requires the temporary password alone (no click needed); it
+#                          IS shown so it can be read out over the phone to the connecting
+#                          operator. Use this for unattended support sessions.
+#   "ask_and_password" -> Either a manual click OR the temporary password is accepted; the
+#                          temporary password IS shown (upstream's own default behavior).
+# This sample uses "password" — the common unattended-remote-support case.
+direct-ip-auth-mode = "password"
 
 # Parsed and validated, but NOT YET WIRED to any behavior.
 direct-ip-listen-address = "0.0.0.0"
@@ -37,20 +55,58 @@ direct-ip-listen-port = "21118"
 direct-ip-video-quality = "medium"
 direct-ip-audio-quality = "medium"
 direct-ip-log-level = "info"
-direct-ip-auth-mode = "password"
 
-# --- A curated set of relevant upstream options for a locked-down remote host (see
-#     docs/UPSTREAM_CONFIG_REFERENCE.md Section 4 for the full ~130-key catalog) ---
-whitelist = ""                # Comma-separated CIDR allow-list, e.g. "192.168.1.0/24"
-enable-keyboard = "Y"
-enable-clipboard = "Y"
-enable-file-transfer = "Y"
-enable-audio = "Y"
-enable-terminal = "N"
-enable-block-input = "N"
+# --- Every upstream option shown on the Settings screen (Settings > Safety), so all of it can be
+#     set here up front instead of clicked through by hand on the host itself. Each comment names
+#     the exact Settings screen control it corresponds to. Keys/behavior verified against
+#     flutter/lib/desktop/pages/desktop_setting_page.dart and flutter/lib/consts.dart. Anything
+#     not listed here can still be added the same way — see
+#     docs/UPSTREAM_CONFIG_REFERENCE.md for the full ~130-key catalog. ---
+
+# Settings > Safety > Permissions
+access-mode = ""                        # "Permissions" combo box: "" = Custom (use the individual
+                                         #   checkboxes below), "full" = Full Access, "view" = Screen Share.
+enable-keyboard = "Y"                   # "Enable keyboard/mouse" (connecting side controls this host)
+enable-remote-printer = "Y"             # "Enable remote printer" (Windows only)
+enable-clipboard = "Y"                  # "Enable clipboard"
+enable-file-transfer = "Y"              # "Enable file transfer"
+enable-audio = "Y"                      # "Enable audio" (this host's audio, sent to the connecting side)
+# enable-camera: see direct-ip-support-enabled above — do not set here, it is overwritten.
+enable-terminal = "N"                   # "Enable terminal"
+enable-tunnel = "N"                     # "Enable TCP tunneling"
+enable-remote-restart = "N"             # "Enable remote restart" (lets the connecting side reboot this host)
+enable-record-session = "N"             # "Enable recording session" (records incoming sessions on this host)
+enable-block-input = "N"                # "Enable blocking user input" (Windows only; locks out this
+                                         #   host's local keyboard/mouse while a session is active)
+enable-privacy-mode = "N"               # "Enable privacy mode" (only shown if the platform supports it)
+allow-remote-config-modification = "N"  # "Enable remote configuration modification" (prevents the
+                                         #   connecting side from changing this config remotely)
+
+# Settings > Safety > Password (approve-mode/verification-method come from direct-ip-auth-mode
+# above and must not be set directly here — these two are independent of that mode):
+temporary-password-length = "6"         # "One-time password length": "6", "8", or "10"
+allow-numeric-one-time-password = "N"   # "Numeric one-time password"
+
+# Settings > Safety > Security
+# enable-lan-discovery: forced "N" unconditionally by this fork (ADR-0003) — do not set here.
+direct-server = "N"                     # "Enable direct IP access" (a second, upstream listening mode;
+                                         #   distinct from this fork's own direct-ip-listen-* fields above)
+direct-access-port = "21118"            # "Port" shown under "Enable direct IP access" when it is on
+whitelist = ""                          # Comma-separated CIDR allow-list, e.g. "192.168.1.0/24"
+allow-auto-disconnect = "N"             # "Automatically disconnect on idle" checkbox
+auto-disconnect-timeout = "10"          # "Timeout in minutes" shown when the above is on
+keep-awake-during-incoming-sessions = "Y"  # Keep this host awake while a session is active
+allow-only-conn-window-open = "N"       # Only allow control while the connection window is open
+                                         #   (installed builds only)
+
+# Settings > Safety > Recording (incoming is the remote-role-relevant half; outgoing is hidden
+# entirely by upstream's own UI when role is incoming-only, so it is omitted here)
+allow-auto-record-incoming = "N"        # "Automatically record incoming sessions"
+# video-save-directory = ""             # Uncomment to override the default recordings folder.
 
 # --- Resulting upstream options (written by fork_config.rs::apply() at every startup;
-#     shown here for reference only — do not hand-edit these three, they will be overwritten) ---
-# approve-mode = "password"         # <- from direct-ip-auth-mode
-# enable-camera = "Y"               # <- from direct-ip-support-enabled
-# enable-lan-discovery = "N"        # <- unconditional, ADR-0003
+#     shown here for reference only — do not hand-edit these, they will be overwritten) ---
+# approve-mode = "password"                        # <- from direct-ip-auth-mode
+# verification-method = "use-temporary-password"   # <- from direct-ip-auth-mode
+# enable-camera = "Y"                               # <- from direct-ip-support-enabled
+# enable-lan-discovery = "N"                        # <- unconditional, ADR-0003
