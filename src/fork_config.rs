@@ -393,6 +393,30 @@ pub fn apply(config: &ForkConfig) {
     };
     Config::set_option("approve-mode".to_owned(), approve_mode.to_owned());
 
+    // `approve-mode` (above) only controls *how a connection is approved* (a manual click vs. a
+    // password check); it does not control *whether a temporary password is generated/displayed*
+    // in the local UI - that is a second, independent upstream option, `verification-method`
+    // (see `libs/hbb_common/src/password_security.rs:42-51`). Without setting this too, the
+    // temporary-password display always reflects upstream's leftover/default value regardless of
+    // `direct-ip-auth-mode`, which is why "ask" mode kept showing a password.
+    //
+    // For `ApproveMode::Click`, `src/server/connection.rs`'s login gate never calls
+    // `has_valid_password()` at all (Click bypasses password checking outright), so forcing
+    // verification-method away from a value that would otherwise enable the temporary password
+    // is safe here purely as a *display* hint, not a security relaxation.
+    let verification_method = match config.auth_mode {
+        // No password is relevant when approval is a manual click; hide the temporary password.
+        AuthMode::Ask => "use-permanent-password",
+        // Password-only approval: the temporary password is the credential to share/display.
+        AuthMode::Password => "use-temporary-password",
+        // Either method is acceptable; keep upstream's own default (temporary password shown).
+        AuthMode::AskAndPassword => "",
+    };
+    Config::set_option(
+        "verification-method".to_owned(),
+        verification_method.to_owned(),
+    );
+
     // Reuses the existing upstream `enable-camera` permission (read at login time by
     // `src/server/connection.rs:2544-2551`) so the remote side rejects VIEW_CAMERA — and
     // therefore Voice Call, which rides on it — when support_enabled is false.
@@ -749,6 +773,7 @@ mod tests {
         original_hard_settings: std::collections::HashMap<String, String>,
         original_builtin_settings: std::collections::HashMap<String, String>,
         original_approve_mode: String,
+        original_verification_method: String,
         original_enable_camera: String,
         original_desktop_share_enabled: String,
         original_show_setup_ui: String,
@@ -765,6 +790,7 @@ mod tests {
                 original_hard_settings: HARD_SETTINGS.read().unwrap().clone(),
                 original_builtin_settings: BUILTIN_SETTINGS.read().unwrap().clone(),
                 original_approve_mode: Config::get_option("approve-mode"),
+                original_verification_method: Config::get_option("verification-method"),
                 original_enable_camera: Config::get_option("enable-camera"),
                 original_desktop_share_enabled: Config::get_option("desktop-share-enabled"),
                 original_show_setup_ui: Config::get_option("show-setup-ui"),
@@ -778,6 +804,10 @@ mod tests {
             *HARD_SETTINGS.write().unwrap() = self.original_hard_settings.clone();
             *BUILTIN_SETTINGS.write().unwrap() = self.original_builtin_settings.clone();
             Config::set_option("approve-mode".to_owned(), self.original_approve_mode.clone());
+            Config::set_option(
+                "verification-method".to_owned(),
+                self.original_verification_method.clone(),
+            );
             Config::set_option(
                 "enable-camera".to_owned(),
                 self.original_enable_camera.clone(),
@@ -830,6 +860,36 @@ mod tests {
         let cfg = validate(valid_raw("local", "ask_and_password")).unwrap();
         apply(&cfg);
         assert_eq!(Config::get_option("approve-mode"), "");
+    }
+
+    #[test]
+    fn apply_maps_authentication_modes_to_verification_method_option() {
+        let _guard = GlobalStateGuard::new();
+
+        // "ask": no password is relevant when approval is a manual click, so the temporary
+        // password must not be shown - this is the bug this test guards against.
+        let cfg = validate(valid_raw("local", "ask")).unwrap();
+        apply(&cfg);
+        assert_eq!(
+            Config::get_option("verification-method"),
+            "use-permanent-password"
+        );
+        assert!(!hbb_common::password_security::temporary_enabled());
+
+        // "password": the temporary password is the credential to share/display.
+        let cfg = validate(valid_raw("local", "password")).unwrap();
+        apply(&cfg);
+        assert_eq!(
+            Config::get_option("verification-method"),
+            "use-temporary-password"
+        );
+        assert!(hbb_common::password_security::temporary_enabled());
+
+        // "ask_and_password": either method is acceptable; upstream's own default still shows it.
+        let cfg = validate(valid_raw("local", "ask_and_password")).unwrap();
+        apply(&cfg);
+        assert_eq!(Config::get_option("verification-method"), "");
+        assert!(hbb_common::password_security::temporary_enabled());
     }
 
     #[test]
