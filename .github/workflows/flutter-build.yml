@@ -384,6 +384,14 @@ jobs:
           # direct-ip version string, which is not a valid MSI numeric version, and running
           # the exe from CI is what previously caused first-run dialog hangs.
           python preprocess.py --arp -d ../../rustdesk -v ${{ env.VERSION }}
+          # PowerShell does not fail a step on a plain executable's exit code by itself; without
+          # this check, a preprocess.py failure (e.g. it couldn't read --build-date from the just
+          # -built exe) silently falls through into msbuild against unfilled WiX preprocessor
+          # variables, producing a wall of confusing WIX0150 errors instead of the real cause.
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "preprocess.py failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
           nuget restore msi.sln
           $msiPlatform = if ('${{ matrix.job.arch }}' -eq 'aarch64') { 'ARM64' } else { 'x64' }
           msbuild msi.sln -p:Configuration=Release -p:Platform=$msiPlatform /p:TargetVersion=Windows10
