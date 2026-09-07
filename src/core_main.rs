@@ -105,149 +105,51 @@ fn handle_first_run_setup() -> Option<Vec<String>> {
 
 /// Show an interactive dialog for user to choose setup mode (Windows).
 ///
-/// Uses the TaskDialog API (comctl32, Vista+) rather than MessageBoxW because
-/// MessageBox only offers fixed button sets with fixed English labels
-/// (OK/Cancel, Yes/No/Cancel, ...) - there is no way to relabel them to
-/// "Local"/"Remote". TaskDialogIndirect supports custom per-button text.
-///
-/// The struct/function layout below is declared by hand (matching the public,
-/// stable Win32 ABI) instead of depending on winapi's `commctrl` feature, to
-/// avoid relying on that crate's internal union/accessor naming.
+/// Uses MessageBoxW (user32.dll - always loadable, no manifest requirements) rather than the
+/// TaskDialog API. TaskDialogIndirect (comctl32.dll) supports custom per-button text ("Local"/
+/// "Remote" instead of Yes/No/Cancel) and was tried first, but it is only exported by ComCtl32
+/// v6, which Windows only loads when the process opts in via an application manifest - without
+/// that, the OS resolves the default v5 comctl32.dll, which does not export TaskDialogIndirect by
+/// name at all, so the *entire* DLL doing the importing (librustdesk.dll) failed to load at
+/// process startup on every CI build (confirmed reproducible on both x64 and ARM64: see git
+/// history for the incident). MessageBoxW has no such requirement, at the cost of fixed English
+/// button labels - the message text spells out which button means which mode instead.
 #[cfg(target_os = "windows")]
 fn show_setup_choice_dialog() -> Option<String> {
-    use std::os::raw::{c_int, c_void};
-    use winapi::shared::windef::HWND;
+    use std::ptr;
+    use winapi::um::winuser::{MessageBoxW, MB_YESNOCANCEL, MB_ICONQUESTION, IDYES, IDNO};
+    use winapi::um::winnt::LPCWSTR;
 
-    #[repr(C)]
-    struct TaskDialogButton {
-        button_id: c_int,
-        button_text: *const u16,
-    }
-
-    #[repr(C)]
-    struct TaskDialogConfig {
-        cb_size: u32,
-        hwnd_parent: HWND,
-        h_instance: *mut c_void,
-        dw_flags: u32,
-        dw_common_buttons: u32,
-        psz_window_title: *const u16,
-        // union { HICON hMainIcon; PCWSTR pszMainIcon }; left null: no icon shown.
-        main_icon: *const u16,
-        psz_main_instruction: *const u16,
-        psz_content: *const u16,
-        c_buttons: u32,
-        p_buttons: *const TaskDialogButton,
-        n_default_button: c_int,
-        c_radio_buttons: u32,
-        p_radio_buttons: *const TaskDialogButton,
-        n_default_radio_button: c_int,
-        psz_verification_text: *const u16,
-        psz_expanded_information: *const u16,
-        psz_expanded_control_text: *const u16,
-        psz_collapsed_control_text: *const u16,
-        // union { HICON hFooterIcon; PCWSTR pszFooterIcon }; left null.
-        footer_icon: *const u16,
-        psz_footer: *const u16,
-        pf_callback: *const c_void,
-        lp_callback_data: isize,
-        cx_width: u32,
-    }
-
-    #[link(name = "comctl32")]
-    extern "system" {
-        fn TaskDialogIndirect(
-            p_task_config: *const TaskDialogConfig,
-            pn_button: *mut c_int,
-            pn_radio_button: *mut c_int,
-            pf_verification_flag_checked: *mut i32,
-        ) -> i32;
-    }
-
-    const TDCBF_CANCEL_BUTTON: u32 = 0x8;
-    const ID_LOCAL: c_int = 100;
-    const ID_REMOTE: c_int = 101;
-
-    let title: Vec<u16> = "RustDesk Direct-IP\0".encode_utf16().collect();
-    let main_instruction: Vec<u16> =
-        "Choose Your Configuration Mode\0".encode_utf16().collect();
-    let content: Vec<u16> = "Select how this instance of RustDesk Direct-IP should operate. \
-        You can change this later by editing RustDesk2.toml.\0"
+    let title = "RustDesk Direct-IP - First Run Setup\0".encode_utf16().collect::<Vec<_>>();
+    let msg = "Please choose your configuration mode:\n\n\
+               [Yes] Local Mode - for outbound-only connections (client mode)\n\
+               [No] Remote Mode - for inbound-only connections (server mode)\n\
+               [Cancel] Exit without setup\0"
         .encode_utf16()
-        .collect();
-    let local_text: Vec<u16> = "Local\nConnect out to remote machines (client mode)\0"
-        .encode_utf16()
-        .collect();
-    let remote_text: Vec<u16> = "Remote\nAccept incoming connections (server mode)\0"
-        .encode_utf16()
-        .collect();
+        .collect::<Vec<_>>();
 
-    let buttons = [
-        TaskDialogButton {
-            button_id: ID_LOCAL,
-            button_text: local_text.as_ptr(),
-        },
-        TaskDialogButton {
-            button_id: ID_REMOTE,
-            button_text: remote_text.as_ptr(),
-        },
-    ];
+    unsafe {
+        let result = MessageBoxW(
+            ptr::null_mut(),
+            msg.as_ptr() as LPCWSTR,
+            title.as_ptr() as LPCWSTR,
+            MB_YESNOCANCEL | MB_ICONQUESTION,
+        );
 
-    let config = TaskDialogConfig {
-        cb_size: std::mem::size_of::<TaskDialogConfig>() as u32,
-        hwnd_parent: std::ptr::null_mut(),
-        h_instance: std::ptr::null_mut(),
-        dw_flags: 0,
-        dw_common_buttons: TDCBF_CANCEL_BUTTON,
-        psz_window_title: title.as_ptr(),
-        main_icon: std::ptr::null(),
-        psz_main_instruction: main_instruction.as_ptr(),
-        psz_content: content.as_ptr(),
-        c_buttons: buttons.len() as u32,
-        p_buttons: buttons.as_ptr(),
-        n_default_button: ID_LOCAL,
-        c_radio_buttons: 0,
-        p_radio_buttons: std::ptr::null(),
-        n_default_radio_button: 0,
-        psz_verification_text: std::ptr::null(),
-        psz_expanded_information: std::ptr::null(),
-        psz_expanded_control_text: std::ptr::null(),
-        psz_collapsed_control_text: std::ptr::null(),
-        footer_icon: std::ptr::null(),
-        psz_footer: std::ptr::null(),
-        pf_callback: std::ptr::null(),
-        lp_callback_data: 0,
-        cx_width: 0,
-    };
-
-    let mut pressed_id: c_int = 0;
-    let hr = unsafe {
-        TaskDialogIndirect(
-            &config,
-            &mut pressed_id,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
-    };
-
-    if hr != 0 {
-        log::error!("fork_config: TaskDialogIndirect failed with HRESULT {hr:#x}");
-        return None;
-    }
-
-    match pressed_id {
-        ID_LOCAL => {
-            log::info!("User selected Local mode");
-            Some("local".to_string())
-        }
-        ID_REMOTE => {
-            log::info!("User selected Remote mode");
-            Some("remote".to_string())
-        }
-        _ => {
-            // IDCANCEL (2) or the dialog was closed
-            log::info!("User cancelled setup");
-            None
+        match result {
+            IDYES => {
+                log::info!("User selected Local mode");
+                Some("local".to_string())
+            }
+            IDNO => {
+                log::info!("User selected Remote mode");
+                Some("remote".to_string())
+            }
+            _ => {
+                // IDCANCEL (2) or the dialog was closed
+                log::info!("User cancelled setup");
+                None
+            }
         }
     }
 }
