@@ -5,7 +5,7 @@
 // workflows (file transfer/terminal/bare view-camera via a peer menu), or
 // relay/rendezvous UI — see docs/FORK_PROFILE_SPEC.md and docs/DECISIONS.md.
 // The only inputs are a hostname/IP field and the Support/Desktop buttons
-// (each independently gated by the direct-ip-* options in RustDesk2.toml, translated by
+// (each independently gated by the direct-ip-* options in config.toml, translated by
 // src/fork_config.rs — see connection_page.dart's _supportEnabled/_desktopShareEnabled below).
 
 import 'package:flutter/material.dart';

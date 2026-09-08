@@ -308,7 +308,7 @@ jobs:
       - name: Bundle config samples
         shell: bash
         run: |
-          # Copy bundled RustDesk2.toml samples next to the binary
+          # Copy bundled config.toml samples (local.toml/remote.toml) next to the binary
           # Users choose between these on first run if no config exists
           cp configs/local.toml ./rustdesk/local.toml
           cp configs/remote.toml ./rustdesk/remote.toml
@@ -892,7 +892,7 @@ jobs:
       - name: Bundle config samples (macOS)
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
-          # Copy bundled RustDesk2.toml samples into the app bundle's Contents/MacOS
+          # Copy bundled config.toml samples (local.toml/remote.toml) into the app bundle's Contents/MacOS
           # so they're available next to the executable at runtime
           APP_PATH="./flutter/build/macos/Build/Products/Release/RustDesk.app"
           cp configs/local.toml "$APP_PATH/Contents/MacOS/local.toml"

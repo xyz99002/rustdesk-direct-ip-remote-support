@@ -1,19 +1,20 @@
-# Example RustDesk2.toml — Local role
+# Example config.toml — Local role
 #
-# THIS FILE IS RustDesk2.toml — the ONE config file upstream RustDesk already uses.
-# (2026-09-02: fork_config.toml was retired; direct-ip-* fork options now live in this same
-# file's [options] table instead of a second file. See docs/CONFIG_REFERENCE.md and
-# docs/UPSTREAM_CONFIG_REFERENCE.md.)
+# THIS FILE BECOMES config.toml — this fork's own config file, parsed directly by
+# src/fork_config.rs (never by upstream's Config::get_option/Config2). It is deliberately a
+# distinct file/name from upstream's own RustDesk2.toml, kept next to the executable rather than
+# the OS-standard per-user config directory (a portable-deployment design decision). Every
+# option in the [options] table below is applied by fork_config.rs on every startup — the
+# direct-ip-* keys via this module's own schema, everything else mirrored verbatim into
+# upstream's real option storage. See docs/CONFIG_REFERENCE.md.
 #
 # "local" means this instance may only INITIATE outbound direct-IP connections; it will never
 # accept an inbound session. Typical use: the machine an operator sits at to reach out to a
 # remote host. The connection page shows a hostname/IP field and Support/Desktop buttons (see
 # direct-ip-support-enabled / direct-ip-desktop-share-enabled below).
 #
-# File location (written by RustDesk itself; this sample can pre-seed a fresh deployment):
-#   Windows: %APPDATA%\RustDesk\config\RustDesk2.toml
-#   Linux:   ~/.config/RustDesk/RustDesk2.toml
-#   macOS:   ~/Library/Application Support/RustDesk/RustDesk2.toml
+# File location: next to rustdesk.exe (or the rustdesk binary on Linux/macOS) — copied here
+# from this sample by the first-run setup dialog, or hand-edited/pre-seeded directly.
 #
 # All direct-ip-* fields below are REQUIRED (except direct-ip-show-setup-ui) — src/fork_config.rs
 # has no implicit defaults for the others. See docs/CONFIG_REFERENCE.md for the full reference.
