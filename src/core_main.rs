@@ -22,7 +22,7 @@ macro_rules! my_println{
     };
 }
 
-/// Handle first-run setup when RustDesk2.toml doesn't exist.
+/// Handle first-run setup when config.toml doesn't exist.
 /// Shows an interactive dialog for the user to choose configuration mode.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn handle_first_run_setup() -> Option<Vec<String>> {

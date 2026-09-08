@@ -1,36 +1,52 @@
 //! Configuration and role-restriction layer for the RustDesk direct-IP fork.
 //!
-//! **2026-09-02: consolidated from a separate `fork_config.toml` file into upstream's own
-//! `RustDesk2.toml` (`hbb_common::config::Config2`).** This module no longer parses or looks up
-//! any file of its own — every value it needs is read via the existing
-//! `Config::get_option()`/`Config::set_option()` mechanism, under a set of `direct-ip-*`-prefixed
-//! keys stored in `Config2`'s own `options` table (the same table that holds `approve-mode`,
-//! `enable-camera`, and every other upstream option). This eliminates the second config file
-//! entirely, along with the "which file wins" precedence question that existed while there were
-//! two files. See `docs/CONFIG_REFERENCE.md` and `docs/UPSTREAM_CONFIG_REFERENCE.md`.
+//! **2026-09-08: reverted to a separate, self-parsed file (`config.toml`, next to the
+//! executable — a deliberate portable-deployment choice, not the OS-standard per-user config
+//! directory).** This module owns that file directly: it parses it itself (via the `toml`
+//! crate) rather than going through `hbb_common::config::Config::get_option`. The reason is
+//! structural, not stylistic — `Config::get_option`/`set_option` are backed by a lazy-loaded
+//! singleton inside the `hbb_common` submodule that unconditionally resolves to the OS-standard
+//! per-user config directory (`%APPDATA%\RustDesk` on Windows) with no override hook; making
+//! `RustDesk2.toml` live next to the executable while everything still reads through that
+//! singleton would require patching `hbb_common` itself, which is a separate upstream repo this
+//! fork doesn't otherwise touch. Owning the file directly sidesteps that entirely.
 //!
-//! The `direct-ip-*` keys below are **inputs** this module reads; they are translated into
-//! upstream's own, unmodified mechanisms via a **different** set of keys (never the same name,
-//! so there is no key-level collision even though everything now lives in one file):
+//! Every key in the file's `[options]` table is read and applied by this module at every
+//! startup, in two ways:
 //!
-//! - `direct-ip-role` -> `hbb_common::config::HARD_SETTINGS["conn-type"]` (`"outgoing"` /
-//!   `"incoming"`), which upstream's own `is_incoming_only()`/`is_outgoing_only()` already gate
-//!   outbound connects (`src/client.rs`) and the inbound listener
-//!   (`src/rendezvous_mediator.rs`) on. `HARD_SETTINGS` is in-memory only, never persisted to
-//!   `RustDesk2.toml`.
-//! - `direct-ip-auth-mode` -> `Config::set_option("approve-mode", ...)`, which upstream's own
-//!   `password_security::approve_mode()` already reads.
-//! - `direct-ip-support-enabled` -> `Config::set_option("enable-camera", ...)`, which upstream's
-//!   own login handler (`src/server/connection.rs:2544-2551`) already reads to accept/reject
-//!   `VIEW_CAMERA` (and therefore Voice Call, which rides on it) connections.
-//! - `direct-ip-desktop-share-enabled` -> `Config::set_option("desktop-share-enabled", ...)` —
-//!   still a fork-specific key with no upstream meaning (see `docs/CONFIG_FEATURE_VALIDATION.md`
-//!   Section 2 for why this has no remote-side enforcement).
-//! - `direct-ip-show-setup-ui` -> `Config::set_option("show-setup-ui", ...)` — new (see
-//!   `docs/GUI_CONFIGURATION_CONTROL.md`). **Optional**, defaults to `"Y"` (shown) if absent —
-//!   a deliberate, documented exception to this module's usual "every field required" rule,
-//!   since this field is UI convenience, not a security-relevant setting, and a missing key
-//!   should not regress an existing deployment's Settings visibility.
+//! 1. **The `direct-ip-*` keys below** are validated against this module's own schema and
+//!    translated into upstream's own, unmodified mechanisms via a **different** set of keys
+//!    (never the same name, so there is no collision):
+//!    - `direct-ip-role` -> `hbb_common::config::HARD_SETTINGS["conn-type"]` (`"outgoing"` /
+//!      `"incoming"`), which upstream's own `is_incoming_only()`/`is_outgoing_only()` already
+//!      gate outbound connects (`src/client.rs`) and the inbound listener
+//!      (`src/rendezvous_mediator.rs`) on. `HARD_SETTINGS` is in-memory only.
+//!    - `direct-ip-auth-mode` -> `Config::set_option("approve-mode", ...)` and
+//!      `Config::set_option("verification-method", ...)`, which upstream's own
+//!      `password_security` module already reads.
+//!    - `direct-ip-support-enabled` -> `Config::set_option("enable-camera", ...)`, which
+//!      upstream's own login handler (`src/server/connection.rs:2544-2551`) already reads to
+//!      accept/reject `VIEW_CAMERA` (and therefore Voice Call, which rides on it) connections.
+//!    - `direct-ip-desktop-share-enabled` -> `Config::set_option("desktop-share-enabled", ...)`
+//!      — a fork-specific key with no upstream meaning (see
+//!      `docs/CONFIG_FEATURE_VALIDATION.md` Section 2 for why this has no remote-side
+//!      enforcement).
+//!    - `direct-ip-show-setup-ui` -> `Config::set_option("show-setup-ui", ...)` (see
+//!      `docs/GUI_CONFIGURATION_CONTROL.md`). **Optional**, defaults to `"Y"` (shown) if absent.
+//!    See [`apply`] for the full translation.
+//! 2. **Every other key** (the curated set of plain upstream options this fork's sample
+//!    `local.toml`/`remote.toml` files also document — `enable-keyboard`, `whitelist`,
+//!    `temporary-password-length`, and so on) is mirrored **generically** into
+//!    `Config::set_option` by [`mirror_upstream_options`] — no per-key code, whatever is present
+//!    in the file is applied verbatim as a string. This is what actually makes those options
+//!    take effect: they still live in (and are read back from, by every other part of the app)
+//!    upstream's own `Config2`/`%APPDATA%` storage — this file is just the authoritative source
+//!    that gets pushed there again on every startup.
+//!
+//! One consequence of "authoritative source, re-applied every startup" worth knowing: a setting
+//! changed through the in-app Settings dialog persists to `Config2` immediately, but is
+//! overwritten back to whatever `config.toml` says on the next restart. For a centrally
+//! configured deployment tool this is the intended behavior (the file wins), not a bug.
 //!
 //! Minimal UI (unconditional, not config-driven): `HARD_SETTINGS["disable-account"]` and
 //! `BUILTIN_SETTINGS["hide-network-settings"]` are set so the Flutter UI's own existing
@@ -46,17 +62,24 @@
 
 use hbb_common::config::{Config, BUILTIN_SETTINGS, HARD_SETTINGS};
 use hbb_common::log;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use toml::Table;
+
+/// The active config file's name, kept next to the executable. Deliberately distinct from
+/// upstream's own `RustDesk2.toml` name (see module doc comment) — this file is never read by
+/// `Config::get_option`/`Config2`, so naming it the same would be actively misleading.
+const CONFIG_FILE_NAME: &str = "config.toml";
 
 /// The only configuration schema version understood today. A future incompatible schema change
 /// must bump this and add explicit migration/rejection logic rather than silently reinterpreting
 /// old values.
 pub const SUPPORTED_CONFIG_VERSION: u32 = 1;
 
-/// `direct-ip-*` option keys read from `Config2.options` (i.e. `RustDesk2.toml`'s `[options]`
-/// table). Every key here is a distinct string from any upstream `OPTION_*` constant in
-/// `libs/hbb_common/src/config.rs` — verified by grep against that file at the time this was
-/// written, to guarantee no collision with the ~130 existing upstream keys.
+/// `direct-ip-*` option keys read from `config.toml`'s `[options]` table. Every key here is a
+/// distinct string from any upstream `OPTION_*` constant in `libs/hbb_common/src/config.rs` —
+/// verified by grep against that file at the time this was written, to guarantee no collision
+/// with the ~130 existing upstream keys (which live in the same `[options]` table, and are
+/// mirrored into `Config::set_option` verbatim by [`mirror_upstream_options`]).
 mod keys {
     pub const CONFIG_VERSION: &str = "direct-ip-config-version";
     pub const ROLE: &str = "direct-ip-role";
@@ -340,19 +363,12 @@ fn bool_from_yn(s: &str) -> Option<bool> {
     }
 }
 
-/// Look up every `direct-ip-*` key from `Config2.options` (via `Config::get_option`, which
-/// already applies upstream's own `OVERWRITE_SETTINGS` > `Config2.options` > `DEFAULT_SETTINGS`
-/// resolution) and build a [`RawForkConfig`]. `Config::get_option` returns `""` for a fully
-/// absent key, which every field below treats as `None` — none of the valid values for any
-/// field is ever the empty string.
-fn read_raw_from_config2() -> RawForkConfig {
+/// Extract every `direct-ip-*` key from an already-parsed `[options]` table and build a
+/// [`RawForkConfig`]. A key absent from the table, or present with a non-string TOML value,
+/// is treated as `None` — none of the valid values for any field is ever the empty string.
+fn read_raw_from_table(options: &Table) -> RawForkConfig {
     let get = |k: &str| -> Option<String> {
-        let v = Config::get_option(k);
-        if v.is_empty() {
-            None
-        } else {
-            Some(v)
-        }
+        options.get(k).and_then(|v| v.as_str()).map(str::to_owned)
     };
 
     RawForkConfig {
@@ -367,6 +383,27 @@ fn read_raw_from_config2() -> RawForkConfig {
         video_quality: get(keys::VIDEO_QUALITY),
         audio_quality: get(keys::AUDIO_QUALITY),
         log_level: get(keys::LOG_LEVEL),
+    }
+}
+
+/// Mirror every key in the `[options]` table that is *not* one of this module's own
+/// `direct-ip-*` schema fields into upstream's `Config::set_option` verbatim, as a string — no
+/// per-key code, so any upstream option (`enable-keyboard`, `whitelist`,
+/// `temporary-password-length`, ...) present in the file takes effect without this module
+/// needing to know its name in advance. Values that are not TOML strings are skipped with a
+/// warning (every valid upstream option value is a quoted string, e.g. `"Y"`).
+fn mirror_upstream_options(options: &Table) {
+    for (key, value) in options {
+        if key.starts_with("direct-ip-") {
+            continue; // handled separately by validate()/apply(), not passed through verbatim
+        }
+        match value.as_str() {
+            Some(s) => Config::set_option(key.clone(), s.to_owned()),
+            None => log::warn!(
+                "fork_config: option '{key}' in {CONFIG_FILE_NAME} is not a string \
+                 (e.g. \"Y\"/\"21118\"); skipping"
+            ),
+        }
     }
 }
 
@@ -472,18 +509,20 @@ pub fn apply(config: &ForkConfig) {
     );
 }
 
-/// Get the directory where the rustdesk executable is located.
+/// Get the directory where the rustdesk executable is located. `config.toml` is intentionally
+/// kept here — a deliberate portable-deployment choice, not the OS-standard per-user config
+/// directory (see module doc comment).
 fn get_executable_dir() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|parent| parent.to_path_buf()))
 }
 
-/// Check if `RustDesk2.toml` exists in the executable directory (first-run detection).
+/// Check if `config.toml` exists in the executable directory (first-run detection).
 /// Returns `true` if config exists, `false` if it should be created.
 pub fn config_exists() -> bool {
     if let Some(exe_dir) = get_executable_dir() {
-        exe_dir.join("RustDesk2.toml").exists()
+        exe_dir.join(CONFIG_FILE_NAME).exists()
     } else {
         // If we can't determine the executable directory, assume config exists
         // (fallback to normal behavior)
@@ -491,12 +530,12 @@ pub fn config_exists() -> bool {
     }
 }
 
-/// Get the full path to `RustDesk2.toml` in the executable directory.
+/// Get the full path to `config.toml` in the executable directory.
 pub fn get_config_path() -> Option<PathBuf> {
-    get_executable_dir().map(|dir| dir.join("RustDesk2.toml"))
+    get_executable_dir().map(|dir| dir.join(CONFIG_FILE_NAME))
 }
 
-/// Copy a bundled sample TOML file to become `RustDesk2.toml`.
+/// Copy a bundled sample TOML file to become `config.toml`.
 /// `sample_name` should be "local" or "remote" (without .toml extension).
 /// Returns `true` on success, `false` on failure.
 pub fn copy_sample_config(sample_name: &str) -> bool {
@@ -509,7 +548,7 @@ pub fn copy_sample_config(sample_name: &str) -> bool {
     };
 
     let sample_file = exe_dir.join(format!("{}.toml", sample_name));
-    let target_file = exe_dir.join("RustDesk2.toml");
+    let target_file = exe_dir.join(CONFIG_FILE_NAME);
 
     if !sample_file.exists() {
         log::error!(
@@ -540,26 +579,59 @@ pub fn copy_sample_config(sample_name: &str) -> bool {
     }
 }
 
-/// Load, validate, and apply the fork configuration from `Config2.options` (i.e.
-/// `RustDesk2.toml`'s `[options]` table — the same file/table upstream RustDesk already uses for
-/// every other option). Must be called once, early in startup (`src/core_main.rs`, immediately
-/// after `crate::load_custom_client()`), before the inbound listener or any outbound-connect
-/// capability is reachable.
+/// Read and parse `config.toml` from the executable directory. Returns `None` (logging why) if
+/// the file is missing, unreadable, or not valid TOML.
+fn read_config_file() -> Option<Table> {
+    let path = get_config_path()?;
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("fork_config: failed to read {}: {}", path.display(), e);
+            return None;
+        }
+    };
+    match content.parse::<Table>() {
+        Ok(t) => Some(t),
+        Err(e) => {
+            log::error!("fork_config: failed to parse {}: {}", path.display(), e);
+            None
+        }
+    }
+}
+
+/// Load `config.toml`, mirror every plain upstream option it contains, then validate and apply
+/// this module's own `direct-ip-*` schema. Must be called once, early in startup
+/// (`src/core_main.rs`, immediately after `crate::load_custom_client()`), before the inbound
+/// listener or any outbound-connect capability is reachable.
 ///
 /// No `direct-ip-*` keys present at all is not an error: the app runs with pure upstream
-/// behavior (no role restriction, upstream's own default authentication). Keys present but
-/// invalid are logged loudly and fall back the same way, never leaving the app in a
-/// partial/inconsistent state.
+/// behavior (no role restriction, upstream's own default authentication) — though any plain
+/// upstream options present are still mirrored. Keys present but invalid are logged loudly and
+/// fall back the same way, never leaving the app in a partial/inconsistent state.
 pub fn load_and_apply() {
-    let raw = read_raw_from_config2();
+    let Some(file) = read_config_file() else {
+        log::warn!(
+            "fork_config: {CONFIG_FILE_NAME} not found or failed to parse; upstream default \
+             behavior in effect (no role restriction, no options applied)"
+        );
+        return;
+    };
+
+    let Some(options) = file.get("options").and_then(|v| v.as_table()) else {
+        log::warn!("fork_config: {CONFIG_FILE_NAME} has no [options] table; nothing to apply");
+        return;
+    };
+
+    mirror_upstream_options(options);
+
+    let raw = read_raw_from_table(options);
 
     // Distinguish "nothing configured" (silent, expected fallback) from "configured but
-    // invalid" (loud fallback) the same way the old file-based version distinguished "file not
-    // found" from "file present but invalid" — using the presence of `direct-ip-role` as the
-    // sentinel, since it's required in every valid configuration.
+    // invalid" (loud fallback) using the presence of `direct-ip-role` as the sentinel, since
+    // it's required in every valid configuration.
     if raw.role.is_none() {
         log::warn!(
-            "fork_config: no 'direct-ip-*' options configured in RustDesk2.toml; role \
+            "fork_config: no 'direct-ip-*' options configured in {CONFIG_FILE_NAME}; role \
              restriction and authentication-mode mapping will not be applied (upstream default \
              behavior in effect)"
         );

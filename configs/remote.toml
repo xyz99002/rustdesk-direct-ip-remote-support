@@ -1,8 +1,12 @@
-# Example RustDesk2.toml — Remote role
+# Example config.toml — Remote role
 #
-# THIS FILE IS RustDesk2.toml — the ONE config file upstream RustDesk already uses.
-# (2026-09-02: fork_config.toml was retired; direct-ip-* fork options now live in this same
-# file's [options] table instead of a second file.)
+# THIS FILE BECOMES config.toml — this fork's own config file, parsed directly by
+# src/fork_config.rs (never by upstream's Config::get_option/Config2). It is deliberately a
+# distinct file/name from upstream's own RustDesk2.toml, kept next to the executable rather than
+# the OS-standard per-user config directory (a portable-deployment design decision). Every
+# option in the [options] table below is applied by fork_config.rs on every startup — the
+# direct-ip-* keys via this module's own schema, everything else mirrored verbatim into
+# upstream's real option storage.
 #
 # "remote" means this instance may only ACCEPT inbound direct-IP connections; it will never
 # initiate an outbound session. Typical use: the machine being supported or shared. Because this
@@ -10,7 +14,7 @@
 # Support/Desktop buttons — only a "waiting for incoming connections" status (see
 # flutter/lib/desktop/pages/connection_page.dart).
 #
-# File location: same as local.toml — see docs/UPSTREAM_CONFIG_REFERENCE.md Section 1.
+# File location: same as local.toml — next to the executable.
 
 rendezvous_server = ""
 nat_type = 0
