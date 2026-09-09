@@ -5,7 +5,7 @@
 # distinct file/name from upstream's own RustDesk2.toml, kept next to the executable rather than
 # the OS-standard per-user config directory (a portable-deployment design decision). Every
 # option in the [options] table below is applied by fork_config.rs on every startup — the
-# direct-ip-* keys via this module's own schema, everything else mirrored verbatim into
+# this module's own schema keys, everything else mirrored verbatim into
 # upstream's real option storage.
 #
 # "remote" means this instance may only ACCEPT inbound direct-IP connections; it will never
@@ -24,23 +24,23 @@ trusted_devices = ""
 
 [options]
 # --- Direct-IP fork configuration (src/fork_config.rs) ---
-direct-ip-config-version = "1"
-direct-ip-role = "remote"
+config-version = "1"
+role = "remote"
 
-# direct-ip-support-enabled: gates acceptance of VIEW_CAMERA (and the Voice Call that rides on
+# support-enabled: gates acceptance of VIEW_CAMERA (and the Voice Call that rides on
 #   it) at the protocol level via the existing upstream "enable-camera" permission — fully
 #   enforced remotely (see docs/CONFIG_FEATURE_VALIDATION.md Section 1). On a remote-role
 #   machine this is the setting that actually matters (it has no connect buttons of its own).
-# direct-ip-desktop-share-enabled: LOCAL UI HINT ONLY on this host — no remote-side enforcement
+# desktop-share-enabled: LOCAL UI HINT ONLY on this host — no remote-side enforcement
 #   exists yet (see docs/CONFIG_FEATURE_VALIDATION.md Section 2). Kept "Y" here since remote-role
 #   has no local button for it to hide; it only affects what a *connecting* local-role peer sees.
-direct-ip-support-enabled = "Y"
-direct-ip-desktop-share-enabled = "Y"
+support-enabled = "Y"
+desktop-share-enabled = "Y"
 
 # Optional — set to "N" to hide the Settings entry point entirely on a locked-down remote host.
-direct-ip-show-setup-ui = "Y"
+show-setup-ui = "Y"
 
-# direct-ip-auth-mode: how an inbound session on THIS machine is approved, and whether the
+# auth-mode: how an inbound session on THIS machine is approved, and whether the
 #   temporary password is generated/shown (Settings > temporary password, and the system tray).
 #   "ask"              -> Approval is a manual click in the connection-manager popup; no password
 #                          is checked at all, so the temporary password is NOT generated/shown.
@@ -51,14 +51,14 @@ direct-ip-show-setup-ui = "Y"
 #   "ask_and_password" -> Either a manual click OR the temporary password is accepted; the
 #                          temporary password IS shown (upstream's own default behavior).
 # This sample uses "password" — the common unattended-remote-support case.
-direct-ip-auth-mode = "password"
+auth-mode = "password"
 
 # Parsed and validated, but NOT YET WIRED to any behavior.
-direct-ip-listen-address = "0.0.0.0"
-direct-ip-listen-port = "21118"
-direct-ip-video-quality = "medium"
-direct-ip-audio-quality = "medium"
-direct-ip-log-level = "info"
+listen-address = "0.0.0.0"
+listen-port = "21118"
+video-quality = "medium"
+audio-quality = "medium"
+log-level = "info"
 
 # --- Every upstream option shown on the Settings screen (Settings > Safety), so all of it can be
 #     set here up front instead of clicked through by hand on the host itself. Each comment names
@@ -75,7 +75,7 @@ enable-remote-printer = "Y"             # "Enable remote printer" (Windows only)
 enable-clipboard = "Y"                  # "Enable clipboard"
 enable-file-transfer = "Y"              # "Enable file transfer"
 enable-audio = "Y"                      # "Enable audio" (this host's audio, sent to the connecting side)
-# enable-camera: see direct-ip-support-enabled above — do not set here, it is overwritten.
+# enable-camera: see support-enabled above — do not set here, it is overwritten.
 enable-terminal = "N"                   # "Enable terminal"
 enable-tunnel = "N"                     # "Enable TCP tunneling"
 enable-remote-restart = "N"             # "Enable remote restart" (lets the connecting side reboot this host)
@@ -86,7 +86,7 @@ enable-privacy-mode = "N"               # "Enable privacy mode" (only shown if t
 allow-remote-config-modification = "N"  # "Enable remote configuration modification" (prevents the
                                          #   connecting side from changing this config remotely)
 
-# Settings > Safety > Password (approve-mode/verification-method come from direct-ip-auth-mode
+# Settings > Safety > Password (approve-mode/verification-method come from auth-mode
 # above and must not be set directly here — these two are independent of that mode):
 temporary-password-length = "6"         # "One-time password length": "6", "8", or "10"
 allow-numeric-one-time-password = "N"   # "Numeric one-time password"
@@ -94,7 +94,7 @@ allow-numeric-one-time-password = "N"   # "Numeric one-time password"
 # Settings > Safety > Security
 # enable-lan-discovery: forced "N" unconditionally by this fork (ADR-0003) — do not set here.
 direct-server = "N"                     # "Enable direct IP access" (a second, upstream listening mode;
-                                         #   distinct from this fork's own direct-ip-listen-* fields above)
+                                         #   distinct from this fork's own listen-* fields above)
 direct-access-port = "21118"            # "Port" shown under "Enable direct IP access" when it is on
 whitelist = ""                          # Comma-separated CIDR allow-list, e.g. "192.168.1.0/24"
 allow-auto-disconnect = "N"             # "Automatically disconnect on idle" checkbox
@@ -110,7 +110,7 @@ allow-auto-record-incoming = "N"        # "Automatically record incoming session
 
 # --- Resulting upstream options (written by fork_config.rs::apply() at every startup;
 #     shown here for reference only — do not hand-edit these, they will be overwritten) ---
-# approve-mode = "password"                        # <- from direct-ip-auth-mode
-# verification-method = "use-temporary-password"   # <- from direct-ip-auth-mode
-# enable-camera = "Y"                               # <- from direct-ip-support-enabled
+# approve-mode = "password"                        # <- from auth-mode
+# verification-method = "use-temporary-password"   # <- from auth-mode
+# enable-camera = "Y"                               # <- from support-enabled
 # enable-lan-discovery = "N"                        # <- unconditional, ADR-0003

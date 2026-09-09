@@ -160,11 +160,44 @@ fn show_setup_choice_dialog() -> Option<String> {
 /// If it returns [`None`], then the process will terminate, and flutter gui will not be started.
 /// If it returns [`Some`], then the process will continue, and flutter gui will be started.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
+/// Computes the same per-process log file name that the arg-parsing loop further down derives
+/// (portable-service / first `--xxx` flag / default), but from raw args so it can run before
+/// that loop exists — needed so the logger can be initialized early enough to capture
+/// fork_config's own diagnostics (see the early `init_log` call in `core_main`).
+fn early_log_name() -> String {
+    let excluded = ["--elevate", "--run-as-system", "--quick_support", "--no-server"];
+    let filtered: Vec<String> = std::env::args()
+        .skip(1)
+        .filter(|a| !excluded.contains(&a.as_str()))
+        .collect();
+    if filtered
+        .iter()
+        .any(|a| a.starts_with("--portable-service-shmem-name="))
+    {
+        return "portable-service".to_owned();
+    }
+    if let Some(first) = filtered.first() {
+        if first.starts_with("--") {
+            let name = first.replace("--", "");
+            if !name.is_empty() {
+                return name;
+            }
+        }
+    }
+    String::new()
+}
+
 pub fn core_main() -> Option<Vec<String>> {
     if !crate::common::global_init() {
         return None;
     }
     crate::load_custom_client();
+
+    // Initialized here (rather than down with the arg-parsing loop) so fork_config's own
+    // log::info!/warn! calls below are actually captured instead of silently discarded — the
+    // `log` crate is a no-op sink until a logger backend is installed, and init_log's internal
+    // Once guard means only the first call per process takes effect, so this must be the first.
+    hbb_common::init_log(false, &early_log_name());
 
     // Handle first-run setup if config doesn't exist.
     // Only a plain GUI launch (no CLI args) or an explicit --setup-* flag may show the
@@ -297,20 +330,8 @@ pub fn core_main() -> Option<Vec<String>> {
                 || (!click_setup && crate::platform::is_elevated(None).unwrap_or(false)));
         crate::portable_service::client::set_quick_support(_is_quick_support);
     }
-    let mut log_name = "".to_owned();
-    // Keep portable-service logs under a stable directory name.
-    let has_portable_service_shmem_arg = args
-        .iter()
-        .any(|arg| arg.starts_with("--portable-service-shmem-name="));
-    if has_portable_service_shmem_arg {
-        log_name = "portable-service".to_owned();
-    } else if args.len() > 0 && args[0].starts_with("--") {
-        let name = args[0].replace("--", "");
-        if !name.is_empty() {
-            log_name = name;
-        }
-    }
-    hbb_common::init_log(false, &log_name);
+    // Logger already initialized earlier (see `early_log_name`/`init_log` call at the top of
+    // this function), before fork_config::load_and_apply() so its diagnostics are captured.
 
     // linux uni (url) go here.
     #[cfg(all(target_os = "linux", feature = "flutter"))]

@@ -28,72 +28,72 @@ trusted_devices = ""
 
 # ===========================================================================================
 # DIRECT-IP FORK OPTIONS (src/fork_config.rs) — read via Config::get_option(), verified against
-# the "keys" module in src/fork_config.rs. Every key here uses a "direct-ip-" prefix specifically
+# the "keys" module in src/fork_config.rs. Every key here uses a "" prefix specifically
 # so it can never collide with any of the ~130 existing upstream OPTION_* keys below.
 # ===========================================================================================
 
-# direct-ip-config-version (string, REQUIRED)
+# config-version (string, REQUIRED)
 # Only schema version currently understood. Any other value is rejected
 # (ConfigError::UnsupportedVersion).
-direct-ip-config-version = "1"
+config-version = "1"
 
-# direct-ip-role (string enum, REQUIRED)
+# role (string enum, REQUIRED)
 #   "local"  -> may only INITIATE outbound direct-IP connections.
 #   "remote" -> may only ACCEPT inbound direct-IP connections.
 # Maps to HARD_SETTINGS["conn-type"] ("outgoing"/"incoming") — in-memory only, never persisted
 # back to this file. STATUS: working.
-direct-ip-role = "local"
+role = "local"
 
-# direct-ip-support-enabled (boolean "Y"/"N", REQUIRED)
+# support-enabled (boolean "Y"/"N", REQUIRED)
 # Shows/hides the Support button. Maps to Config::set_option("enable-camera", ...) — reused by
 # upstream's own login handler to accept/reject VIEW_CAMERA (and Voice Call) remotely.
 # STATUS: working, both locally and remotely.
 #
-# At least one of direct-ip-support-enabled / direct-ip-desktop-share-enabled MUST be "Y", or
+# At least one of support-enabled / desktop-share-enabled MUST be "Y", or
 # the whole configuration is rejected (ConfigError::NoConnectionModeEnabled).
-direct-ip-support-enabled = "Y"
+support-enabled = "Y"
 
-# direct-ip-desktop-share-enabled (boolean "Y"/"N", REQUIRED)
+# desktop-share-enabled (boolean "Y"/"N", REQUIRED)
 # Shows/hides the Desktop button. Maps to Config::set_option("desktop-share-enabled", ...) — a
 # fork-specific key with NO upstream meaning.
 # STATUS: partially working — local UI gate only, no remote-side enforcement exists (see
 # docs/CONFIG_FEATURE_VALIDATION.md Section 2).
-direct-ip-desktop-share-enabled = "Y"
+desktop-share-enabled = "Y"
 
-# direct-ip-show-setup-ui (boolean "Y"/"N", OPTIONAL — defaults to "Y" if absent)
+# show-setup-ui (boolean "Y"/"N", OPTIONAL — defaults to "Y" if absent)
 # Gates the Settings UI entry point (DesktopSettingPage.switch2page()). The ONE deliberate
 # exception to "every field required" in this fork's config, since it's a UI-convenience field
 # with a safe default, not a security-relevant one. See docs/GUI_CONFIGURATION_CONTROL.md.
 # STATUS: working (2026-09-02).
-direct-ip-show-setup-ui = "Y"
+show-setup-ui = "Y"
 
-# direct-ip-auth-mode (string enum, REQUIRED)
+# auth-mode (string enum, REQUIRED)
 #   "ask"              -> approve-mode = "click"
 #   "password"         -> approve-mode = "password"
 #   "ask_and_password" -> approve-mode = "" (upstream ApproveMode::Both default)
 # STATUS: working.
-direct-ip-auth-mode = "ask"
+auth-mode = "ask"
 
-# direct-ip-listen-address (string IP, REQUIRED) — parsed/validated, NOT YET WIRED to behavior.
-direct-ip-listen-address = "0.0.0.0"
+# listen-address (string IP, REQUIRED) — parsed/validated, NOT YET WIRED to behavior.
+listen-address = "0.0.0.0"
 
-# direct-ip-listen-port (integer string 1-65535, REQUIRED) — NOT YET WIRED.
-direct-ip-listen-port = "21118"
+# listen-port (integer string 1-65535, REQUIRED) — NOT YET WIRED.
+listen-port = "21118"
 
-# direct-ip-video-quality (string enum: "low"|"medium"|"high", REQUIRED) — NOT YET WIRED.
-direct-ip-video-quality = "medium"
+# video-quality (string enum: "low"|"medium"|"high", REQUIRED) — NOT YET WIRED.
+video-quality = "medium"
 
-# direct-ip-audio-quality (string enum: "low"|"medium"|"high", REQUIRED) — NOT YET WIRED.
-direct-ip-audio-quality = "medium"
+# audio-quality (string enum: "low"|"medium"|"high", REQUIRED) — NOT YET WIRED.
+audio-quality = "medium"
 
-# direct-ip-log-level (string enum: "error"|"warn"|"info"|"debug"|"trace", REQUIRED) — NOT YET WIRED.
-direct-ip-log-level = "info"
+# log-level (string enum: "error"|"warn"|"info"|"debug"|"trace", REQUIRED) — NOT YET WIRED.
+log-level = "info"
 
 # ===========================================================================================
 # UPSTREAM RUSTDESK OPTIONS — a representative subset of the ~130 keys cataloged in
 # docs/UPSTREAM_CONFIG_REFERENCE.md Section 4 (source: libs/hbb_common/src/config.rs). None of
 # these are set by fork_config.rs except approve-mode, enable-camera, enable-lan-discovery
-# (overwritten every startup from the direct-ip-* keys above — see the note at the end of this
+# (overwritten every startup from the schema keys above — see the note at the end of this
 # file) and desktop-share-enabled/show-setup-ui (fork-specific keys, no upstream meaning).
 # ===========================================================================================
 
@@ -101,7 +101,7 @@ direct-ip-log-level = "info"
 enable-keyboard = "Y"
 enable-clipboard = "Y"
 enable-file-transfer = "Y"
-enable-camera = "Y"          # OVERWRITTEN every startup from direct-ip-support-enabled above
+enable-camera = "Y"          # OVERWRITTEN every startup from support-enabled above
 enable-terminal = "Y"
 enable-audio = "Y"
 enable-tunnel = "Y"
@@ -112,7 +112,7 @@ enable-privacy-mode = "N"
 access-mode = ""             # "" = custom/per-permission, "full", or "view"
 
 # --- Security / network ---
-approve-mode = "click"       # OVERWRITTEN every startup from direct-ip-auth-mode above
+approve-mode = "click"       # OVERWRITTEN every startup from auth-mode above
 verification-method = ""
 whitelist = ""                # Comma-separated CIDR list, e.g. "192.168.1.0/24,10.0.0.5"
 enable-lan-discovery = "Y"    # OVERWRITTEN to "N" unconditionally every startup (ADR-0003)
@@ -146,6 +146,6 @@ hide-proxy-settings = "N"
 # PRECEDENCE NOTE
 # ===========================================================================================
 # fork_config.rs::apply() runs on every startup and unconditionally overwrites approve-mode,
-# enable-camera, and enable-lan-discovery from the direct-ip-* values above — hand-edited values
+# enable-camera, and enable-lan-discovery from the schema values above — hand-edited values
 # for those three specific keys will not survive a restart. Every other key in this file is
 # untouched by the fork and behaves exactly as upstream RustDesk documents.

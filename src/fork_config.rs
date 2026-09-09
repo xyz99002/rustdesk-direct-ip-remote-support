@@ -14,24 +14,24 @@
 //! Every key in the file's `[options]` table is read and applied by this module at every
 //! startup, in two ways:
 //!
-//! 1. **The `direct-ip-*` keys below** are validated against this module's own schema and
+//! 1. **This module's own schema keys** (`role`, `auth-mode`, etc., listed below) are validated and
 //!    translated into upstream's own, unmodified mechanisms via a **different** set of keys
 //!    (never the same name, so there is no collision):
-//!    - `direct-ip-role` -> `hbb_common::config::HARD_SETTINGS["conn-type"]` (`"outgoing"` /
+//!    - `role` -> `hbb_common::config::HARD_SETTINGS["conn-type"]` (`"outgoing"` /
 //!      `"incoming"`), which upstream's own `is_incoming_only()`/`is_outgoing_only()` already
 //!      gate outbound connects (`src/client.rs`) and the inbound listener
 //!      (`src/rendezvous_mediator.rs`) on. `HARD_SETTINGS` is in-memory only.
-//!    - `direct-ip-auth-mode` -> `Config::set_option("approve-mode", ...)` and
+//!    - `auth-mode` -> `Config::set_option("approve-mode", ...)` and
 //!      `Config::set_option("verification-method", ...)`, which upstream's own
 //!      `password_security` module already reads.
-//!    - `direct-ip-support-enabled` -> `Config::set_option("enable-camera", ...)`, which
+//!    - `support-enabled` -> `Config::set_option("enable-camera", ...)`, which
 //!      upstream's own login handler (`src/server/connection.rs:2544-2551`) already reads to
 //!      accept/reject `VIEW_CAMERA` (and therefore Voice Call, which rides on it) connections.
-//!    - `direct-ip-desktop-share-enabled` -> `Config::set_option("desktop-share-enabled", ...)`
+//!    - `desktop-share-enabled` -> `Config::set_option("desktop-share-enabled", ...)`
 //!      — a fork-specific key with no upstream meaning (see
 //!      `docs/CONFIG_FEATURE_VALIDATION.md` Section 2 for why this has no remote-side
 //!      enforcement).
-//!    - `direct-ip-show-setup-ui` -> `Config::set_option("show-setup-ui", ...)` (see
+//!    - `show-setup-ui` -> `Config::set_option("show-setup-ui", ...)` (see
 //!      `docs/GUI_CONFIGURATION_CONTROL.md`). **Optional**, defaults to `"Y"` (shown) if absent.
 //!    See [`apply`] for the full translation.
 //! 2. **Every other key** (the curated set of plain upstream options this fork's sample
@@ -75,24 +75,24 @@ const CONFIG_FILE_NAME: &str = "config.toml";
 /// old values.
 pub const SUPPORTED_CONFIG_VERSION: u32 = 1;
 
-/// `direct-ip-*` option keys read from `config.toml`'s `[options]` table. Every key here is a
+/// This module's own option keys, read from `config.toml`'s `[options]` table. Every key here is a
 /// distinct string from any upstream `OPTION_*` constant in `libs/hbb_common/src/config.rs` —
 /// verified by grep against that file at the time this was written, to guarantee no collision
 /// with the ~130 existing upstream keys (which live in the same `[options]` table, and are
 /// mirrored into `Config::set_option` verbatim by [`mirror_upstream_options`]).
 mod keys {
-    pub const CONFIG_VERSION: &str = "direct-ip-config-version";
-    pub const ROLE: &str = "direct-ip-role";
-    pub const AUTH_MODE: &str = "direct-ip-auth-mode";
-    pub const SUPPORT_ENABLED: &str = "direct-ip-support-enabled";
-    pub const DESKTOP_SHARE_ENABLED: &str = "direct-ip-desktop-share-enabled";
-    pub const LISTEN_ADDRESS: &str = "direct-ip-listen-address";
-    pub const LISTEN_PORT: &str = "direct-ip-listen-port";
-    pub const VIDEO_QUALITY: &str = "direct-ip-video-quality";
-    pub const AUDIO_QUALITY: &str = "direct-ip-audio-quality";
-    pub const LOG_LEVEL: &str = "direct-ip-log-level";
+    pub const CONFIG_VERSION: &str = "config-version";
+    pub const ROLE: &str = "role";
+    pub const AUTH_MODE: &str = "auth-mode";
+    pub const SUPPORT_ENABLED: &str = "support-enabled";
+    pub const DESKTOP_SHARE_ENABLED: &str = "desktop-share-enabled";
+    pub const LISTEN_ADDRESS: &str = "listen-address";
+    pub const LISTEN_PORT: &str = "listen-port";
+    pub const VIDEO_QUALITY: &str = "video-quality";
+    pub const AUDIO_QUALITY: &str = "audio-quality";
+    pub const LOG_LEVEL: &str = "log-level";
     /// Optional; see module doc comment for the default-value rationale.
-    pub const SHOW_SETUP_UI: &str = "direct-ip-show-setup-ui";
+    pub const SHOW_SETUP_UI: &str = "show-setup-ui";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,7 +147,7 @@ pub struct ForkConfig {
     /// `DEFAULT_CONN` outright, so this cannot be enforced remotely; see `docs/FORK_PROFILE_SPEC.md`).
     pub desktop_share_enabled: bool,
     /// Gates whether the Settings UI entry point is reachable at all. Defaults to `true` if the
-    /// `direct-ip-show-setup-ui` key is absent. See `docs/GUI_CONFIGURATION_CONTROL.md`.
+    /// `show-setup-ui` key is absent. See `docs/GUI_CONFIGURATION_CONTROL.md`.
     pub show_setup_ui: bool,
     // Parsed and validated now so the schema is stable across phases; not read by any caller
     // yet. Each will lose this `allow` when its owning phase wires it up: Direct-IP transport
@@ -195,7 +195,7 @@ pub enum ConfigError {
     /// shown, so the configuration is rejected outright rather than silently producing a
     /// connection screen with nothing on it.
     NoConnectionModeEnabled,
-    /// No `direct-ip-*` keys are present at all — treated the same as "no config supplied" by
+    /// None of this module's own keys are present at all — treated the same as "no config supplied" by
     /// the caller, not a hard error (see `load_and_apply()`).
     NotConfigured,
 }
@@ -213,9 +213,9 @@ impl std::fmt::Display for ConfigError {
             }
             ConfigError::NoConnectionModeEnabled => write!(
                 f,
-                "at least one of 'direct-ip-support-enabled' or 'direct-ip-desktop-share-enabled' must be true"
+                "at least one of 'support-enabled' or 'desktop-share-enabled' must be true"
             ),
-            ConfigError::NotConfigured => write!(f, "no direct-ip-* options configured"),
+            ConfigError::NotConfigured => write!(f, "no fork_config options configured"),
         }
     }
 }
@@ -225,7 +225,7 @@ fn parse_role(s: &str) -> Result<Role, ConfigError> {
         "local" => Ok(Role::Local),
         "remote" => Ok(Role::Remote),
         _ => Err(ConfigError::InvalidValue {
-            field: "direct-ip-role",
+            field: "role",
             value: s.to_owned(),
         }),
     }
@@ -237,7 +237,7 @@ fn parse_auth_mode(s: &str) -> Result<AuthMode, ConfigError> {
         "password" => Ok(AuthMode::Password),
         "ask_and_password" => Ok(AuthMode::AskAndPassword),
         _ => Err(ConfigError::InvalidValue {
-            field: "direct-ip-auth-mode",
+            field: "auth-mode",
             value: s.to_owned(),
         }),
     }
@@ -263,7 +263,7 @@ fn parse_log_level(s: &str) -> Result<LogLevel, ConfigError> {
         "debug" => Ok(LogLevel::Debug),
         "trace" => Ok(LogLevel::Trace),
         _ => Err(ConfigError::InvalidValue {
-            field: "direct-ip-log-level",
+            field: "log-level",
             value: s.to_owned(),
         }),
     }
@@ -274,7 +274,7 @@ fn validate_listen_address(s: &str) -> Result<(), ConfigError> {
         Ok(())
     } else {
         Err(ConfigError::InvalidValue {
-            field: "direct-ip-listen-address",
+            field: "listen-address",
             value: s.to_owned(),
         })
     }
@@ -363,7 +363,7 @@ fn bool_from_yn(s: &str) -> Option<bool> {
     }
 }
 
-/// Extract every `direct-ip-*` key from an already-parsed `[options]` table and build a
+/// Extract every one of this module's own keys from an already-parsed `[options]` table and build a
 /// [`RawForkConfig`]. A key absent from the table, or present with a non-string TOML value,
 /// is treated as `None` — none of the valid values for any field is ever the empty string.
 fn read_raw_from_table(options: &Table) -> RawForkConfig {
@@ -386,15 +386,31 @@ fn read_raw_from_table(options: &Table) -> RawForkConfig {
     }
 }
 
-/// Mirror every key in the `[options]` table that is *not* one of this module's own
-/// `direct-ip-*` schema fields into upstream's `Config::set_option` verbatim, as a string — no
+/// Mirror every key in the `[options]` table that is *not* one of this module's own schema
+/// fields (see [`keys`]) into upstream's `Config::set_option` verbatim, as a string — no
 /// per-key code, so any upstream option (`enable-keyboard`, `whitelist`,
 /// `temporary-password-length`, ...) present in the file takes effect without this module
 /// needing to know its name in advance. Values that are not TOML strings are skipped with a
 /// warning (every valid upstream option value is a quoted string, e.g. `"Y"`).
 fn mirror_upstream_options(options: &Table) {
+    // This module's own schema keys - never passed through verbatim, since validate()/apply()
+    // already translate each of these into upstream's real mechanism under a different name.
+    const OWN_KEYS: &[&str] = &[
+        keys::CONFIG_VERSION,
+        keys::ROLE,
+        keys::AUTH_MODE,
+        keys::SUPPORT_ENABLED,
+        keys::DESKTOP_SHARE_ENABLED,
+        keys::LISTEN_ADDRESS,
+        keys::LISTEN_PORT,
+        keys::VIDEO_QUALITY,
+        keys::AUDIO_QUALITY,
+        keys::LOG_LEVEL,
+        keys::SHOW_SETUP_UI,
+    ];
+
     for (key, value) in options {
-        if key.starts_with("direct-ip-") {
+        if OWN_KEYS.contains(&key.as_str()) {
             continue; // handled separately by validate()/apply(), not passed through verbatim
         }
         match value.as_str() {
@@ -435,7 +451,7 @@ pub fn apply(config: &ForkConfig) {
     // in the local UI - that is a second, independent upstream option, `verification-method`
     // (see `libs/hbb_common/src/password_security.rs:42-51`). Without setting this too, the
     // temporary-password display always reflects upstream's leftover/default value regardless of
-    // `direct-ip-auth-mode`, which is why "ask" mode kept showing a password.
+    // `auth-mode`, which is why "ask" mode kept showing a password.
     //
     // For `ApproveMode::Click`, `src/server/connection.rs`'s login gate never calls
     // `has_valid_password()` at all (Click bypasses password checking outright), so forcing
@@ -600,11 +616,11 @@ fn read_config_file() -> Option<Table> {
 }
 
 /// Load `config.toml`, mirror every plain upstream option it contains, then validate and apply
-/// this module's own `direct-ip-*` schema. Must be called once, early in startup
+/// this module's own schema. Must be called once, early in startup
 /// (`src/core_main.rs`, immediately after `crate::load_custom_client()`), before the inbound
 /// listener or any outbound-connect capability is reachable.
 ///
-/// No `direct-ip-*` keys present at all is not an error: the app runs with pure upstream
+/// None of this module's own keys present at all is not an error: the app runs with pure upstream
 /// behavior (no role restriction, upstream's own default authentication) — though any plain
 /// upstream options present are still mirrored. Keys present but invalid are logged loudly and
 /// fall back the same way, never leaving the app in a partial/inconsistent state.
@@ -627,11 +643,11 @@ pub fn load_and_apply() {
     let raw = read_raw_from_table(options);
 
     // Distinguish "nothing configured" (silent, expected fallback) from "configured but
-    // invalid" (loud fallback) using the presence of `direct-ip-role` as the sentinel, since
+    // invalid" (loud fallback) using the presence of `role` as the sentinel, since
     // it's required in every valid configuration.
     if raw.role.is_none() {
         log::warn!(
-            "fork_config: no 'direct-ip-*' options configured in {CONFIG_FILE_NAME}; role \
+            "fork_config: no '*' options configured in {CONFIG_FILE_NAME}; role \
              restriction and authentication-mode mapping will not be applied (upstream default \
              behavior in effect)"
         );
@@ -642,7 +658,7 @@ pub fn load_and_apply() {
         Ok(config) => apply(&config),
         Err(e) => {
             log::error!(
-                "fork_config: invalid direct-ip-* configuration: {e}; falling back to upstream \
+                "fork_config: invalid * configuration: {e}; falling back to upstream \
                  default behavior"
             );
         }
@@ -719,7 +735,7 @@ mod tests {
         assert_eq!(
             validate(raw).unwrap_err(),
             ConfigError::InvalidValue {
-                field: "direct-ip-role",
+                field: "role",
                 value: "sideways".to_owned()
             }
         );
@@ -732,7 +748,7 @@ mod tests {
         assert_eq!(
             validate(raw).unwrap_err(),
             ConfigError::InvalidValue {
-                field: "direct-ip-auth-mode",
+                field: "auth-mode",
                 value: "maybe".to_owned()
             }
         );
@@ -744,7 +760,7 @@ mod tests {
         raw.auth_mode = None;
         assert_eq!(
             validate(raw).unwrap_err(),
-            ConfigError::MissingField("direct-ip-auth-mode")
+            ConfigError::MissingField("auth-mode")
         );
     }
 
@@ -755,7 +771,7 @@ mod tests {
         assert_eq!(
             validate(raw).unwrap_err(),
             ConfigError::InvalidValue {
-                field: "direct-ip-listen-address",
+                field: "listen-address",
                 value: "not-an-ip".to_owned()
             }
         );
@@ -768,7 +784,7 @@ mod tests {
         assert_eq!(
             validate(raw).unwrap_err(),
             ConfigError::InvalidValue {
-                field: "direct-ip-listen-port",
+                field: "listen-port",
                 value: "0".to_owned()
             }
         );
@@ -781,7 +797,7 @@ mod tests {
         assert_eq!(
             validate(bad_video).unwrap_err(),
             ConfigError::InvalidValue {
-                field: "direct-ip-video-quality",
+                field: "video-quality",
                 value: "ultra".to_owned()
             }
         );
@@ -791,7 +807,7 @@ mod tests {
         assert_eq!(
             validate(bad_log).unwrap_err(),
             ConfigError::InvalidValue {
-                field: "direct-ip-log-level",
+                field: "log-level",
                 value: "verbose".to_owned()
             }
         );

@@ -87,7 +87,7 @@ class _ConnectionPageState extends State<ConnectionPage>
 
   @override
   Widget build(BuildContext context) {
-    // Fork config: a "remote" role (direct-ip-role, translated to upstream's own
+    // Fork config: a "remote" role (role, translated to upstream's own
     // conn-type=incoming by src/fork_config.rs) may only ACCEPT inbound sessions - it can never
     // initiate one. The IP field and Support/Desktop buttons below all initiate an outbound
     // connect, so a remote-role instance must not show them at all; showing controls that would
