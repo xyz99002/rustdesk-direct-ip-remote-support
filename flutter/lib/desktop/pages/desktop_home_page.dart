@@ -269,32 +269,36 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             // Fork: shown for both roles now (previously outgoing-only), since removing the
             // ID board (which used to carry its own settings entry point, buildPopupMenu) left
             // the incoming-only/remote case with no general Settings entry point otherwise.
-            Positioned(
-                bottom: 6,
-                left: 12,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: InkWell(
-                    child: Obx(
-                      () => Icon(
-                        Icons.settings,
-                        color: _editHover.value
-                            ? textColor
-                            : Colors.grey.withOpacity(0.5),
-                        size: 22,
+            // Gated on show-setup-ui: previously only the tap *action* checked this (via
+            // openSettings's early return), leaving the icon visibly clickable even when the
+            // config said it shouldn't be reachable at all — the icon itself must disappear too.
+            if (mainGetBoolOptionSync("show-setup-ui"))
+              Positioned(
+                  bottom: 6,
+                  left: 12,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: InkWell(
+                      child: Obx(
+                        () => Icon(
+                          Icons.settings,
+                          color: _editHover.value
+                              ? textColor
+                              : Colors.grey.withOpacity(0.5),
+                          size: 22,
+                        ),
                       ),
+                      onTap: () => {
+                        if (DesktopSettingPage.tabKeys.isNotEmpty)
+                          {
+                            DesktopSettingPage.switch2page(
+                                DesktopSettingPage.tabKeys[0])
+                          }
+                      },
+                      onHover: (value) => _editHover.value = value,
                     ),
-                    onTap: () => {
-                      if (DesktopSettingPage.tabKeys.isNotEmpty)
-                        {
-                          DesktopSettingPage.switch2page(
-                              DesktopSettingPage.tabKeys[0])
-                        }
-                    },
-                    onHover: (value) => _editHover.value = value,
                   ),
-                ),
-              )
+                )
           ],
         ),
       ),
@@ -391,7 +395,11 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                           ),
                           onHover: (value) => refreshHover.value = value,
                         ).marginOnly(right: 8, top: 4),
-                      if (!bind.isDisableSettings())
+                      // Gated on show-setup-ui too, same reason as the gear icon above: only
+                      // gating switch2page's action left this icon visibly clickable even when
+                      // the config said Settings shouldn't be reachable at all.
+                      if (!bind.isDisableSettings() &&
+                          mainGetBoolOptionSync("show-setup-ui"))
                         InkWell(
                           child: Tooltip(
                             message: translate('Change Password'),
@@ -450,12 +458,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
               overflow: TextOverflow.clip,
               style: Theme.of(context).textTheme.bodySmall,
             ),
-          if (isOutgoingOnly)
-            Text(
-              translate("outgoing_only_desk_tip"),
-              overflow: TextOverflow.clip,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+          // Fork: outgoing-only "customized edition" tip suppressed per product decision —
+          // this is a single-purpose client, not a build the user needs reminding about.
         ],
       ),
     );
@@ -500,14 +504,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           await rustDeskWinManager.closeAllSubWindows();
           bind.mainGotoInstall();
         });
-      } else if (bind.mainIsInstalledLowerVersion()) {
-        return buildInstallCard(
-            "Status", "Your installation is lower version.", "Click to upgrade",
-            () async {
-          await rustDeskWinManager.closeAllSubWindows();
-          bind.mainUpdateMe();
-        });
       }
+      // Fork: "installed version is lower, click to upgrade" card suppressed per product
+      // decision — this build isn't distributed/upgraded through rustdesk.com's own channel,
+      // so the prompt doesn't apply and would be confusing.
     } else if (isMacOS) {
       final isOutgoingOnly = bind.isOutgoingOnly();
       if (!(isOutgoingOnly || bind.mainIsCanScreenRecording(prompt: false))) {

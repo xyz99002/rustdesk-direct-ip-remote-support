@@ -91,7 +91,7 @@ class DesktopSettingPage extends StatefulWidget {
 
   /// Fork config: single chokepoint for every "open settings" action in the desktop UI (both
   /// gear icons in desktop_home_page.dart call this). Gated on show-setup-ui so a deployment
-  /// (direct-ip-show-setup-ui in RustDesk2.toml, translated by src/fork_config.rs) can hide the
+  /// (show-setup-ui in config.toml, translated by src/fork_config.rs) can hide the
   /// Settings entry point entirely. option2bool's default branch (value != "N") means an absent
   /// key naturally evaluates to true (shown) with no extra logic needed here — see
   /// docs/GUI_CONFIGURATION_CONTROL.md.

@@ -5,18 +5,18 @@
 # distinct file/name from upstream's own RustDesk2.toml, kept next to the executable rather than
 # the OS-standard per-user config directory (a portable-deployment design decision). Every
 # option in the [options] table below is applied by fork_config.rs on every startup — the
-# direct-ip-* keys via this module's own schema, everything else mirrored verbatim into
+# this module's own schema keys, everything else mirrored verbatim into
 # upstream's real option storage. See docs/CONFIG_REFERENCE.md.
 #
 # "local" means this instance may only INITIATE outbound direct-IP connections; it will never
 # accept an inbound session. Typical use: the machine an operator sits at to reach out to a
 # remote host. The connection page shows a hostname/IP field and Support/Desktop buttons (see
-# direct-ip-support-enabled / direct-ip-desktop-share-enabled below).
+# support-enabled / desktop-share-enabled below).
 #
 # File location: next to rustdesk.exe (or the rustdesk binary on Linux/macOS) — copied here
 # from this sample by the first-run setup dialog, or hand-edited/pre-seeded directly.
 #
-# All direct-ip-* fields below are REQUIRED (except direct-ip-show-setup-ui) — src/fork_config.rs
+# All the schema fields below are REQUIRED (except show-setup-ui) — src/fork_config.rs
 # has no implicit defaults for the others. See docs/CONFIG_REFERENCE.md for the full reference.
 
 rendezvous_server = ""
@@ -27,41 +27,41 @@ trusted_devices = ""
 
 [options]
 # --- Direct-IP fork configuration (src/fork_config.rs) ---
-direct-ip-config-version = "1"
-direct-ip-role = "local"
+config-version = "1"
+role = "local"
 
-# direct-ip-support-enabled: shows/hides the "Support" button, which opens a VIEW_CAMERA session
+# support-enabled: shows/hides the "Support" button, which opens a VIEW_CAMERA session
 #   (a Voice Call rides on it too) to the host/IP typed above. Also gates the REMOTE side's
 #   acceptance of that same request, via the existing upstream "enable-camera" permission — fully
 #   enforced remotely (see docs/CONFIG_FEATURE_VALIDATION.md Section 1).
-# direct-ip-desktop-share-enabled: shows/hides the "Desktop" button, a plain full desktop-share
+# desktop-share-enabled: shows/hides the "Desktop" button, a plain full desktop-share
 #   connect. LOCAL UI HINT ONLY — no remote-side enforcement exists yet (see
 #   docs/CONFIG_FEATURE_VALIDATION.md Section 2).
 # At least one of these two must be true, or the connect panel would have nothing on it.
-direct-ip-support-enabled = "Y"
-direct-ip-desktop-share-enabled = "Y"
+support-enabled = "Y"
+desktop-share-enabled = "Y"
 
 # Optional — defaults to "Y" (shown) if omitted. Set to "N" to hide the Settings entry point
 # entirely (e.g. for an unattended kiosk-style operator machine).
-direct-ip-show-setup-ui = "Y"
+show-setup-ui = "Y"
 
-# direct-ip-auth-mode: how an INBOUND session on THIS machine would be approved, and whether the
+# auth-mode: how an INBOUND session on THIS machine would be approved, and whether the
 #   local temporary password is shown at all. (For a pure "local" role this mostly matters if you
-#   ever flip direct-ip-role to "remote" later using the same file as a starting point.)
+#   ever flip role to "remote" later using the same file as a starting point.)
 #   "ask"              -> Approval is a manual click in the connection-manager popup; no password
 #                          is checked at all, so the temporary password is NOT generated/shown.
 #   "password"         -> Approval requires the temporary password; it IS shown in Settings/the
 #                          tray so it can be read out to the connecting operator.
 #   "ask_and_password" -> Either a manual click OR the temporary password is accepted; the
 #                          temporary password IS shown (upstream's own default behavior).
-direct-ip-auth-mode = "ask"
+auth-mode = "ask"
 
 # Parsed and validated, but NOT YET WIRED to any behavior (see docs/CONFIG_REFERENCE.md).
-direct-ip-listen-address = "0.0.0.0"
-direct-ip-listen-port = "21118"
-direct-ip-video-quality = "medium"
-direct-ip-audio-quality = "medium"
-direct-ip-log-level = "info"
+listen-address = "0.0.0.0"
+listen-port = "21118"
+video-quality = "medium"
+audio-quality = "medium"
+log-level = "info"
 
 # --- Every upstream option shown on the Settings screen (Settings > Safety), so all of it can be
 #     set here up front instead of clicked through by hand. Each comment names the exact Settings
@@ -78,7 +78,7 @@ enable-remote-printer = "Y"             # "Enable remote printer" (Windows only)
 enable-clipboard = "Y"                  # "Enable clipboard"
 enable-file-transfer = "Y"              # "Enable file transfer"
 enable-audio = "Y"                      # "Enable audio"
-# enable-camera: see direct-ip-support-enabled above — do not set here, it is overwritten.
+# enable-camera: see support-enabled above — do not set here, it is overwritten.
 enable-terminal = "N"                   # "Enable terminal"
 enable-tunnel = "N"                     # "Enable TCP tunneling"
 enable-remote-restart = "N"             # "Enable remote restart"
@@ -87,7 +87,7 @@ enable-block-input = "N"                # "Enable blocking user input" (Windows 
 enable-privacy-mode = "N"               # "Enable privacy mode" (only shown if the platform supports it)
 allow-remote-config-modification = "N"  # "Enable remote configuration modification"
 
-# Settings > Safety > Password (approve-mode/verification-method come from direct-ip-auth-mode
+# Settings > Safety > Password (approve-mode/verification-method come from auth-mode
 # above and must not be set directly here — these two are independent of that mode):
 temporary-password-length = "6"         # "One-time password length": "6", "8", or "10"
 allow-numeric-one-time-password = "N"   # "Numeric one-time password"
@@ -95,7 +95,7 @@ allow-numeric-one-time-password = "N"   # "Numeric one-time password"
 # Settings > Safety > Security
 # enable-lan-discovery: forced "N" unconditionally by this fork (ADR-0003) — do not set here.
 direct-server = "N"                     # "Enable direct IP access" (a second, upstream listening mode;
-                                         #   distinct from this fork's own direct-ip-listen-* fields above)
+                                         #   distinct from this fork's own listen-* fields above)
 direct-access-port = "21118"            # "Port" shown under "Enable direct IP access" when it is on
 whitelist = ""                          # Comma-separated CIDR allow-list, e.g. "192.168.1.0/24"
 allow-auto-disconnect = "N"             # "Automatically disconnect on idle" checkbox
@@ -111,7 +111,7 @@ allow-auto-record-outgoing = "N"        # "Automatically record outgoing session
 
 # --- Resulting upstream options (written by fork_config.rs::apply() at every startup;
 #     shown here for reference only — do not hand-edit these, they will be overwritten) ---
-# approve-mode = "click"             # <- from direct-ip-auth-mode
-# verification-method = "use-permanent-password"  # <- from direct-ip-auth-mode (hides temp password for "ask")
-# enable-camera = "Y"                # <- from direct-ip-support-enabled
+# approve-mode = "click"             # <- from auth-mode
+# verification-method = "use-permanent-password"  # <- from auth-mode (hides temp password for "ask")
+# enable-camera = "Y"                # <- from support-enabled
 # enable-lan-discovery = "N"         # <- unconditional, ADR-0003
