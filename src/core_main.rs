@@ -154,16 +154,11 @@ fn show_setup_choice_dialog() -> Option<String> {
     }
 }
 
-/// shared by flutter and sciter main function
-///
-/// [Note]
-/// If it returns [`None`], then the process will terminate, and flutter gui will not be started.
-/// If it returns [`Some`], then the process will continue, and flutter gui will be started.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 /// Computes the same per-process log file name that the arg-parsing loop further down derives
 /// (portable-service / first `--xxx` flag / default), but from raw args so it can run before
 /// that loop exists — needed so the logger can be initialized early enough to capture
 /// fork_config's own diagnostics (see the early `init_log` call in `core_main`).
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn early_log_name() -> String {
     let excluded = ["--elevate", "--run-as-system", "--quick_support", "--no-server"];
     let filtered: Vec<String> = std::env::args()
@@ -187,6 +182,12 @@ fn early_log_name() -> String {
     String::new()
 }
 
+/// shared by flutter and sciter main function
+///
+/// [Note]
+/// If it returns [`None`], then the process will terminate, and flutter gui will not be started.
+/// If it returns [`Some`], then the process will continue, and flutter gui will be started.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn core_main() -> Option<Vec<String>> {
     if !crate::common::global_init() {
         return None;
