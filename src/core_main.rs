@@ -384,7 +384,18 @@ pub fn core_main() -> Option<Vec<String>> {
             crate::platform::try_remove_temp_update_files();
             hbb_common::config::PeerConfig::preload_peers();
         }
-        std::thread::spawn(move || crate::start_server(false, no_server));
+        // Fork config: a role=local (outgoing-only) instance never accepts inbound connections,
+        // never needs the connection-manager approval flow, and (per ADR-0003) has no
+        // rendezvous/relay server to register an ID with — so the background "server" component
+        // (which normally runs as a thread here, talked to over local IPC purely for code
+        // uniformity with a genuinely-separate installed-service process) has nothing left to do
+        // for this role. Skipping it removes this fork's local IPC channel entirely for role=local,
+        // so the class of bug where that channel gets silently answered by an unrelated process
+        // (see docs/DECISIONS.md "App Identity") is structurally impossible for Local deployments,
+        // not just fixed for the one pipe-name collision already found.
+        if !config::is_outgoing_only() {
+            std::thread::spawn(move || crate::start_server(false, no_server));
+        }
     } else {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         // Root CLI management commands must talk to the user `--server` main IPC.

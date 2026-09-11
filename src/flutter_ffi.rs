@@ -1157,7 +1157,12 @@ pub fn main_get_connect_status() -> String {
 
 pub fn main_check_connect_status() {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    start_option_status_sync(); // avoid multi calls
+    // Fork config: a role=local (outgoing-only) instance has no background server thread to
+    // sync options/status with (see core_main.rs's role-gated start_server() spawn) - starting
+    // this polling loop anyway would just be a permanently-failing IPC connection attempt.
+    if !config::is_outgoing_only() {
+        start_option_status_sync(); // avoid multi calls
+    }
 }
 
 pub fn main_is_using_public_server() -> bool {

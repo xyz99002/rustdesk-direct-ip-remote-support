@@ -3,6 +3,13 @@
 # Purpose
 This document describes how to upgrade the Direct-IP RustDesk fork to a newer upstream RustDesk release while preserving the fork behavior.
 
+**In-progress work not yet reflected below as closed out**: `docs/PLAN-install-separator.md` (draft
+as of 2026-09-11) — extends the "App Identity" hook point below to the Windows MSI installer,
+Linux, macOS, and Android packaging, plus removing this fork's Local-mode dependency on the local
+IPC/service channel entirely. Check that plan's status before assuming full identity separation
+from a real RustDesk install is complete on any platform other than "the Rust runtime value on
+Windows," which is the only piece shipped so far.
+
 ## Current Baseline
 - RustDesk Version: 1.4.9
 - Commit: 6c578292e
@@ -33,10 +40,24 @@ Verify:
 - password
 - both/default
 
-Mappings:
+Mappings (`approve-mode`):
 - ask -> click
 - password -> password
-- ask_and_password -> both/default
+- ask_and_password -> both/default (empty string, falls through to upstream's own default)
+
+**Second, independent mapping (added in `28518a326`, not to be confused with the above)**:
+`auth-mode` also drives upstream's `verification-method` option — this controls whether a
+temporary password is *generated/displayed* at all, separately from `approve-mode` controlling
+*how* a connection is approved. Without this second mapping, the temporary-password display
+reflects whatever upstream's leftover/default value happens to be, regardless of `auth-mode` —
+this is exactly what caused a real reported bug ("ask mode still shows a password"). Mappings:
+- ask -> `use-permanent-password` (approval is a manual click; no password is ever checked, so hide it)
+- password -> `use-temporary-password` (approval requires the temporary password; show it)
+- ask_and_password -> empty string (keep upstream's own default, temporary password shown)
+
+Both mappings live together in `fork_config.rs::apply()`; a future upstream change to either
+`approve-mode` or `verification-method`'s semantics (`libs/hbb_common/src/password_security.rs`)
+must be re-verified against **both** mappings, not just one.
 
 ### Local Client
 Verify outbound-only behavior still works.
@@ -55,12 +76,69 @@ Verify:
 - No server-side audio/media code was touched by this fork — confirm that remains true after the upgrade (see `docs/HOOK_POINTS.md` "Connection Workflow" section; all withdrawn rows should stay withdrawn unless a future investigation proves them necessary again).
 - **Known gap, re-verify it's still a gap:** confirm no existing upstream permission has been added to reject `DEFAULT_CONN` outright — if one has, it may be worth revisiting whether `desktop_share_enabled` can now be enforced remotely too (currently local-UI-only, documented in `docs/FORK_PROFILE_SPEC.md`).
 
-### Minimal UI (implemented 2026-08-29)
+### Minimal UI (implemented 2026-08-29; revised 2026-09-11 — see below)
 Verify:
 - `flutter/lib/desktop/pages/connection_page.dart` still has no peer list, autocomplete, ID-lookup, or public-server messaging after merging a new upstream release — this file was fully rewritten, so a naive merge/patch is the most likely thing to silently resurrect removed UI.
-- `DesktopSettingPage.tabKeys` (`flutter/lib/desktop/pages/desktop_setting_page.dart`) still conditionally excludes `account`/`network` based on `is_disable_account()`/`kOptionHideNetworkSetting`, and `HARD_SETTINGS`/`BUILTIN_SETTINGS` are still plain `pub static` maps `fork_config.rs::apply()` can write directly.
-- `flutter/lib/desktop/pages/desktop_home_page.dart`'s remote status pane still has no ID board, still shows password management (`buildPasswordBoard2`) and connection status (`_ConnectionStatusWidget`), and the Settings gear icon is still shown for both roles (not just `isOutgoingOnly`).
+- `DesktopSettingPage.tabKeys` (`flutter/lib/desktop/pages/desktop_setting_page.dart`) still conditionally excludes `account` based on `is_disable_account()`, and `HARD_SETTINGS`/`BUILTIN_SETTINGS` are still plain `pub static` maps `fork_config.rs::apply()` can write directly.
+  - **Revised 2026-09-11**: the Network tab is **no longer excluded**. Only two rows *within* it are hidden — `BUILTIN_SETTINGS["hide-server-settings"]`/`["hide-websocket-settings"]`, set unconditionally in `fork_config.rs::apply()` — because Network also holds Proxy/TLS/UDP options this fork still uses. `kOptionHideNetworkSetting`/`hide-network-settings` (whole-tab hide) is no longer used anywhere in this fork. If a future upstream release renames/restructures `desktop_setting_page.dart`'s `network()` builder or the `hide-server-settings`/`hide-websocket-settings` `kOption*` constants, re-verify these two rows are still the ones hidden, not the whole tab.
+- `flutter/lib/desktop/pages/desktop_home_page.dart`'s remote status pane still has no ID board, still shows password management (`buildPasswordBoard2`) and connection status (`_ConnectionStatusWidget`).
+  - **Revised 2026-09-11**: the Settings gear icon and the "Change Password" pencil icon are each now additionally gated on `mainGetBoolOptionSync("show-setup-ui")` (in addition to `!bind.isDisableSettings()` for the pencil icon) — added because `DesktopSettingPage.switch2page()` already gated the *action* on `show-setup-ui`, but nothing previously gated the *visibility* of the two icons that call it, so they stayed clickable-but-broken when `show-setup-ui = "N"`. A future upstream change to either icon's surrounding widget must preserve this visibility gate, not just the click-through gate in `switch2page()`.
 - `server_page.dart`'s `ConnectionManager`/`_CmHeader`/`_PrivilegeBoard` (connection manager, Voice Call accept/reject) remain untouched — this phase deliberately did not modify them.
+
+### App Identity (implemented 2026-09-10/11, see `docs/DECISIONS.md` "App Identity")
+Verify:
+- `src/core_main.rs::core_main()` still sets `hbb_common::config::APP_NAME` to a fork-distinct
+  value (currently `"RustDesk-DirectIP-RemoteSupport"`) as the *first* thing it does — before
+  `load_custom_client()`, before `hbb_common::init_log()`, before `fork_config::config_exists()`/
+  `load_and_apply()`. This one value drives the Windows IPC pipe name
+  (`\\.\pipe\{APP_NAME}\query`), the `%APPDATA%\{APP_NAME}\` storage directory (peers/options/
+  logs), the window title/taskbar text, and (via the in-app "Install" flow's existing
+  `rename_exe_cmd()`/`get_default_install_path()`/`get_subkey()` helpers, all already keyed off
+  `crate::get_app_name()`) the install path, Windows Service name, and renamed installed exe when
+  a user clicks "Install" from the portable build.
+- **Why this exists**: without it, this fork's `APP_NAME` defaulted to the literal string
+  `"RustDesk"` — identical to a real RustDesk install. A machine with real RustDesk already
+  installed (its background `--service`/`--server` process running) caused this fork's GUI to
+  connect, over the shared-by-name IPC pipe, to that *other* process instead of its own,
+  silently serving stale/foreign option values and making `config.toml` changes appear to have
+  no effect. See `docs/DECISIONS.md` for the full incident.
+- **Known remaining gap, not yet closed**: the separately-built Windows **MSI installer**
+  (`res/msi/`) does *not* read this Rust constant at all — it has its own independent identity
+  (WiX `$(var.Product)`, driven by `preprocess.py --app-name`, defaulting to `"RustDesk"`), so an
+  MSI-installed copy of this fork still fully collides with a real RustDesk MSI (same install
+  folder, same `UpgradeCode`, same Windows Service name) as of this writing. Tracked in
+  `docs/PLAN-install-separator.md` (draft, not yet implemented) — check that plan's status before
+  assuming this gap is closed in a later version of this guide.
+- A future upstream change to `ui_interface.rs`'s `OPTIONS` cache/`ipc::connect()` pipe-path
+  construction, or to `hbb_common::config::Config::path()`/`ipc_path()`'s use of `APP_NAME`, should
+  be re-checked against this hook — the fix depends on `APP_NAME` still being the single source of
+  truth for both.
+
+### No Server/IPC for Local Mode (implemented 2026-09-11, `docs/PLAN-install-separator.md` Phase 2)
+Verify:
+- `core_main.rs`'s `std::thread::spawn(move || crate::start_server(false, no_server))` (in the
+  no-args GUI-launch branch) is still gated behind `!config::is_outgoing_only()` — a `role=local`
+  instance should never spawn the background "server" thread at all.
+- `flutter_ffi.rs::main_check_connect_status()` still skips calling `start_option_status_sync()`
+  when `config::is_outgoing_only()` — this is the function `main.dart` calls unconditionally at
+  startup (`bind.mainCheckConnectStatus()`) that would otherwise force the `SENDER` lazy-static
+  (and therefore the whole GUI↔server IPC polling loop) to initialize even with nothing on the
+  other end.
+- `tray.rs`'s `start_query_session_count` spawn is still gated the same way.
+- **Why this exists**: this is not just cosmetic — it's what makes the App Identity incident above
+  structurally impossible to repeat for Local deployments, rather than merely fixed for the one
+  pipe-name collision already found. A `role=local` instance now has no local IPC channel to be
+  hijacked by an unrelated process at all, regardless of pipe naming.
+- **Upgrade check**: if a future upstream release changes `ui_interface.rs`'s `get_option`/
+  `set_option`/`set_options` to depend on IPC succeeding (they currently write through to
+  `Config`/the in-process `OPTIONS` cache directly, with IPC as a best-effort side channel — see
+  `ipc.rs:1767`), re-verify Settings changes still persist correctly in Local mode with the server
+  thread never started. This hook was deliberately implemented *without* adding a direct-`Config`-
+  access branch (unlike the Android/iOS pattern) specifically because that write-through already
+  existed — confirm it still does after any upstream change to that code path.
+- Not yet extended to `SENDER`'s other touchpoints (e.g. `check_mouse_time()`) — confirmed
+  unreachable for `role=local` in practice (inbound-session-only call paths); re-verify this
+  assumption if a future upstream release starts calling those from an outgoing-only code path.
 
 ### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
 Verify:
@@ -73,7 +151,42 @@ Verify:
 
 ## Newly Discovered Upgrade Risks (found during Phase 3 implementation)
 
-- **Startup call-order dependency.** The fork's config loader hooks in at `src/core_main.rs:35`, immediately after the existing `crate::load_custom_client();` call inside `pub fn core_main()`, and relies on running before argument parsing and before the inbound-listener/outbound-connect decision. If a future upstream release reorders `core_main()` — e.g. moves argument parsing or server-spawn logic earlier — the fork's role/auth mapping could apply too late (after the listener already started, or after an outbound connect was already permitted). **Upgrade check:** confirm `load_custom_client()` (or its replacement) still runs before all branching in `core_main()`, and re-anchor the fork hook to the same relative position.
+- **Startup call-order dependency (revised 2026-09-11 — line numbers below now current).** Inside
+  `pub fn core_main()` (`src/core_main.rs:191`), the order is now: `global_init()` →
+  `hbb_common::config::APP_NAME` set (`src/core_main.rs:207`, see "App Identity" hook point above)
+  → `load_custom_client()` (`:208`) → `hbb_common::init_log()` (`:214`, moved here specifically so
+  `fork_config`'s own `log::info!`/`log::warn!` calls are actually captured — see next bullet) →
+  `fork_config::config_exists()` (`:220`) → `fork_config::load_and_apply()` (`:230`). All of this
+  relies on running before argument parsing and before the inbound-listener/outbound-connect
+  decision. If a future upstream release reorders `core_main()` — e.g. moves argument parsing or
+  server-spawn logic earlier — the fork's role/auth mapping could apply too late (after the
+  listener already started, or after an outbound connect was already permitted), and/or the
+  `APP_NAME` fix could end up set too late to prevent the IPC-pipe collision it exists to fix.
+  **Upgrade check:** confirm all five of the above still run, in this relative order, before any
+  branching in `core_main()`, and re-anchor the fork hooks to the same relative position rather
+  than trusting the line numbers above (they will drift on every upstream merge).
+- **`init_log()`/`fork_config` logging order (added 2026-09-11).** The `log` crate is a no-op sink
+  until a logger backend is installed, and `hbb_common::init_log()`'s internal `static INIT: Once`
+  guard means only the *first* call per process takes effect. Before this fix, `init_log()` was
+  called later in `core_main()` (after the arg-parsing loop, for per-process log-file naming —
+  `--server`/`--tray`/`--elevate` etc. each get their own log file), which meant every
+  `log::info!`/`log::warn!` call inside `fork_config::load_and_apply()` — including its one
+  diagnostic summary line (`fork_config: applied role=... auth_mode=... ...`) — was silently
+  discarded. Fixed by extracting the per-process log-name computation into a standalone
+  `early_log_name()` helper (`src/core_main.rs:162`) that runs, and calls `init_log()`, before
+  `fork_config::load_and_apply()`. **Upgrade check:** if a future upstream release changes how
+  `init_log()`'s `Once` guard works, or restructures the per-process log-naming logic this helper
+  duplicates, re-verify `fork_config:`-prefixed log lines still appear in the log file for every
+  process kind (`--server`, `--tray`, plain GUI launch, etc.), not just the ones that happen to
+  call `init_log()` a second time harmlessly.
+- **Temporary diagnostic logging in `main_get_option_sync` (added 2026-09-10, not yet removed).**
+  `src/flutter_ffi.rs`'s `main_get_option_sync()` currently logs every GUI read of
+  `desktop-share-enabled`, `show-setup-ui`, and `enable-camera` (`fork_config: GUI read option
+  '{key}' = '{v}'`), added to diagnose the IPC/`OPTIONS`-cache collision described in the "App
+  Identity" hook point above. The code comment marks it "Remove once confirmed." **Upgrade check /
+  cleanup reminder:** decide whether to remove this before treating the App Identity fix as fully
+  closed out — if kept, a future upstream change to `main_get_option_sync`'s signature or the
+  `get_option()` it wraps needs to preserve this logging, not silently drop it on merge.
 - **Mobile entry path not covered.** `core_main()` is `#[cfg(not(any(target_os = "android", target_os = "ios")))]` (`src/core_main.rs:30`) — the fork's hook does not run on Android/iOS. Not a regression today (desktop-only scope), but if a future upstream upgrade is paired with adding mobile support to this fork, a second hook point in the mobile entry path (not yet identified) would be required.
 - **`set_option` persists, not just overrides in-memory.** `Config::set_option` (`libs/hbb_common/src/config.rs:1259-1274`) writes through to `config2.toml` via `CONFIG2.write()...store()`. A future upstream change to `is_option_can_save`/`OVERWRITE_SETTINGS`/`DEFAULT_SETTINGS` semantics (`config.rs` — the gating logic around line 1260) could silently turn the fork's `set_option("approve-mode", ...)` call into a no-op if `approve-mode` becomes a hard-overwritten setting upstream. **Upgrade check:** verify a fork-set `approve-mode` value actually persists and is read back after restart, not just accepted without error.
 - **`toml` crate version must track `hbb_common`'s.** The fork's `Cargo.toml` pins `toml = "0.7"` to match `libs/hbb_common/Cargo.toml:43` exactly (reusing the version already resolved in the workspace, no new dependency). If a future upstream release bumps `hbb_common`'s `toml` version, the fork's `Cargo.toml` must be bumped to match, or Cargo will resolve two versions in the lockfile.
@@ -104,8 +217,16 @@ A clean `cargo build`/`cargo test` of the full `rustdesk` binary on this Windows
 - Remote rejects `VIEW_CAMERA`/Voice Call when `support_enabled = false` (via `enable-camera`).
 - Local connect screen shows only a hostname/IP field and the applicable Support/Desktop button(s) — no peer list, no ID field, no public-server prompt.
 - Remote status pane shows no RustDesk ID, but does show the one-time password board and connection status.
-- Settings page has no Account or Network tab, on both local and remote builds.
+- Settings page has no Account tab, on both local and remote builds. **Revised 2026-09-10**: the
+  Network tab is intentionally *visible* (not removed) — verify instead that only its "ID/Relay
+  Server" and "Use WebSocket" rows are hidden, while Proxy/TLS-fallback/Disable-UDP remain.
+- Settings gear icon and "Change Password" pencil icon (`desktop_home_page.dart`) are hidden
+  entirely, not just non-functional, when `show-setup-ui = "N"`.
 - Connection-manager accept/reject dialogs (including Voice Call's) still appear and function normally.
+- Local mode: no background server thread/IPC polling loop starts (nothing to observe directly in
+  the UI, but Settings changes still persist across restart, outgoing connect still works, tray
+  icon behaves normally, About tab fingerprint field is blank — accepted, not a bug).
+- Remote mode: unaffected by the above — server thread and IPC still start normally.
 
 ## Build Environment Verification (added 2026-08-29)
 
@@ -151,7 +272,16 @@ A clean `cargo build`/`cargo test` of the full `rustdesk` binary on this Windows
 **After successful builds, prepare release artifacts:**
 
 1. **Ensure the `configs/*.toml` samples are up-to-date** (see `docs/PACKAGING_PLAN.md`).
-   - Verify the `direct-ip-*` key set matches `src/fork_config.rs`'s `ForkConfig` struct.
+   - Verify the schema key set (`role`, `auth-mode`, `support-enabled`, `desktop-share-enabled`,
+     `listen-address`, `listen-port`, `video-quality`, `audio-quality`, `log-level`,
+     `show-setup-ui`, `config-version`) matches `src/fork_config.rs`'s `keys` module and
+     `ForkConfig` struct. **Revised 2026-09-10**: these keys no longer carry a `direct-ip-`
+     prefix — it was removed from every fork-owned schema key across `src/fork_config.rs`,
+     `configs/*.toml`, and related Dart comments. The two keys that look similar but are
+     deliberately *not* part of this schema and were *not* renamed — `direct-server` /
+     `direct-access-port` — are genuine, unrelated upstream RustDesk option keys (upstream's own
+     "Enable direct IP access" feature); do not confuse the two or rename those if a future
+     upgrade revisits this area.
    - Provide both local and remote examples (`configs/local.toml`/`remote.toml`).
 
 2. **Build platform-specific installers/packages** (see `docs/PACKAGING_PLAN.md` for detailed steps):
