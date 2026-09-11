@@ -192,6 +192,19 @@ pub fn core_main() -> Option<Vec<String>> {
     if !crate::common::global_init() {
         return None;
     }
+
+    // Give this fork its own identity, distinct from a real RustDesk install on the same
+    // machine — upstream derives the IPC pipe name (`\\.\pipe\{APP_NAME}\query` on Windows),
+    // the %APPDATA%\{APP_NAME}\ config/peer/log storage directory, and the custom URL scheme
+    // prefix all from this one value, which otherwise defaults to the literal string
+    // "RustDesk". Left unchanged, a machine with a real RustDesk already installed would have
+    // this fork's GUI silently connect to that *other* install's already-running --server/
+    // service process over IPC (same pipe name) instead of its own, serving stale/foreign
+    // option values — see docs/DECISIONS.md for the incident this fixes. Set before anything
+    // (logging, IPC, config storage) that depends on it. `load_custom_client()` below could
+    // overwrite this with a build's own signed white-label identity, which is fine — that's a
+    // more specific choice than this fork-wide default.
+    *hbb_common::config::APP_NAME.write().unwrap() = "RustDesk-DirectIP-RemoteSupport".to_owned();
     crate::load_custom_client();
 
     // Initialized here (rather than down with the arg-parsing loop) so fork_config's own
