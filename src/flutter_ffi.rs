@@ -958,7 +958,16 @@ pub fn main_get_option(key: String) -> String {
 }
 
 pub fn main_get_option_sync(key: String) -> SyncReturn<String> {
-    SyncReturn(get_option(key))
+    let v = get_option(key.clone());
+    // Temporary diagnostic: pin down whether the GUI's cached OPTIONS map actually reflects
+    // fork_config's applied values by the time the UI reads them. Remove once confirmed.
+    if matches!(
+        key.as_str(),
+        "desktop-share-enabled" | "show-setup-ui" | "enable-camera"
+    ) {
+        log::info!("fork_config: GUI read option '{key}' = '{v}'");
+    }
+    SyncReturn(v)
 }
 
 pub fn main_get_error() -> String {
