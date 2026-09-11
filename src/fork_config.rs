@@ -48,12 +48,15 @@
 //! overwritten back to whatever `config.toml` says on the next restart. For a centrally
 //! configured deployment tool this is the intended behavior (the file wins), not a bug.
 //!
-//! Minimal UI (unconditional, not config-driven): `HARD_SETTINGS["disable-account"]` and
-//! `BUILTIN_SETTINGS["hide-network-settings"]` are set so the Flutter UI's own existing
-//! conditionals (`DesktopSettingPage.tabKeys` in
-//! `flutter/lib/desktop/pages/desktop_setting_page.dart`) hide the Account and Network
-//! (relay/rendezvous server address) settings tabs — reusing upstream's own custom-client hiding
-//! mechanism. Direct-IP enforcement (also unconditional): `Config::set_option("enable-lan-discovery", "N")`
+//! Minimal UI (unconditional, not config-driven): `HARD_SETTINGS["disable-account"]` hides the
+//! whole Account tab (it's entirely about the upstream ID/relay-server login, irrelevant here).
+//! The Network tab itself stays visible — it also holds Proxy/TLS/UDP options this fork still
+//! uses — but `BUILTIN_SETTINGS["hide-server-settings"]`/`["hide-websocket-settings"]` hide just
+//! the two rows (ID/Relay Server, Use WebSocket) that are specifically about the upstream
+//! rendezvous/relay server. All reuse upstream's own existing per-row/per-tab hiding mechanism
+//! (`DesktopSettingPage.tabKeys` and the `network()` builder in
+//! `flutter/lib/desktop/pages/desktop_setting_page.dart`). Direct-IP enforcement (also
+//! unconditional): `Config::set_option("enable-lan-discovery", "N")`
 //! closes the LAN-broadcast public-ID exposure path in `src/lan.rs`. See
 //! `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md`.
 //!
@@ -499,17 +502,20 @@ pub fn apply(config: &ForkConfig) {
     );
 
     // Minimal UI (unconditional — a permanent product decision per docs/FORK_PROFILE_SPEC.md,
-    // not a runtime toggle): hide the Account and Network (relay/rendezvous server address)
-    // settings tabs by reusing the exact mechanism upstream already provides for any
-    // custom-client build.
+    // not a runtime toggle): the Account tab is entirely about the upstream ID/relay-server
+    // login, which has no meaning for a direct-IP-only fork, so the whole tab is hidden.
     HARD_SETTINGS
         .write()
         .unwrap()
         .insert("disable-account".to_owned(), "Y".to_owned());
-    BUILTIN_SETTINGS
-        .write()
-        .unwrap()
-        .insert("hide-network-settings".to_owned(), "Y".to_owned());
+    // The Network tab, however, stays visible — it also holds Proxy/TLS/UDP options that are
+    // still relevant to a direct-IP connection. Only the two rows that are specifically about
+    // the upstream ID/relay/rendezvous server (which this fork never uses) are hidden.
+    {
+        let mut builtin = BUILTIN_SETTINGS.write().unwrap();
+        builtin.insert("hide-server-settings".to_owned(), "Y".to_owned());
+        builtin.insert("hide-websocket-settings".to_owned(), "Y".to_owned());
+    }
 
     // Direct-IP enforcement (unconditional — see docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md).
     Config::set_option("enable-lan-discovery".to_owned(), "N".to_owned());
@@ -1022,7 +1028,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_hides_account_network_and_lan_discovery_unconditionally() {
+    fn apply_hides_account_server_websocket_and_lan_discovery_unconditionally() {
         let _guard = GlobalStateGuard::new();
 
         for role in ["local", "remote"] {
@@ -1043,7 +1049,14 @@ mod tests {
                             BUILTIN_SETTINGS
                                 .read()
                                 .unwrap()
-                                .get("hide-network-settings"),
+                                .get("hide-server-settings"),
+                            Some(&"Y".to_owned())
+                        );
+                        assert_eq!(
+                            BUILTIN_SETTINGS
+                                .read()
+                                .unwrap()
+                                .get("hide-websocket-settings"),
                             Some(&"Y".to_owned())
                         );
                         assert_eq!(Config::get_option("enable-lan-discovery"), "N");
