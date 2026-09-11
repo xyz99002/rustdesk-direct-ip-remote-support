@@ -378,12 +378,21 @@ jobs:
         # both x64 and ARM64 platform configs; WcaUtil/DUtil ship arm64 libs. msbuild platform
         # is x64 / ARM64; the produced Package.msi is globbed since its bin/<platform>/ dir varies.
         if: env.UPLOAD_ARTIFACT == 'true'
+        env:
+          # Must match src/core_main.rs's hbb_common::config::APP_NAME (see docs/DECISIONS.md
+          # "App Identity"). preprocess.py requires the dist dir's exe to literally be named
+          # "<app-name>.exe" (it shells out to it for --version/--build-date and bakes the name
+          # into ProductName/UpgradeCode/install dir/registry root), so it's renamed below before
+          # preprocess.py runs. Without this, the MSI installs as "RustDesk" into
+          # C:\Program Files\RustDesk, colliding with a real RustDesk MSI on the same machine.
+          MSI_APP_NAME: RustDesk-DirectIP-RemoteSupport
         run: |
+          Rename-Item -Path "./rustdesk/rustdesk.exe" -NewName "$env:MSI_APP_NAME.exe"
           pushd ./res/msi
           # Pass the base version explicitly: `rustdesk --version` now prints the extended
           # direct-ip version string, which is not a valid MSI numeric version, and running
           # the exe from CI is what previously caused first-run dialog hangs.
-          python preprocess.py --arp -d ../../rustdesk -v ${{ env.VERSION }}
+          python preprocess.py --arp -d ../../rustdesk -v ${{ env.VERSION }} --app-name $env:MSI_APP_NAME
           # PowerShell does not fail a step on a plain executable's exit code by itself; without
           # this check, a preprocess.py failure (e.g. it couldn't read --build-date from the just
           # -built exe) silently falls through into msbuild against unfilled WiX preprocessor
