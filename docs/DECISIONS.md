@@ -65,6 +65,28 @@ This is a product-goal change (customer-support-focused derivative): keep as clo
 - Inbound only
 - Cannot initiate outbound sessions
 
+## App Identity (Distinct From Upstream RustDesk)
+
+**Status: implemented 2026-09-11.** `src/core_main.rs::core_main()` sets `hbb_common::config::APP_NAME`
+to `"RustDesk-DirectIP-RemoteSupport"` unconditionally, before anything that derives a path or IPC
+endpoint from it. Left at upstream's default (`"RustDesk"`), this fork is indistinguishable — on
+Windows in particular — from a genuinely installed RustDesk on the same machine: both would use the
+identical `\\.\pipe\RustDesk\query` IPC pipe name and the identical `%APPDATA%\RustDesk\` storage
+directory (`RustDesk2.toml`, peers, logs).
+
+This caused a real incident: with a real RustDesk already installed (its background `--service`/
+`--server` process running), this fork's GUI process connected over IPC to *that* process instead of
+its own — the GUI's option cache (`ui_interface::OPTIONS`) got silently overwritten with the other
+process's stale/foreign values, making `desktop-share-enabled`/`show-setup-ui`/etc. appear to have no
+effect despite `fork_config.rs` correctly applying them. Uninstalling the real RustDesk made the
+symptom disappear, which is what pointed at the shared identity as the cause.
+
+Giving the fork its own `APP_NAME` fixes the IPC pipe collision and the config-directory collision as
+one change, since both are derived from it. It also causes upstream's own translation layer
+(`src/lang.rs`'s `is_rustdesk()` check) to substitute the fork's name for "RustDesk" in every
+translated UI string, and changes the window title/taskbar text to match — an accepted, visible
+side effect, not a bug.
+
 ## Upstream Base
 
 RustDesk 1.4.9
