@@ -119,10 +119,16 @@ fn make_tray() -> hbb_common::ResultType<()> {
         }
     };
 
+    // Fork config: the session count this tracks is purely an inbound-connections tooltip
+    // (see docs/PLAN-install-separator.md Phase 2) - meaningless, and best-effort-only anyway,
+    // for a role=local (outgoing-only) instance, which never has a background server thread to
+    // ask about this over IPC.
     #[cfg(windows)]
-    std::thread::spawn(move || {
-        start_query_session_count(ipc_sender.clone());
-    });
+    if !hbb_common::config::is_outgoing_only() {
+        std::thread::spawn(move || {
+            start_query_session_count(ipc_sender.clone());
+        });
+    }
     #[cfg(windows)]
     let mut last_click = std::time::Instant::now();
     #[cfg(target_os = "macos")]
