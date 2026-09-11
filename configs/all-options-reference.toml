@@ -133,8 +133,8 @@ allow-auto-record-incoming = "N"
 allow-auto-record-outgoing = "N"
 
 # --- UI visibility (custom-client mechanism this fork already uses for disable-account /
-#     hide-network-settings, which live in HARD_SETTINGS/BUILTIN_SETTINGS, not here — listed
-#     for completeness) ---
+#     hide-server-settings / hide-websocket-settings, which live in HARD_SETTINGS/
+#     BUILTIN_SETTINGS, not here — listed for completeness) ---
 hide-security-settings = "N"
 hide-server-settings = "N"
 hide-proxy-settings = "N"
