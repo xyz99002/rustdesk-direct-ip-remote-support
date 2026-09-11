@@ -112,33 +112,47 @@ assumed: reuse `configs/local.toml` / `configs/remote.toml` verbatim.
 
 #### 1d. CI workflow changes (`.github/workflows/flutter-build.yml`)
 
-The "Build msi" step currently runs `preprocess.py` + `msbuild` once per architecture. This needs
-to become two passes per architecture (Local, then Remote), with a reset of the WiX template
-files in between — **necessary detail found during investigation**: `preprocess.py` edits
-`Package/Includes.wxi` and `Package/Components/RustDesk.wxs` **in place**, inserting generated
-content after a marker comment without clearing prior content
+**Status: IMPLEMENTED 2026-09-11** (not yet CI-verified or manually tested — see Risk below).
+
+The "Build msi" step now loops over two variants (Local, Remote) per architecture, with a reset of
+the WiX template files between passes — **necessary detail found during investigation**:
+`preprocess.py` edits `Package/Includes.wxi` and `Package/Components/RustDesk.wxs` **in place**,
+inserting generated content after a marker comment without clearing prior content
 ([preprocess.py:430-439](../res/msi/preprocess.py:430)). Running it twice back-to-back without a
-reset would duplicate every file component and break the WiX build. So each pass is:
+reset would duplicate every file component and break the WiX build. Each pass, driven by a
+PowerShell `foreach` over a small variant array:
 
 ```
 1. git checkout -- res/msi/Package        # reset WiX templates from any prior pass
-2. copy configs/<local|remote>.toml -> <dist-dir>/config.toml
-3. Rename-Item <dist-dir>/rustdesk.exe -> <dist-dir>/<AppName>.exe
-4. python preprocess.py --arp -d <dist-dir> -v <version> --app-name <AppName> [--conn-type outgoing]
+2. Copy-Item configs/<local|remote>.toml ./rustdesk/config.toml
+3. Rename-Item ./rustdesk/rustdesk.exe -> ./rustdesk/<AppName>.exe
+4. pushd res/msi; python preprocess.py --arp -d ../../rustdesk -v <version> --app-name <AppName> [--conn-type outgoing]; ...; popd
 5. msbuild msi.sln ...
-6. move the produced .msi to a variant-specific output name
-7. Rename-Item <dist-dir>/<AppName>.exe -> <dist-dir>/rustdesk.exe   # restore for the next pass / self-extracted step ordering
+6. move the produced .msi to ./SignOutput/rustdesk-<version>-<arch>-<local|remote>.msi
+7. Rename-Item ./rustdesk/<AppName>.exe -> ./rustdesk/rustdesk.exe   # restore for the next pass
+8. Remove-Item ./rustdesk/config.toml
 ```
 
-Output naming (proposed, open to adjustment): `rustdesk-direct-ip-local-<version>-<arch>.msi` and
-`rustdesk-direct-ip-remote-<version>-<arch>.msi`, both uploaded as release artifacts alongside the
-existing self-extracted exe.
+`<AppName>` is `RustDesk-DirectIP-RemoteSupport`, matching the runtime `APP_NAME` value already
+shipped, for consistency.
+
+Output naming (as implemented): `rustdesk-<version>-<arch>-local.msi` /
+`rustdesk-<version>-<arch>-remote.msi`, which the existing downstream "Rename release files
+(direct-ip)" step's prefix-trimming logic already turns into
+`rustdesk-direct-ip-<direct-ip-version>-windows-<arch>-local.msi` /
+`...-<arch>-remote.msi` with **no changes needed to that step or the "Publish Release" step** —
+both already glob `rustdesk-*.msi`/`rustdesk-direct-ip-*.msi`, which matches both variants
+without modification.
 
 This applies to both Windows architectures already built (`x86_64-pc-windows-msvc`,
 `aarch64-pc-windows-msvc`), so 4 MSI files total per release instead of 2.
 
 **Files touched**: `.github/workflows/flutter-build.yml` only. No `libs/hbb_common`, no Rust, no
 C++, no WiX template edits (only build-time arguments to the existing, unmodified templates).
+
+**Risk**: as originally assessed — no WiX/MSBuild/Windows install environment available here.
+CI build success confirms both MSIs *package* correctly; actual install/upgrade/uninstall/service
+behavior needs the manual test checklist below, on a real machine, before this is considered done.
 
 ---
 
