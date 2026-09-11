@@ -3,12 +3,12 @@
 # Purpose
 This document describes how to upgrade the Direct-IP RustDesk fork to a newer upstream RustDesk release while preserving the fork behavior.
 
-**In-progress work not yet reflected below as closed out**: `docs/PLAN-install-separator.md` (draft
-as of 2026-09-11) — extends the "App Identity" hook point below to the Windows MSI installer,
-Linux, macOS, and Android packaging, plus removing this fork's Local-mode dependency on the local
-IPC/service channel entirely. Check that plan's status before assuming full identity separation
-from a real RustDesk install is complete on any platform other than "the Rust runtime value on
-Windows," which is the only piece shipped so far.
+**In-progress work**: `docs/PLAN-install-separator.md` — Windows (Rust runtime `APP_NAME`, the
+Local-mode server/IPC removal, and the MSI installer split) are implemented as of 2026-09-11,
+each with its own hook point below ("App Identity", "No Server/IPC for Local Mode", "App Identity
+(MSI)"). **None of it has been CI-verified or manually tested on a real machine yet.** Linux,
+macOS, and Android packaging identity separation (Phases 3-5 of that plan) remain not started.
+Check that plan's current status before assuming any part of it is done.
 
 ## Current Baseline
 - RustDesk Version: 1.4.9
@@ -102,17 +102,52 @@ Verify:
   connect, over the shared-by-name IPC pipe, to that *other* process instead of its own,
   silently serving stale/foreign option values and making `config.toml` changes appear to have
   no effect. See `docs/DECISIONS.md` for the full incident.
-- **Known remaining gap, not yet closed**: the separately-built Windows **MSI installer**
-  (`res/msi/`) does *not* read this Rust constant at all — it has its own independent identity
-  (WiX `$(var.Product)`, driven by `preprocess.py --app-name`, defaulting to `"RustDesk"`), so an
-  MSI-installed copy of this fork still fully collides with a real RustDesk MSI (same install
-  folder, same `UpgradeCode`, same Windows Service name) as of this writing. Tracked in
-  `docs/PLAN-install-separator.md` (draft, not yet implemented) — check that plan's status before
-  assuming this gap is closed in a later version of this guide.
+- **Gap closed 2026-09-11 for the MSI installer specifically** — see the new "App Identity (MSI)"
+  hook point below. The separately-built Windows **MSI installer** (`res/msi/`) never read this
+  Rust constant; it now gets an equivalent, independently-set identity via CI build parameters.
 - A future upstream change to `ui_interface.rs`'s `OPTIONS` cache/`ipc::connect()` pipe-path
   construction, or to `hbb_common::config::Config::path()`/`ipc_path()`'s use of `APP_NAME`, should
   be re-checked against this hook — the fix depends on `APP_NAME` still being the single source of
   truth for both.
+
+### App Identity (MSI) (implemented 2026-09-11, `docs/PLAN-install-separator.md` Phase 1)
+Verify:
+- `.github/workflows/flutter-build.yml`'s "Build msi" step still loops over two variants (Local,
+  Remote) rather than building a single MSI, still resets `res/msi/Package` via
+  `git checkout` between passes (required — `preprocess.py` edits `Includes.wxi`/`RustDesk.wxs` in
+  place, a second un-reset pass duplicates every file component and breaks the WiX build), still
+  renames the dist-dir exe to `$env:MSI_APP_NAME.exe` (currently
+  `RustDesk-DirectIP-RemoteSupport.exe` — must match `src/core_main.rs`'s runtime `APP_NAME`) and
+  passes `--app-name $env:MSI_APP_NAME` to `preprocess.py`, and still passes `--conn-type outgoing`
+  for the Local variant only (Remote gets no `--conn-type` flag — today's default).
+- `--app-name` changes, consistently, everything derived from WiX's one `$(var.Product)` variable:
+  ProductName, install folder (`C:\Program Files\<AppName>\`), `UpgradeCode` (this is the piece
+  that actually matters — WiX's `<MajorUpgrade>` triggers off `UpgradeCode` family match, not
+  install folder, so this is what stops a real RustDesk MSI being silently uninstalled/upgraded
+  over), registry root, Windows Service name, uninstall entry, DisplayIcon path, shortcuts, and the
+  file/URL-association entries in `Regs.wxs`. If a future upstream release restructures any of
+  these WiX templates to derive from a *different* variable, or removes `$(var.Product)`
+  entirely, this hook breaks silently (the build may still succeed, producing an MSI that's
+  identical to real RustDesk's again).
+- `--conn-type outgoing` relies on pre-existing, unmodified upstream WiX conditions
+  (`CC_CONNECTION_TYPE="outgoing"`, [RustDesk.wxs:47,48,59,78,128](../res/msi/Package/Components/RustDesk.wxs))
+  that gate service creation/start, tray auto-launch, and a SAS-generation registry tweak. A
+  future upstream change to any of these conditions needs re-verifying that the Local variant
+  still installs with no service.
+- The bundled `config.toml` (`configs/local.toml` / `configs/remote.toml`, copied into the dist
+  dir before each pass) means `fork_config::config_exists()` is already true on first launch of
+  an MSI-installed copy — the first-run Local/Remote picker dialog should never appear for either
+  variant. A future upstream change to `handle_first_run_setup()`'s trigger condition
+  (`fork_config::config_exists()`) should be re-checked against this.
+- **Not yet done**: `res/msi/CustomActions/CustomActions.cpp` was deliberately left untouched
+  (this Phase renames the exe to match the product identity instead of trying to keep it as
+  `rustdesk.exe` while the identity differs, which would have required native C++ changes to the
+  uninstall/upgrade service-teardown path — see `docs/PLAN-install-separator.md` for why that
+  alternative was rejected as too risky to implement without a build/test environment).
+- **Not yet verified on a real machine** (no WiX/MSBuild/Windows install environment available
+  during implementation) — see the manual test checklist in `docs/PLAN-install-separator.md`
+  Phase 1 before assuming install/upgrade/uninstall/service behavior is correct, beyond "the CI
+  build produces two .msi files without error."
 
 ### No Server/IPC for Local Mode (implemented 2026-09-11, `docs/PLAN-install-separator.md` Phase 2)
 Verify:

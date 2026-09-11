@@ -374,30 +374,66 @@ jobs:
         uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
 
       - name: Build msi
-        # Builds the MSI for the matrix arch. res/msi (WiX v4 + native CustomActions) carries
-        # both x64 and ARM64 platform configs; WcaUtil/DUtil ship arm64 libs. msbuild platform
-        # is x64 / ARM64; the produced Package.msi is globbed since its bin/<platform>/ dir varies.
+        # Builds TWO MSIs for the matrix arch - a Local (outgoing-only) and a Remote
+        # (incoming-only) installer - each with its own app identity distinct from a real
+        # RustDesk MSI, so installing either cannot collide with (or be treated as an upgrade
+        # of) a real RustDesk install on the same machine. See docs/PLAN-install-separator.md
+        # Phase 1 and docs/UPSTREAM_UPGRADE_GUIDE.md's "App Identity (MSI)" hook point.
+        #
+        # res/msi (WiX v4 + native CustomActions) carries both x64 and ARM64 platform configs;
+        # WcaUtil/DUtil ship arm64 libs. msbuild platform is x64 / ARM64; the produced
+        # Package.msi is globbed since its bin/<platform>/ dir varies.
         if: env.UPLOAD_ARTIFACT == 'true'
+        env:
+          # Must match src/core_main.rs's hbb_common::config::APP_NAME. preprocess.py requires
+          # the dist dir's exe to literally be named "<app-name>.exe" (it shells out to it for
+          # --version/--build-date and bakes the name into ProductName/UpgradeCode/install
+          # dir/registry root), so it's renamed for each pass below, then restored.
+          MSI_APP_NAME: RustDesk-DirectIP-RemoteSupport
         run: |
-          pushd ./res/msi
-          # Pass the base version explicitly: `rustdesk --version` now prints the extended
-          # direct-ip version string, which is not a valid MSI numeric version, and running
-          # the exe from CI is what previously caused first-run dialog hangs.
-          python preprocess.py --arp -d ../../rustdesk -v ${{ env.VERSION }}
-          # PowerShell does not fail a step on a plain executable's exit code by itself; without
-          # this check, a preprocess.py failure (e.g. it couldn't read --build-date from the just
-          # -built exe) silently falls through into msbuild against unfilled WiX preprocessor
-          # variables, producing a wall of confusing WIX0150 errors instead of the real cause.
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "preprocess.py failed with exit code $LASTEXITCODE"
-            exit $LASTEXITCODE
+          $variants = @(
+            @{ Name = "local";  Config = "configs/local.toml";  ConnType = "outgoing" },
+            @{ Name = "remote"; Config = "configs/remote.toml"; ConnType = "" }
+          )
+          foreach ($v in $variants) {
+            Write-Host "=== Building $($v.Name) MSI ==="
+            # preprocess.py edits res/msi/Package/Includes.wxi and RustDesk.wxs IN PLACE,
+            # inserting generated content without clearing what a prior pass already inserted -
+            # reset both from git before every pass or the second pass duplicates every file
+            # component and breaks the WiX build.
+            git checkout -- res/msi/Package
+            # Bundle the matching sample config so config_exists() is already true on first
+            # launch and the first-run Local/Remote setup dialog never appears.
+            Copy-Item $v.Config ./rustdesk/config.toml -Force
+            Rename-Item -Path "./rustdesk/rustdesk.exe" -NewName "$env:MSI_APP_NAME.exe"
+
+            pushd ./res/msi
+            $connTypeArgs = if ($v.ConnType -ne "") { @("--conn-type", $v.ConnType) } else { @() }
+            # Pass the base version explicitly: `rustdesk --version` now prints the extended
+            # direct-ip version string, which is not a valid MSI numeric version, and running
+            # the exe from CI is what previously caused first-run dialog hangs.
+            python preprocess.py --arp -d ../../rustdesk -v ${{ env.VERSION }} --app-name $env:MSI_APP_NAME @connTypeArgs
+            # PowerShell does not fail a step on a plain executable's exit code by itself; without
+            # this check, a preprocess.py failure (e.g. it couldn't read --build-date from the just
+            # -built exe) silently falls through into msbuild against unfilled WiX preprocessor
+            # variables, producing a wall of confusing WIX0150 errors instead of the real cause.
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "preprocess.py failed with exit code $LASTEXITCODE for the $($v.Name) variant"
+              exit $LASTEXITCODE
+            }
+            nuget restore msi.sln
+            $msiPlatform = if ('${{ matrix.job.arch }}' -eq 'aarch64') { 'ARM64' } else { 'x64' }
+            msbuild msi.sln -p:Configuration=Release -p:Platform=$msiPlatform /p:TargetVersion=Windows10
+            $msi = Get-ChildItem ./Package/bin/*/Release/en-us/Package.msi | Select-Object -First 1
+            popd
+
+            mv $msi.FullName "./SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-$($v.Name).msi"
+            # Restore the dist dir for the next pass (and so later steps in this job still find
+            # the plain rustdesk.exe name they expect).
+            Rename-Item -Path "./rustdesk/$env:MSI_APP_NAME.exe" -NewName "rustdesk.exe"
+            Remove-Item ./rustdesk/config.toml -Force -ErrorAction SilentlyContinue
           }
-          nuget restore msi.sln
-          $msiPlatform = if ('${{ matrix.job.arch }}' -eq 'aarch64') { 'ARM64' } else { 'x64' }
-          msbuild msi.sln -p:Configuration=Release -p:Platform=$msiPlatform /p:TargetVersion=Windows10
-          $msi = Get-ChildItem ./Package/bin/*/Release/en-us/Package.msi | Select-Object -First 1
-          mv $msi.FullName ../../SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
-          sha256sum ../../SignOutput/rustdesk-*.msi
+          sha256sum ./SignOutput/rustdesk-*.msi
 
       - name: Sign rustdesk self-extracted file
         if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL != '-2'
