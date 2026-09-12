@@ -2268,9 +2268,13 @@ class __PrinterState extends State<_Printer> {
   @override
   Widget build(BuildContext context) {
     final scrollController = ScrollController();
+    // Fork config: "outgoing" (redirect a remote session's print job to a printer on this
+    // machine) only matters when this instance initiates connections; "incoming" (what to do
+    // with a print job sent by whoever is controlling this machine) only matters when this
+    // instance accepts them - each section is irrelevant, not just unused, for the other role.
     return ListView(controller: scrollController, children: [
-      outgoing(context),
-      incoming(context),
+      if (!bind.isIncomingOnly()) outgoing(context),
+      if (!bind.isOutgoingOnly()) incoming(context),
     ]).marginOnly(bottom: _kListViewBottomMargin);
   }
 

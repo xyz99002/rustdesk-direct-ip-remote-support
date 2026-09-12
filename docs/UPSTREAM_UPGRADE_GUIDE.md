@@ -123,6 +123,17 @@ Verify:
   `--printer-setup` must be able to **override** that hide, not just avoid conflicting with it. A
   future upstream change to how `hide-remote-printer-settings` is read/combined should preserve
   this override relationship.
+  - **Revised 2026-09-12**: unlike Account, Printer turned out to have genuinely mixed content
+    like Network — `__PrinterState.build()`'s `outgoing(context)` section (install/manage a local
+    printer driver so a remote session's print job redirects to a printer on *this* machine) only
+    matters when this instance initiates connections; its `incoming(context)` section ("Incoming
+    Print Jobs": dismiss/default-printer/selected-printer, auto-print) only matters when this
+    instance is being controlled. So even with `--printer-setup` shown, the tab now hides
+    `outgoing` for `role=remote` and `incoming` for `role=local` (`if (!bind.isIncomingOnly())
+    outgoing(context)`, `if (!bind.isOutgoingOnly()) incoming(context)`) — same
+    only-irrelevant-content-removed treatment as Network's rows, not a whole-tab decision. A
+    future upstream change to `_Printer`'s section names/structure should preserve this per-role
+    split.
 
 ### App Identity (implemented 2026-09-10/11, see `docs/DECISIONS.md` "App Identity")
 Verify:
