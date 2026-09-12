@@ -87,6 +87,44 @@ one change, since both are derived from it. It also causes upstream's own transl
 translated UI string, and changes the window title/taskbar text to match — an accepted, visible
 side effect, not a bug.
 
+## Fork Peer Marker
+
+**Status: BLOCKED 2026-09-11, not implemented.** Goal: a `role=local` instance dialing an IP:port
+should get a clear, immediate rejection if what answers isn't this fork's `role=remote` (e.g. a
+real RustDesk instance happening to listen there), instead of falling through to normal password
+authentication and producing a generic, confusing failure — a different concern from the
+app-identity/install-separation work (`docs/PLAN-install-separator.md`), which is about OS-level
+process/installer identity *before* any connection exists; this is about the connection itself.
+
+The natural design — add a `fork_marker` field to `LoginRequest`, set by every connection this
+fork initiates, checked as the first thing done with an incoming `LoginRequest` before any other
+login processing, with a mismatch as a hard rejection — was drafted and then reverted after
+discovering a structural blocker: **`LoginRequest`, and every other protocol message, is defined
+in `libs/hbb_common/protos/message.proto`, which lives inside `libs/hbb_common` — a git submodule
+pointing at the official upstream `rustdesk/hbb_common` repository, not something this fork owns
+or has push access to.** Adding a field there means patching a separate, upstream-owned repo —
+exactly the situation this project has consistently avoided elsewhere (it's the same reason
+`config.toml` lives next to the executable rather than patching `hbb_common`'s `Config::path()`,
+back at the start of this fork's work). Neither `LoginRequest` nor its `OptionMessage` companion
+has any free-form/extensible field that could carry a new marker without a schema change — every
+field is fixed, named, and already meaningfully used (checked: `avatar`, `hwid`, `version` are all
+real, in-use fields, not safe to repurpose without risking breaking their actual function or
+leaking marker data into user-visible UI, e.g. a connection-manager approval dialog).
+
+Options going forward, none yet decided:
+1. **Fork `libs/hbb_common` too** (a new repo under this project's control, `.gitmodules` pointed
+   at it) — enables a clean protocol extension, but commits to maintaining a second forked repo
+   alongside this one, a materially bigger ongoing commitment than anything else in this fork.
+2. **Drop this specific safeguard.** The peer-mismatch scenario it targets is already narrowed by
+   the app-identity work: a `role=local` instance now has its own distinct IPC/config identity, so
+   the *local* version of this problem (this fork's own GUI talking to the wrong local process) is
+   already fixed by `docs/PLAN-install-separator.md`'s Phase 1/2. What remains uncovered is
+   specifically dialing a *remote* IP:port that happens to be a real RustDesk instance rather than
+   this fork's `role=remote` — password authentication still applies as the real access control in
+   that case; the gap is only "a confusing generic error" rather than "a clear one."
+3. Some other repurposing of an existing field, accepting a documented risk to that field's real
+   function — not recommended without a specific proposal and sign-off, given the risks above.
+
 ## Upstream Base
 
 RustDesk 1.4.9
