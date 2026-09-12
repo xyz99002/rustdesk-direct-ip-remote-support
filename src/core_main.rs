@@ -242,6 +242,7 @@ pub fn core_main() -> Option<Vec<String>> {
     let mut _is_flutter_invoke_new_connection = false;
     let mut no_server = false;
     let mut is_advance_setup = false;
+    let mut is_printer_setup = false;
     let mut arg_exe = Default::default();
     for arg in std::env::args() {
         if i == 0 {
@@ -277,16 +278,31 @@ pub fn core_main() -> Option<Vec<String>> {
                 // that wants these tabs visible, filtered out of `args` here so it doesn't affect
                 // args.is_empty() below (which decides the whole plain-GUI-launch startup path).
                 is_advance_setup = true;
+            } else if arg == "--printer-setup" {
+                // Fork config: reveals the Printer settings tab, otherwise always hidden - see
+                // fork_config's BUILTIN_SETTINGS["printer-setup"] below and
+                // docs/UPSTREAM_UPGRADE_GUIDE.md's Minimal UI hook point. Same in-memory-only,
+                // filtered-from-args treatment as --advance-setup, and deliberately a separate
+                // flag from it (Printer is unrelated to Safety/Display/Network's role-based
+                // relevance - it's a Windows remote-printer-driver management screen).
+                is_printer_setup = true;
             } else {
                 args.push(arg);
             }
         }
         i += 1;
     }
-    hbb_common::config::BUILTIN_SETTINGS.write().unwrap().insert(
-        "advance-setup".to_owned(),
-        if is_advance_setup { "Y" } else { "N" }.to_owned(),
-    );
+    {
+        let mut builtin = hbb_common::config::BUILTIN_SETTINGS.write().unwrap();
+        builtin.insert(
+            "advance-setup".to_owned(),
+            if is_advance_setup { "Y" } else { "N" }.to_owned(),
+        );
+        builtin.insert(
+            "printer-setup".to_owned(),
+            if is_printer_setup { "Y" } else { "N" }.to_owned(),
+        );
+    }
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     if args.is_empty() {
         #[cfg(target_os = "linux")]
