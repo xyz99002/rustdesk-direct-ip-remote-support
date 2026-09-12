@@ -110,9 +110,19 @@ Verify:
   applies; `--advance-setup` is an *additional* requirement on all three, not a replacement for
   any of it. Without the flag, Safety/Display/Network all stay hidden regardless of role or
   `fork_config.rs`'s row-level settings.
-- **Not extended to Account or Printer** — those keep their existing unconditional full-tab hide,
-  unaffected by `--advance-setup` (there was never a "show this with the flag" case for them,
-  since both are 100% irrelevant to this fork regardless of role).
+- **Not extended to Account** — it keeps its existing unconditional full-tab hide, unaffected by
+  either flag below (100% irrelevant to this fork regardless of role, no "show with a flag" case).
+- **Printer got its own separate flag, `--printer-setup`, added 2026-09-12** — deliberately not
+  folded into `--advance-setup`, since Printer's irrelevance (a Windows remote-printer-driver
+  management screen) is unrelated to Safety/Display/Network's role-based relevance. Same
+  in-memory-only, filtered-from-`args` treatment. `flutter/lib/consts.dart`'s
+  `kOptionPrinterSetup = "printer-setup"` must match the Rust-side key exactly, same caveat as
+  `kOptionAdvanceSetup` above. `DesktopSettingPage.tabKeys`'s Printer condition is now
+  `isWindows && (hide-remote-printer-settings != 'Y' || printer-setup == 'Y')` — the `||` matters:
+  `fork_config.rs::apply()` unconditionally sets `hide-remote-printer-settings = "Y"`, so
+  `--printer-setup` must be able to **override** that hide, not just avoid conflicting with it. A
+  future upstream change to how `hide-remote-printer-settings` is read/combined should preserve
+  this override relationship.
 
 ### App Identity (implemented 2026-09-10/11, see `docs/DECISIONS.md` "App Identity")
 Verify:
@@ -305,6 +315,8 @@ A clean `cargo build`/`cargo test` of the full `rustdesk` binary on this Windows
   `role=local`, Network shows (with its usual two rows hidden) — same as pre-this-change
   behavior, but only with the flag present. Relaunching
   without the flag hides them again immediately (no persistence).
+- Launching with `--printer-setup` (independent of `--advance-setup`): Printer tab shows on
+  Windows, overriding `fork_config.rs`'s unconditional hide. Without it, hidden as before.
 
 ## Build Environment Verification (added 2026-08-29)
 

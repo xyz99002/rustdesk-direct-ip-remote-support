@@ -196,6 +196,9 @@ const String kOptionHideNetworkSetting = "hide-network-settings";
 // --advance-setup; gates the Safety/Display settings tabs. See
 // docs/UPSTREAM_UPGRADE_GUIDE.md's Minimal UI hook point.
 const String kOptionAdvanceSetup = "advance-setup";
+// Fork config: set in-memory (not persisted) by core_main.rs when launched with
+// --printer-setup; gates the Printer settings tab, independently of kOptionAdvanceSetup.
+const String kOptionPrinterSetup = "printer-setup";
 const String kOptionRemovePresetPasswordWarning =
     "remove-preset-password-warning";
 const String kOptionDisableChangePermanentPassword =
