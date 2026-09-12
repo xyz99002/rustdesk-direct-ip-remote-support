@@ -379,14 +379,40 @@ already added its own dated sections to this same guide as it was built.
 
 ## What does NOT change
 
-- `src/fork_config.rs` — no changes in any phase.
 - `res/msi/CustomActions/CustomActions.cpp` — untouched. (This was the highest-risk item
   identified in an earlier, broader "decouple exe name from product name" alternative to Phase 1;
   it is **not needed**, since Phase 1 renames the exe for the MSI build instead of trying to keep
   it as `rustdesk.exe` while the product identity differs.)
-- The `fork_marker` protocol-level "confirm we're talking to the right pair" idea discussed
-  earlier — a different concern (network peer authentication over an established connection, not
-  installer/process identity) — remains a separate, not-yet-decided idea, not part of this plan.
+
+## Phase 2b — Fork Peer Marker (protocol-level, added to this plan 2026-09-11)
+
+**Status: BLOCKED 2026-09-11, not implemented — reverted after discovering a structural blocker.**
+Was going to be bundled with Phase 2 for the same testing round per explicit request, rather than
+a separate later cycle; that's now moot since it isn't implemented at all.
+
+A different concern from everything else in this plan: OS-level process/installer identity
+(pipes, install paths, service names) prevents confusion *before* any connection exists. This
+phase was meant to address the connection itself — once a `role=local` instance dials an IP:port,
+how does it know the thing that answered is actually this fork's `role=remote`, not a real
+RustDesk instance happening to listen there?
+
+**The blocker**: `LoginRequest` (and every other protocol message) is defined in
+`libs/hbb_common/protos/message.proto`, which lives inside `libs/hbb_common` — a **git submodule
+pointing at the official upstream `rustdesk/hbb_common` repository**, not something this fork owns
+or has push access to. Adding a `fork_marker` field there means patching a separate, upstream-owned
+repo, which this project has consistently avoided elsewhere (see `docs/DECISIONS.md` "Fork Peer
+Marker" for the full writeup, including why no existing field in `LoginRequest`/`OptionMessage`
+can safely carry this without a schema change or repurposing a real, in-use field).
+
+Draft implementation (added, then fully reverted, so `git diff`/`git log` won't show a trace of
+it): a new `fork_marker` field on `LoginRequest`, set by `src/client.rs` to a constant in
+`src/fork_config.rs`, checked as the first thing done with an incoming `LoginRequest` in
+`src/server/connection.rs::on_message()`, hard rejection on mismatch. Kept here as a ready-to-apply
+design in case a future decision (see `docs/DECISIONS.md`) unblocks it — e.g. forking
+`libs/hbb_common` too.
+
+**Not part of this plan's "done" state until unblocked.** See `docs/DECISIONS.md` for the options
+under consideration (fork `hbb_common` too / drop this specific safeguard / some other approach).
 
 ## Risks / what can't be verified locally, summarized across phases
 

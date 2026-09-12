@@ -175,6 +175,14 @@ Verify:
   unreachable for `role=local` in practice (inbound-session-only call paths); re-verify this
   assumption if a future upstream release starts calling those from an outgoing-only code path.
 
+### Fork Peer Marker — NOT IMPLEMENTED, blocked (see `docs/DECISIONS.md`)
+No hook point exists in the code today; nothing to verify. Recorded here only so a future upgrade
+doesn't rediscover the same blocker from scratch: adding a protocol-level "is this actually a fork
+peer" marker to `LoginRequest` requires editing `libs/hbb_common/protos/message.proto`, which
+lives inside the `libs/hbb_common` git submodule — the official upstream `rustdesk/hbb_common`
+repo, not something this fork owns. See `docs/DECISIONS.md` "Fork Peer Marker" for the full
+writeup and the options under consideration before this can be implemented.
+
 ### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
 Verify:
 - `src/rendezvous_mediator.rs::start_all()` still has both `--- BEGIN/END DIRECT-IP FORK ---` blocks: the `hbbs_http::sync::start()` call removed, and the registration loop replaced with `loop { sleep(1.).await; }`.
