@@ -241,6 +241,7 @@ pub fn core_main() -> Option<Vec<String>> {
     let mut _is_quick_support = false;
     let mut _is_flutter_invoke_new_connection = false;
     let mut no_server = false;
+    let mut is_advance_setup = false;
     let mut arg_exe = Default::default();
     for arg in std::env::args() {
         if i == 0 {
@@ -268,12 +269,24 @@ pub fn core_main() -> Option<Vec<String>> {
                 _is_quick_support = true;
             } else if arg == "--no-server" {
                 no_server = true;
+            } else if arg == "--advance-setup" {
+                // Fork config: reveals the Safety/Display settings tabs, otherwise always hidden
+                // regardless of role - see fork_config's BUILTIN_SETTINGS["advance-setup"] below
+                // and docs/UPSTREAM_UPGRADE_GUIDE.md's Minimal UI hook point. Deliberately
+                // in-memory only (not persisted to config.toml): must be passed on every launch
+                // that wants these tabs visible, filtered out of `args` here so it doesn't affect
+                // args.is_empty() below (which decides the whole plain-GUI-launch startup path).
+                is_advance_setup = true;
             } else {
                 args.push(arg);
             }
         }
         i += 1;
     }
+    hbb_common::config::BUILTIN_SETTINGS.write().unwrap().insert(
+        "advance-setup".to_owned(),
+        if is_advance_setup { "Y" } else { "N" }.to_owned(),
+    );
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     if args.is_empty() {
         #[cfg(target_os = "linux")]
