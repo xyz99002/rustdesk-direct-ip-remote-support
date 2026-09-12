@@ -90,6 +90,28 @@ Verify:
   - **Revised 2026-09-11**: the Settings gear icon and the "Change Password" pencil icon are each now additionally gated on `mainGetBoolOptionSync("show-setup-ui")` (in addition to `!bind.isDisableSettings()` for the pencil icon) — added because `DesktopSettingPage.switch2page()` already gated the *action* on `show-setup-ui`, but nothing previously gated the *visibility* of the two icons that call it, so they stayed clickable-but-broken when `show-setup-ui = "N"`. A future upstream change to either icon's surrounding widget must preserve this visibility gate, not just the click-through gate in `switch2page()`.
 - `server_page.dart`'s `ConnectionManager`/`_CmHeader`/`_PrivilegeBoard` (connection manager, Voice Call accept/reject) remain untouched — this phase deliberately did not modify them.
 
+### Advance Setup Gate (implemented 2026-09-12)
+Verify:
+- `src/core_main.rs` still filters `--advance-setup` out of the general args vector (in the same
+  arg-parsing loop as `--elevate`/`--no-server`/etc.) — it must **not** end up in `args`, since a
+  non-empty `args` changes which startup branch runs (would silently break the role-gated
+  server-thread spawn from the "No Server/IPC for Local Mode" hook point below). It sets
+  `BUILTIN_SETTINGS["advance-setup"]` to `"Y"`/`"N"` — **in-memory only, not persisted to
+  `config.toml`** — so it must be passed on every launch that wants Safety/Display visible; it
+  does not stick across restarts by design.
+- `flutter/lib/consts.dart`'s `kOptionAdvanceSetup = "advance-setup"` still matches the Rust-side
+  key string exactly (no shared constant between the two languages — a future rename on either
+  side silently breaks this if not mirrored).
+- `DesktopSettingPage.tabKeys` (`flutter/lib/desktop/pages/desktop_setting_page.dart`) still ANDs
+  `bind.mainGetBuildinOption(key: kOptionAdvanceSetup) == 'Y'` onto both the Safety tab's existing
+  role-based condition (`!isOutgoingOnly()`) and the Display tab's (`!isIncomingOnly()`) — the
+  role-based gating from "Minimal UI" above is unchanged and still applies; `--advance-setup` is
+  an *additional* requirement, not a replacement for it. Without the flag, Safety/Display stay
+  hidden regardless of role, same as before this change for a plain launch.
+- **Not extended to Network, Account, or Printer** — those keep their existing gating
+  (`hide-server-settings`/`hide-websocket-settings` row-level trim, full-tab hide, full-tab hide
+  respectively), unaffected by `--advance-setup`.
+
 ### App Identity (implemented 2026-09-10/11, see `docs/DECISIONS.md` "App Identity")
 Verify:
 - `src/core_main.rs::core_main()` still sets `hbb_common::config::APP_NAME` to a fork-distinct
@@ -275,6 +297,11 @@ A clean `cargo build`/`cargo test` of the full `rustdesk` binary on this Windows
   the UI, but Settings changes still persist across restart, outgoing connect still works, tray
   icon behaves normally, About tab fingerprint field is blank — accepted, not a bug).
 - Remote mode: unaffected by the above — server thread and IPC still start normally.
+- Launching normally (no `--advance-setup`): Safety and Display tabs are hidden regardless of
+  role, even for the role each would normally be shown for.
+- Launching with `--advance-setup`: Safety shows for `role=remote`, Display shows for
+  `role=local` — same as pre-this-change behavior, but only with the flag present. Relaunching
+  without the flag hides them again immediately (no persistence).
 
 ## Build Environment Verification (added 2026-08-29)
 
