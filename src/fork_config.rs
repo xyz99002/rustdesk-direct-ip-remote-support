@@ -53,7 +53,9 @@
 //! The Network tab itself stays visible — it also holds Proxy/TLS/UDP options this fork still
 //! uses — but `BUILTIN_SETTINGS["hide-server-settings"]`/`["hide-websocket-settings"]` hide just
 //! the two rows (ID/Relay Server, Use WebSocket) that are specifically about the upstream
-//! rendezvous/relay server. All reuse upstream's own existing per-row/per-tab hiding mechanism
+//! rendezvous/relay server. `BUILTIN_SETTINGS["hide-remote-printer-settings"]` hides the whole
+//! Printer tab (Windows-only remote-printer-driver management, not applicable to this fork's
+//! supported use cases). All reuse upstream's own existing per-row/per-tab hiding mechanism
 //! (`DesktopSettingPage.tabKeys` and the `network()` builder in
 //! `flutter/lib/desktop/pages/desktop_setting_page.dart`). Direct-IP enforcement (also
 //! unconditional): `Config::set_option("enable-lan-discovery", "N")`
@@ -511,10 +513,13 @@ pub fn apply(config: &ForkConfig) {
     // The Network tab, however, stays visible — it also holds Proxy/TLS/UDP options that are
     // still relevant to a direct-IP connection. Only the two rows that are specifically about
     // the upstream ID/relay/rendezvous server (which this fork never uses) are hidden.
+    // The Printer tab is a Windows-only remote-printer-driver management screen, not applicable
+    // to this fork's supported use cases; hidden the same way Network's irrelevant rows are.
     {
         let mut builtin = BUILTIN_SETTINGS.write().unwrap();
         builtin.insert("hide-server-settings".to_owned(), "Y".to_owned());
         builtin.insert("hide-websocket-settings".to_owned(), "Y".to_owned());
+        builtin.insert("hide-remote-printer-settings".to_owned(), "Y".to_owned());
     }
 
     // Direct-IP enforcement (unconditional — see docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md).
@@ -1028,7 +1033,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_hides_account_server_websocket_and_lan_discovery_unconditionally() {
+    fn apply_hides_account_server_websocket_printer_and_lan_discovery_unconditionally() {
         let _guard = GlobalStateGuard::new();
 
         for role in ["local", "remote"] {
@@ -1057,6 +1062,13 @@ mod tests {
                                 .read()
                                 .unwrap()
                                 .get("hide-websocket-settings"),
+                            Some(&"Y".to_owned())
+                        );
+                        assert_eq!(
+                            BUILTIN_SETTINGS
+                                .read()
+                                .unwrap()
+                                .get("hide-remote-printer-settings"),
                             Some(&"Y".to_owned())
                         );
                         assert_eq!(Config::get_option("enable-lan-discovery"), "N");
