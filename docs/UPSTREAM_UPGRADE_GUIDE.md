@@ -103,14 +103,16 @@ Verify:
   key string exactly (no shared constant between the two languages — a future rename on either
   side silently breaks this if not mirrored).
 - `DesktopSettingPage.tabKeys` (`flutter/lib/desktop/pages/desktop_setting_page.dart`) still ANDs
-  `bind.mainGetBuildinOption(key: kOptionAdvanceSetup) == 'Y'` onto both the Safety tab's existing
-  role-based condition (`!isOutgoingOnly()`) and the Display tab's (`!isIncomingOnly()`) — the
-  role-based gating from "Minimal UI" above is unchanged and still applies; `--advance-setup` is
-  an *additional* requirement, not a replacement for it. Without the flag, Safety/Display stay
-  hidden regardless of role, same as before this change for a plain launch.
-- **Not extended to Network, Account, or Printer** — those keep their existing gating
-  (`hide-server-settings`/`hide-websocket-settings` row-level trim, full-tab hide, full-tab hide
-  respectively), unaffected by `--advance-setup`.
+  `bind.mainGetBuildinOption(key: kOptionAdvanceSetup) == 'Y'` onto the Safety tab's existing
+  role-based condition (`!isOutgoingOnly()`), the Display tab's (`!isIncomingOnly()`), **and**
+  the Network tab's existing `hide-network-settings`/`hide-server-settings`/
+  `hide-websocket-settings` row-level condition — all pre-existing gating is unchanged and still
+  applies; `--advance-setup` is an *additional* requirement on all three, not a replacement for
+  any of it. Without the flag, Safety/Display/Network all stay hidden regardless of role or
+  `fork_config.rs`'s row-level settings.
+- **Not extended to Account or Printer** — those keep their existing unconditional full-tab hide,
+  unaffected by `--advance-setup` (there was never a "show this with the flag" case for them,
+  since both are 100% irrelevant to this fork regardless of role).
 
 ### App Identity (implemented 2026-09-10/11, see `docs/DECISIONS.md` "App Identity")
 Verify:
@@ -297,10 +299,11 @@ A clean `cargo build`/`cargo test` of the full `rustdesk` binary on this Windows
   the UI, but Settings changes still persist across restart, outgoing connect still works, tray
   icon behaves normally, About tab fingerprint field is blank — accepted, not a bug).
 - Remote mode: unaffected by the above — server thread and IPC still start normally.
-- Launching normally (no `--advance-setup`): Safety and Display tabs are hidden regardless of
-  role, even for the role each would normally be shown for.
+- Launching normally (no `--advance-setup`): Safety, Display, and Network tabs are all hidden,
+  regardless of role or `fork_config.rs`'s row-level settings.
 - Launching with `--advance-setup`: Safety shows for `role=remote`, Display shows for
-  `role=local` — same as pre-this-change behavior, but only with the flag present. Relaunching
+  `role=local`, Network shows (with its usual two rows hidden) — same as pre-this-change
+  behavior, but only with the flag present. Relaunching
   without the flag hides them again immediately (no persistence).
 
 ## Build Environment Verification (added 2026-08-29)
