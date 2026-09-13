@@ -1272,8 +1272,6 @@ pub fn lock_screen() {
     }
 }
 
-const IS1: &str = "{54E86BC2-6C85-41F3-A9EB-1A94AC9B1F93}_is1";
-
 fn get_subkey(name: &str, wow: bool) -> String {
     let tmp = format!(
         "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{}",
@@ -1287,14 +1285,13 @@ fn get_subkey(name: &str, wow: bool) -> String {
 }
 
 fn get_valid_subkey() -> String {
-    let subkey = get_subkey(IS1, false);
-    if !get_reg_of(&subkey, "InstallLocation").is_empty() {
-        return subkey;
-    }
-    let subkey = get_subkey(IS1, true);
-    if !get_reg_of(&subkey, "InstallLocation").is_empty() {
-        return subkey;
-    }
+    // Fork config: upstream also checked a fixed, hardcoded product-code GUID here (a legacy
+    // Inno-Setup-style identifier shared by every RustDesk-family build regardless of app name)
+    // before falling back to an app-name-derived subkey - meaning on a machine with a real
+    // RustDesk already installed, this would find *its* registered InstallLocation and reuse it,
+    // silently pre-filling this fork's in-app Install dialog with the real RustDesk's install
+    // path instead of computing this fork's own default. Removed: this fork's own prior install
+    // (if any) is only ever found via the app-name-derived subkey below, never a shared GUID.
     let app_name = crate::get_app_name();
     let subkey = get_subkey(&app_name, true);
     if !get_reg_of(&subkey, "InstallLocation").is_empty() {
