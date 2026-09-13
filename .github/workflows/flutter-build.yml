@@ -1017,7 +1017,11 @@ jobs:
     needs:
       - build-for-macOS
       - build-for-windows-flutter
-      - build-for-windows-sciter
+      # build-for-windows-sciter deliberately excluded 2026-09-12: that job is now permanently
+      # disabled (if: false - see its own comment), so it can never report "success", which would
+      # otherwise make this whole job skip on every single run via the needs chain. It built a
+      # 32-bit Sciter fallback (windows-x86) this fork doesn't ship anyway - see
+      # docs/UPSTREAM_UPGRADE_GUIDE.md's "CI Job Hygiene" hook point.
     runs-on: ubuntu-latest
     if: ${{ inputs.upload-artifact && inputs.upload-release }}
     steps:
@@ -1039,16 +1043,10 @@ jobs:
           name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-windows-x86_64
           path: ./windows-x86_64/
 
-      - name: Download Artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-windows-x86
-          path: ./windows-x86/
-
       - name: Combine unsigned app
         run: |
           sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
-          tar czf rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-unsigned.tar.gz *.dmg windows-x86_64 windows-x86
+          tar czf rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-unsigned.tar.gz *.dmg windows-x86_64
 
       - name: Publish unsigned app
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
