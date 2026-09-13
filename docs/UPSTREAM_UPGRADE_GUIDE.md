@@ -451,6 +451,16 @@ going back before this fork's own changes began. **Upgrade check**: if a future 
 re-enables or restructures this job, re-evaluate whether it's still needed (unlikely, given this
 fork ships no Sciter/32-bit artifacts) before assuming a CI failure there is worth chasing.
 
+**Follow-on regression, fixed same day**: disabling `build-for-windows-sciter` initially broke
+`publish_unsigned` (the job that bundles macOS + Windows x86_64 outputs into one combined
+`*-unsigned.tar.gz` release asset) — its `needs:` list included `build-for-windows-sciter`, and a
+disabled job (`if: false`) never reports `success`, so `publish_unsigned` silently skipped on
+*every* run via the `needs` chain, permanently, not just when Sciter happened to fail. Fixed by
+removing `build-for-windows-sciter` from `publish_unsigned`'s `needs:` and removing its
+now-impossible `windows-x86` artifact download/combine step. **Upgrade check**: whenever disabling
+or removing any job, grep for it in every other job's `needs:` list first — a `needs`-chain skip is
+silent (no error, just an absent release asset) and easy to miss.
+
 ## Release Acceptance
 Upgrade is accepted only if all checks pass:
 1. **Build Readiness:** `docs/BUILD_BLOCKER_ANALYSIS.md` shows no unresolved blockers; `cargo build --release` succeeds.
