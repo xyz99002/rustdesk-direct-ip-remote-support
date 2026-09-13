@@ -152,6 +152,19 @@ Verify:
   connect, over the shared-by-name IPC pipe, to that *other* process instead of its own,
   silently serving stale/foreign option values and making `config.toml` changes appear to have
   no effect. See `docs/DECISIONS.md` for the full incident.
+- **Bug found and fixed 2026-09-12**: `get_valid_subkey()` (`src/platform/windows.rs`) checked a
+  fixed, hardcoded product-code GUID (`IS1`, a legacy Inno-Setup-style identifier shared by every
+  RustDesk-family build regardless of app name) *before* falling back to the `APP_NAME`-derived
+  subkey. On a machine with a real RustDesk already installed, this meant the in-app "Install"
+  dialog's pre-filled path (`bind.installInstallPath()` → `ui_interface::install_path()` →
+  `get_install_info()` → `get_valid_subkey()`) silently reused the *real RustDesk's* registered
+  `InstallLocation` (`C:\Program Files\RustDesk`) instead of computing this fork's own
+  app-name-based default — reported by a user screenshot showing the Install dialog defaulting to
+  `C:\Program Files\RustDesk`. Fixed by removing the `IS1` checks entirely; `get_valid_subkey()`
+  now only ever looks up this fork's own `APP_NAME`-derived subkey. **Upgrade check**: if a future
+  upstream release reintroduces a similar "detect any existing RustDesk-family install via a fixed
+  identifier" mechanism anywhere in `platform/windows.rs`, re-verify it doesn't reintroduce this
+  same collision — any lookup keyed by something other than `crate::get_app_name()` is suspect.
 - **Gap closed 2026-09-11 for the MSI installer specifically** — see the new "App Identity (MSI)"
   hook point below. The separately-built Windows **MSI installer** (`res/msi/`) never read this
   Rust constant; it now gets an equivalent, independently-set identity via CI build parameters.
