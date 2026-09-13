@@ -165,6 +165,23 @@ Verify:
   upstream release reintroduces a similar "detect any existing RustDesk-family install via a fixed
   identifier" mechanism anywhere in `platform/windows.rs`, re-verify it doesn't reintroduce this
   same collision — any lookup keyed by something other than `crate::get_app_name()` is suspect.
+- **Second bug found and fixed 2026-09-12, same incident**: with the `IS1` bug fixed, installing
+  via the portable exe's "Install" button correctly targeted
+  `C:\Program Files\RustDesk-DirectIP-RemoteSupport\`, but produced a Start Menu shortcut pointing
+  at a file that was never created — a "Missing Shortcut" error reported via screenshot.
+  Root cause: `install_me()` (`src/platform/windows.rs`) calls `copy_exe_cmd()` to copy the source
+  exe into the install folder verbatim, but never called the existing `rename_exe_cmd()` helper —
+  every shortcut/registry entry `install_me()` generates assumes the installed exe is named
+  `{APP_NAME}.exe` (via `get_install_info()`'s `exe` field), but since this fork deliberately keeps
+  the *portable* exe named `rustdesk.exe` (distinct from `APP_NAME`), the copied file never
+  actually got renamed to match. `rename_exe_cmd()` already existed and already handled exactly
+  this (used elsewhere, in an unrelated update/refresh code path) — it just wasn't wired into
+  `install_me()` itself. Fixed by adding it to `install_me()`'s generated command sequence, right
+  after the copy. Also fixed a latent case-sensitivity inconsistency in `rename_exe_cmd()` itself
+  (it lower-cased the rename target's filename; harmless on Windows's case-insensitive filesystem,
+  but needlessly inconsistent with the properly-cased name every shortcut/registry entry expects).
+  **Upgrade check**: if a future upstream release adds another install/copy code path, verify it
+  also calls `rename_exe_cmd()` when the source exe's filename doesn't match `get_app_name()`.
 - **Gap closed 2026-09-11 for the MSI installer specifically** — see the new "App Identity (MSI)"
   hook point below. The separately-built Windows **MSI installer** (`res/msi/`) never read this
   Rust constant; it now gets an equivalent, independently-set identity via CI build parameters.

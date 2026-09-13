@@ -28,6 +28,8 @@ needed: the portable exe, the Local MSI, and the Remote MSI (all built by the sa
 | AI-4 | Same as AI-3 | Check log file location | Logs appear under `%APPDATA%\RustDesk-DirectIP-RemoteSupport\log\`, not `%APPDATA%\RustDesk\log\` |
 | AI-5 | Same as AI-3 | Check Task Manager / Resource Monitor for named pipes (or just confirm AI-3 passes) | No evidence this fork's IPC talked to the real RustDesk's service |
 | AI-6 | Real RustDesk installed on the machine | Portable exe → click "Install" | Installation dialog's path field defaults to `C:\Program Files\RustDesk-DirectIP-RemoteSupport`, **not** `C:\Program Files\RustDesk` (regression test for the `get_valid_subkey()`/`IS1` bug fixed 2026-09-12) |
+| AI-7 | Fresh install via the portable exe's "Install" button | After install completes, check `C:\Program Files\RustDesk-DirectIP-RemoteSupport\` | The exe inside is named `RustDesk-DirectIP-RemoteSupport.exe`, **not** `rustdesk.exe` (regression test for the missing `rename_exe_cmd()` call, fixed 2026-09-12) |
+| AI-8 | Same as AI-7 | Launch from the Start Menu shortcut | Opens correctly — **no** "Missing Shortcut" dialog |
 
 ## 2. No Server/IPC for Local Mode (`3f4751628`)
 
