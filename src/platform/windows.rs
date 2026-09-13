@@ -1463,8 +1463,12 @@ pub fn rename_exe_cmd(src_exe: &str, path: &str) -> ResultType<String> {
         .ok_or(anyhow!("Can't get file name of {src_exe}"))?
         .to_string_lossy()
         .to_string();
-    let app_name = crate::get_app_name().to_lowercase();
-    if src_exe_filename.to_lowercase() == format!("{app_name}.exe") {
+    let app_name = crate::get_app_name();
+    // Case-insensitive comparison only (NTFS filenames aren't case-sensitive) - the move target
+    // below keeps app_name's real casing, matching get_install_info()'s `exe` path exactly
+    // (previously lower-cased the target name, which happened to still resolve on Windows but
+    // was needlessly inconsistent with every shortcut/registry entry generated elsewhere).
+    if src_exe_filename.to_lowercase() == format!("{app_name}.exe").to_lowercase() {
         Ok("".to_owned())
     } else {
         Ok(format!(
@@ -1702,6 +1706,7 @@ copy /Y \"{tmp_path}\\{app_name} Tray.lnk\" \"%PROGRAMDATA%\\Microsoft\\Windows\
 chcp 65001
 md \"{path}\"
 {copy_exe}
+{rename_exe}
 reg add {subkey} /f
 reg add {subkey} /f /v DisplayIcon /t REG_SZ /d \"{display_icon}\"
 reg add {subkey} /f /v DisplayName /t REG_SZ /d \"{app_name}\"
@@ -1739,6 +1744,14 @@ copy /Y \"{tmp_path}\\Uninstall {app_name}.lnk\" \"{path}\\\"
         sleep = if debug { "timeout 300" } else { "" },
         dels = if debug { "" } else { &dels },
         copy_exe = copy_exe_cmd(&src_exe, &exe, &path)?,
+        // Fork config: without this, a source exe whose filename doesn't match get_app_name()
+        // (this fork deliberately keeps the portable exe as "rustdesk.exe" while installing
+        // under its own distinct product name) gets copied in verbatim, but every shortcut/
+        // registry entry generated below still points at "{app_name}.exe" - a file that then
+        // never exists, producing a "Missing Shortcut" error. rename_exe_cmd() already exists and
+        // handles this (it's a no-op when the names already match); it just wasn't wired into
+        // this function.
+        rename_exe = rename_exe_cmd(&src_exe, &path)?,
         import_config = get_import_config(&exe),
     );
     run_cmds(cmds, debug, "install")?;
