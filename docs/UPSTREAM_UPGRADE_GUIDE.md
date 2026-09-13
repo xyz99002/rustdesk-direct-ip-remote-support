@@ -238,6 +238,26 @@ Verify:
   unreachable for `role=local` in practice (inbound-session-only call paths); re-verify this
   assumption if a future upstream release starts calling those from an outgoing-only code path.
 
+### File Copy/Paste Default (implemented 2026-09-12)
+Verify:
+- `fork_config.rs::apply()` still unconditionally sets
+  `UserDefaultConfig::load().set(OPTION_ENABLE_FILE_COPY_PASTE, "N")` on every startup, forcing
+  the Display tab's "Enable file copy and paste" default to off.
+- **This is a `UserDefaultConfig` value, not a plain `Config` option** — a completely separate
+  storage mechanism (`hbb_common::config::UserDefaultConfig`, its own `_default` file) from
+  everything else this module writes via `Config::set_option`/`mirror_upstream_options`. Putting
+  `enable-file-copy-paste = "N"` in `config.toml`'s `[options]` table would have **no effect** —
+  `mirror_upstream_options()` only ever calls `Config::set_option`, which this key is never read
+  from (upstream's own hardcoded default for it, `"Y"`, lives in
+  `UserDefaultConfig::get()`'s match arm, `libs/hbb_common/src/config.rs:2380`). A future upstream
+  change to which options are `UserDefaultConfig`-backed vs. plain `Config` options should be
+  re-checked against this — using the wrong write path is a silent no-op, not an error.
+- **Design choice, not a bug**: this re-applies unconditionally on every launch, same as
+  `enable-lan-discovery = "N"` elsewhere in this function — if a user manually re-enables the
+  checkbox in Settings, it reverts to off on the next restart. This was an explicit choice made
+  to match this fork's existing pattern of permanent, non-persisted product defaults; revisit if
+  a genuinely user-adjustable-and-sticky default is wanted instead.
+
 ### Fork Peer Marker — NOT IMPLEMENTED, blocked (see `docs/DECISIONS.md`)
 No hook point exists in the code today; nothing to verify. Recorded here only so a future upgrade
 doesn't rediscover the same blocker from scratch: adding a protocol-level "is this actually a fork
