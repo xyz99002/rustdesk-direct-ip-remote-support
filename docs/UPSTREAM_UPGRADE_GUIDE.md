@@ -438,6 +438,19 @@ Maintain `docs/BUILD_BLOCKER_ANALYSIS.md` as the authoritative record of:
 - A blocker is resolved
 - A workaround is replaced with a permanent fix
 
+## CI Job Hygiene (added 2026-09-12)
+
+The `i686-pc-windows-msvc` job under `build-for-windows-sciter` (`.github/workflows/
+flutter-build.yml`) is disabled (`if: false`), not just flaky. It pinned a Rust nightly from
+2023-10-13 to build a 32-bit Sciter (pre-Flutter UI) fallback binary this fork doesn't ship or
+use — confirmed the toolchain itself is still reachable on rust-lang's dist servers, so the
+recurring failure wasn't "the toolchain vanished," but upstream had already flagged this exact job
+for disabling in a comment ("Temporarily disable this action due to additional test is needed")
+and left the `if: false` commented out, so it silently kept running and failing on every CI run
+going back before this fork's own changes began. **Upgrade check**: if a future upstream release
+re-enables or restructures this job, re-evaluate whether it's still needed (unlikely, given this
+fork ships no Sciter/32-bit artifacts) before assuming a CI failure there is worth chasing.
+
 ## Release Acceptance
 Upgrade is accepted only if all checks pass:
 1. **Build Readiness:** `docs/BUILD_BLOCKER_ANALYSIS.md` shows no unresolved blockers; `cargo build --release` succeeds.

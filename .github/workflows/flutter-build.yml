@@ -468,8 +468,14 @@ jobs:
   build-for-windows-sciter:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     runs-on: ${{ matrix.job.os }}
-    # Temporarily disable this action due to additional test is needed.
-    # if: false
+    # Disabled 2026-09-12: this job pins a Rust nightly from 2023-10-13 (over 2 years stale) to
+    # build a 32-bit Sciter (pre-Flutter, non-Flutter UI) fallback binary that this fork doesn't
+    # ship, use, or reference anywhere - all of this fork's artifacts (MSI installers, portable
+    # exe) are Flutter-based, x86_64/aarch64. Upstream itself had already flagged this job for
+    # disabling ("Temporarily disable this action due to additional test is needed") but left the
+    # `if: false` commented out, so it never actually took effect and kept failing on every run.
+    # See docs/UPSTREAM_UPGRADE_GUIDE.md's CI Job Hygiene hook point.
+    if: false
     strategy:
       fail-fast: false
       matrix:
