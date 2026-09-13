@@ -522,6 +522,14 @@ pub fn apply(config: &ForkConfig) {
         builtin.insert("hide-remote-printer-settings".to_owned(), "Y".to_owned());
     }
 
+    // "Enable file copy and paste" (a UserDefaultConfig value, not a plain Config option — its
+    // own storage, separate from everything else this module writes) defaults to "Y" upstream
+    // (hbb_common::config::UserDefaultConfig::get()). Force it off by default for this fork.
+    hbb_common::config::UserDefaultConfig::load().set(
+        hbb_common::config::keys::OPTION_ENABLE_FILE_COPY_PASTE.to_owned(),
+        "N".to_owned(),
+    );
+
     // Direct-IP enforcement (unconditional — see docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md).
     Config::set_option("enable-lan-discovery".to_owned(), "N".to_owned());
 
@@ -1072,6 +1080,11 @@ mod tests {
                             Some(&"Y".to_owned())
                         );
                         assert_eq!(Config::get_option("enable-lan-discovery"), "N");
+                        assert_eq!(
+                            hbb_common::config::UserDefaultConfig::load()
+                                .get(hbb_common::config::keys::OPTION_ENABLE_FILE_COPY_PASTE),
+                            "N"
+                        );
                     }
                 }
             }
