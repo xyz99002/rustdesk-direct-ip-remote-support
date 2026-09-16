@@ -498,6 +498,26 @@ now-impossible `windows-x86` artifact download/combine step. **Upgrade check**: 
 or removing any job, grep for it in every other job's `needs:` list first — a `needs`-chain skip is
 silent (no error, just an absent release asset) and easy to miss.
 
+**Unrelated third bug, fixed 2026-09-16**: `build rustdesk linux x86_64-unknown-linux-gnu`'s
+"Rename archlinux release files (direct-ip)" step was failing (exit 1) on every nightly build,
+right after the preceding "Build archlinux package" step succeeded. Root cause: that preceding
+step runs via `rustdesk-org/arch-makepkg-action`, a Docker-based composite action (the only
+containerized *step* in this job — everything else, including the `.deb`/`.rpm` packaging earlier
+in the same job, runs natively on the runner) — files it writes into the bind-mounted `res/`
+directory come out owned by root on the host, and the following plain-bash step (running as the
+normal, non-root runner user) then failed outright trying to `cp` them. Confirmed by reproducing
+the rename script's logic locally against representative inputs — it succeeds fine on its own, so
+the failure had to be an ownership/permissions issue specific to the Docker-container step, not a
+script bug. Fixed by adding `sudo chown -R "$(id -u):$(id -g)" res/` at the start of the rename
+step, plus switching the glob from a bare `for f in ...*.zst` (which silently did nothing under
+`nullglob` if no file matched, with no log trace either way) to an explicit array with an
+`::warning::` if nothing matched and an echo per rename, so a future failure here is diagnosable
+from the log alone rather than requiring log-download access to investigate. **Upgrade check**: if
+a future upstream release changes `arch-makepkg-action` or moves the archlinux build to run
+natively instead of in a container, this `chown` becomes unnecessary (harmless either way, but
+worth removing for clarity) — re-verify which steps in this job are containerized before assuming
+this fix still applies.
+
 ## Release Acceptance
 Upgrade is accepted only if all checks pass:
 1. **Build Readiness:** `docs/BUILD_BLOCKER_ANALYSIS.md` shows no unresolved blockers; `cargo build --release` succeeds.

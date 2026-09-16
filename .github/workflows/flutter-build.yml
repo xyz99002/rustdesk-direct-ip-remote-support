@@ -1938,12 +1938,23 @@ jobs:
         if: matrix.job.arch == 'x86_64' && env.UPLOAD_RELEASE == 'true'
         shell: bash
         run: |
+          # The previous step builds inside a Docker container (rustdesk/makepkg), which
+          # frequently leaves files it wrote into this bind-mounted `res/` directory owned by
+          # root on the host - this step runs as the normal runner user and previously failed
+          # outright (exit 1) trying to `cp` into/over them. Normalize ownership first so this
+          # is resilient regardless of what the container left behind.
+          sudo chown -R "$(id -u):$(id -g)" res/ || true
           shopt -s nullglob
           sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
-          for f in res/rustdesk-${{ env.VERSION }}*.zst; do
+          matched=(res/rustdesk-${{ env.VERSION }}*.zst)
+          if [ "${#matched[@]}" -eq 0 ]; then
+            echo "::warning::No res/rustdesk-${{ env.VERSION }}*.zst file found to rename - Build archlinux package may not have produced one."
+          fi
+          for f in "${matched[@]}"; do
             d=$(dirname "$f"); b=$(basename "$f")
             rest="${b#rustdesk-${{ env.VERSION }}-}"
             [ "$rest" = "$b" ] && rest="${b#rustdesk-}"
+            echo "Renaming $f -> $d/rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-linux-${rest}"
             cp -f "$f" "$d/rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-linux-${rest}"
           done
 
