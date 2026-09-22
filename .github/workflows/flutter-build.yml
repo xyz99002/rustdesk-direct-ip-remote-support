@@ -2277,12 +2277,22 @@ jobs:
         if: env.UPLOAD_RELEASE == 'true'
         shell: bash
         run: |
+          # The preceding "Build appimage package" step runs appimage-builder via `sudo`, so the
+          # AppImage it produces in ./appimage/ comes out owned by root on the runner - this step
+          # runs as the normal user and previously failed outright (exit 1) trying to `cp` it.
+          # Same class of issue as the archlinux rename step above; same fix.
+          sudo chown -R "$(id -u):$(id -g)" ./appimage/ || true
           shopt -s nullglob
           sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
-          for f in ./appimage/rustdesk-${{ env.VERSION }}-*.AppImage; do
+          matched=(./appimage/rustdesk-${{ env.VERSION }}-*.AppImage)
+          if [ "${#matched[@]}" -eq 0 ]; then
+            echo "::warning::No ./appimage/rustdesk-${{ env.VERSION }}-*.AppImage file found to rename - Build appimage package may not have produced one."
+          fi
+          for f in "${matched[@]}"; do
             d=$(dirname "$f"); b=$(basename "$f")
             rest="${b#rustdesk-${{ env.VERSION }}-}"
             [ "$rest" = "$b" ] && rest="${b#rustdesk-}"
+            echo "Renaming $f -> $d/rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-linux-${rest}"
             cp -f "$f" "$d/rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-linux-${rest}"
           done
 
