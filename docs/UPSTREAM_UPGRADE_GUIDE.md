@@ -518,6 +518,21 @@ natively instead of in a container, this `chown` becomes unnecessary (harmless e
 worth removing for clarity) — re-verify which steps in this job are containerized before assuming
 this fix still applies.
 
+**Fourth bug, same class, fixed 2026-09-22**: after the archlinux fix above actually shipped and
+was verified (that job went fully green), the nightly build kept failing anyway — this time in
+both `Build appimage x86_64-unknown-linux-gnu` and `Build appimage aarch64-unknown-linux-gnu`, at
+their own "Rename release files (direct-ip)" step. Identical root cause, different trigger: the
+preceding "Build appimage package" step runs `appimage-builder` via `sudo` directly (not a Docker
+container this time, but same effect) — files it writes into `./appimage/` come out root-owned,
+and the following non-sudo rename step failed the same way. **This means the "one Docker step"
+framing above was too narrow** — the actual rule is "any step that produces output via `sudo` or a
+container, anywhere upstream of a plain-user file operation, is suspect," not just the specific
+archlinux case. Fixed with the identical pattern: `sudo chown -R "$(id -u):$(id -g)" ./appimage/`
+before the rename, plus the same array/warning/echo diagnostics. **Upgrade check**: before trusting
+that "the nightly build is fixed," grep every job in this file for `sudo ` followed later by a
+`cp`/`mv`/rename step in the same job without an intervening ownership fix — this pattern has now
+recurred twice and may still exist elsewhere undetected until it's actually exercised by a run.
+
 ## Release Acceptance
 Upgrade is accepted only if all checks pass:
 1. **Build Readiness:** `docs/BUILD_BLOCKER_ANALYSIS.md` shows no unresolved blockers; `cargo build --release` succeeds.
