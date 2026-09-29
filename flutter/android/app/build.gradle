@@ -96,8 +96,15 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId "com.carriez.flutter_hbb"
+        // Deliberately distinct from upstream's com.carriez.flutter_hbb so this fork's APK is
+        // treated as an independent package by the Play Store / Android package manager, rather
+        // than colliding with (or failing to install alongside) a real RustDesk Android app on
+        // the same device. Only the applicationId changes here - the Kotlin/Java package
+        // namespace (com.carriez.flutter_hbb, used for class references and JNI symbol names)
+        // is deliberately left unchanged; Android has always supported applicationId differing
+        // from the code namespace, so this needs no source-file renaming. See
+        // docs/UPSTREAM_UPGRADE_GUIDE.md "Android App Identity".
+        applicationId "com.rustdesk.directipremotesupport"
         minSdkVersion 22
         targetSdkVersion 33
         versionCode flutterVersionCode.toInteger()

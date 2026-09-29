@@ -324,6 +324,32 @@ ideally one with a real RustDesk `.deb` already installed.
 
 ### Phase 4 — macOS: same separation
 
+**Status: IMPLEMENTED 2026-09-29** — narrower in scope than originally estimated below; see
+"macOS App Identity" in `docs/UPSTREAM_UPGRADE_GUIDE.md` for the full detail, summarized here:
+
+- **The launchd daemon/agent concern below turned out to already be solved.** The original audit
+  (below, preserved for history) assumed `daemon.plist`/`agent.plist`/`install.scpt`/`uninstall.scpt`/
+  `update.scpt` would each need explicit identity-string edits. Investigation found
+  `src/platform/macos.rs::correct_app_name()` already generically substitutes the real running
+  bundle ID and `APP_NAME` into all of them before use, and has done so since the original
+  cross-platform `APP_NAME` fix — **none of those five files needed any changes.**
+- **What was actually changed**: `PRODUCT_BUNDLE_IDENTIFIER` (3 occurrences in `project.pbxproj`,
+  plus the matching line in `AppInfo.xcconfig`) → `com.rustdesk.DirectIPRemoteSupport`; `PRODUCT_NAME`
+  in `AppInfo.xcconfig` → `RustDesk-DirectIP-RemoteSupport` (which required updating every
+  hardcoded `.../Release/RustDesk.app` path across `build.py`, `.github/workflows/flutter-build.yml`,
+  `.github/workflows/playground.yml`, and `res/osx-dist.sh` to match the renamed bundle filename);
+  and `Info.plist`'s `CFBundleURLSchemes`/`CFBundleURLName`, which were stale against the
+  already-shipped `get_uri_prefix()` value (same bug class as the Linux `.desktop` `MimeType` fix in
+  Phase 3).
+- **Confirmed not a concern**: the entitlements/keychain-access-group risk flagged below doesn't
+  apply — neither `.entitlements` file has any bundle-id-scoped entries (app sandbox is disabled).
+- **Not implemented**: the Local/Remote install-time split mentioned below — same reasoning as the
+  Linux decision in Phase 3 (single package, no build-time split), not revisited here since macOS
+  packaging wasn't otherwise touched.
+
+<details>
+<summary>Original audit and proposed changes (2026-09-11, superseded above)</summary>
+
 From the audit:
 - **Bundle identifier**: `flutter/macos/Runner.xcodeproj/project.pbxproj` hardcodes
   `PRODUCT_BUNDLE_IDENTIFIER = com.carriez.rustdesk;` in three build configurations (Debug/
@@ -335,22 +361,8 @@ From the audit:
   (`Label: com.carriez.RustDesk_server`) both hardcode `AssociatedBundleIdentifiers` to
   `com.carriez.rustdesk` **and** hardcode the absolute path `/Applications/RustDesk.app/Contents/
   MacOS/...` — meaning even after a bundle-ID rename, these two files need their own explicit path
-  fix, not just an identifier substitution.
-
-#### Proposed changes
-
-- Change `PRODUCT_BUNDLE_IDENTIFIER` (3 occurrences in the `.pbxproj`) and the `Info.plist` URL
-  scheme owner to a distinct reverse-DNS id (e.g. `com.directipremote.rustdesk` — placeholder,
-  needs a real decision, ideally something we actually control the DNS/ownership implications of
-  if this is ever notarized/signed for distribution).
-  - Note found during audit, not previously flagged: this also affects code-signing/entitlements/
-    keychain-access-group assumptions elsewhere in the Xcode project — needs care, most
-    invasive single item in this plan after the (already-excluded) `CustomActions.cpp` change.
-- Change both launchd plists' `Label` and the hardcoded `/Applications/RustDesk.app/...` paths to
-  match the new bundle id / a distinct app name.
-- Apply the same Local/Remote install split conceptually (macOS packaging specifics TBD — likely a
-  separate signed `.dmg`/`.pkg` per variant, or a single package with a first-run picker like the
-  current portable behavior if a build-time split isn't practical on macOS's packaging model).
+  fix, not just an identifier substitution. *(Superseded — see above: this turned out to already be
+  handled generically by `correct_app_name()`.)*
 
 **Files touched (estimate)**: `flutter/macos/Runner.xcodeproj/project.pbxproj`, `Info.plist`,
 `src/platform/privileges_scripts/daemon.plist`, `src/platform/privileges_scripts/agent.plist`.
@@ -359,29 +371,49 @@ From the audit:
 noted above), no macOS build/signing environment available here at all — this phase can only be
 verified by CI build success plus manual testing on a real Mac.
 
+</details>
+
 ---
 
 ### Phase 5 — Android: same separation
+
+**Status: IMPLEMENTED 2026-09-29** — as low-risk as originally estimated; see "Android App Identity"
+in `docs/UPSTREAM_UPGRADE_GUIDE.md` for the full detail, summarized here:
+
+- **Changed**: `flutter/android/app/build.gradle`'s `applicationId` →
+  `com.rustdesk.directipremotesupport`. Nothing else — Android's `applicationId`/code-namespace
+  split means no Kotlin source, `AndroidManifest.xml` `package=` attribute, or JNI symbol renaming
+  was needed.
+- **Confirmed out of scope, not applicable**: no `google-services.json`/Firebase configuration
+  exists under `flutter/android/` at all — the dependency the original audit worried about doesn't
+  exist for this fork.
+- **Deliberately not changed**: the `rustdesk://` deep-link intent-filter scheme in
+  `AndroidManifest.xml`. Android/iOS never run `core_main()` (excluded by its own `#[cfg(...)]`), so
+  `APP_NAME`/`get_uri_prefix()` are never customized there in the first place — the app still
+  genuinely expects literal `rustdesk://`, so changing the manifest's registered scheme would have
+  been a regression, not a fix.
+- **New finding, explicitly out of scope**: `flutter/ios/` has its own `com.carriez.rustdesk`-based
+  bundle identifier and a real `GoogleService-Info.plist` (Firebase) — the same identity-collision
+  question as Android, unaddressed. iOS was never one of this plan's phases; flagged for a possible
+  future phase, not silently assumed covered.
+
+<details>
+<summary>Original audit and proposed changes (2026-09-11, superseded above)</summary>
 
 From the audit: `flutter/android/app/build.gradle`'s `applicationId "com.carriez.flutter_hbb"` was
 never changed from the upstream default, and per public information this likely matches the real
 RustDesk Android app's own package id — a latent collision never previously flagged because this
 investigation started from the Windows incident.
 
-#### Proposed changes
-
-- Change `applicationId` to a distinct value.
-- Update any Firebase config (`google-services.json`), deep-link intent filters, or push-
-  notification configuration tied to the old id (flagged in the audit as dependent on this value —
-  needs a closer look before changing, since Firebase project configuration is external to this
-  repo and may need a corresponding change on that side too).
-
 **Files touched (estimate)**: `flutter/android/app/build.gradle`, possibly
 `flutter/android/app/google-services.json` and Android manifest intent-filter entries.
 
 **Risk**: low for the `applicationId` line itself, but the Firebase/deep-link dependency is an
 external-service concern this plan can't fully resolve from the repo alone — needs a decision on
-whether Firebase/push notifications are even in use for this fork before proceeding.
+whether Firebase/push notifications are even in use for this fork before proceeding. *(Resolved
+above: no Firebase config exists, and the deep-link scheme is deliberately left unchanged.)*
+
+</details>
 
 ---
 
