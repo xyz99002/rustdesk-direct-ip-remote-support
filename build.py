@@ -337,6 +337,14 @@ def build_flutter_deb(version, features):
     system2('rm tmpdeb/usr/bin/rustdesk || true')
     system2(
         f'cp -r {flutter_build_dir}/* tmpdeb/usr/share/rustdesk-direct-ip-remote-support/')
+    # Bundle the local/remote sample configs next to the binary so `rustdesk --setup-local` /
+    # `--setup-remote` (fork_config.rs::copy_sample_config()) have something to copy from on a
+    # freshly installed package - this single package has no pre-baked role/config.toml of its
+    # own (unlike Windows's split Local/Remote MSI), so first-run setup is still required.
+    system2(
+        'cp ../configs/local.toml tmpdeb/usr/share/rustdesk-direct-ip-remote-support/local.toml')
+    system2(
+        'cp ../configs/remote.toml tmpdeb/usr/share/rustdesk-direct-ip-remote-support/remote.toml')
     system2(
         'cp ../res/rustdesk.service tmpdeb/usr/share/rustdesk-direct-ip-remote-support/files/systemd/rustdesk-direct-ip-remote-support.service')
     system2(

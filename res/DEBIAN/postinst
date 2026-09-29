@@ -21,7 +21,26 @@ if [ "$1" = configure ]; then
 			sed -i "s|pkill|/usr/bin/pkill|g" /usr/lib/systemd/system/rustdesk-direct-ip-remote-support.service
 		fi
 		systemctl daemon-reload
-		systemctl enable rustdesk-direct-ip-remote-support
-		systemctl start rustdesk-direct-ip-remote-support
+
+		# Fork config: only auto-enable/start the background service for a "remote" (inbound)
+		# install - a "local" (outbound-only) install has no legitimate use for it (see
+		# core_main.rs's is_outgoing_only() gate on this same service's --service/--server
+		# entry points). Unlike Windows's split Local/Remote MSI, this is a single package with
+		# no pre-baked role, so the role is read from config.toml if a prior `rustdesk
+		# --setup-local`/`--setup-remote` already created one (e.g. a reinstall/upgrade);
+		# otherwise (fresh install, no config.toml yet) default to NOT starting it - the safest
+		# choice, since role is not yet known.
+		CONFIG_FILE=/usr/share/rustdesk-direct-ip-remote-support/config.toml
+		ROLE=""
+		if [ -f "$CONFIG_FILE" ]; then
+			ROLE=$(grep -E '^[[:space:]]*role[[:space:]]*=' "$CONFIG_FILE" | head -1 | sed -E 's/^[[:space:]]*role[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/')
+		fi
+		if [ "$ROLE" = "remote" ]; then
+			systemctl enable rustdesk-direct-ip-remote-support
+			systemctl start rustdesk-direct-ip-remote-support
+		else
+			echo "rustdesk-direct-ip-remote-support: role is not 'remote' (or config.toml doesn't exist yet) - service installed but not enabled/started."
+			echo "Run 'rustdesk --setup-remote' then 'systemctl enable --now rustdesk-direct-ip-remote-support' to accept inbound connections."
+		fi
 	fi
 fi
