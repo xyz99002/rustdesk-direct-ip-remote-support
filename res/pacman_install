@@ -2,6 +2,25 @@
 #pre_install() {
 #}
 
+# Fork config: only auto-enable/start the background service for a "remote" (inbound) install -
+# read from config.toml if a prior `rustdesk --setup-local`/`--setup-remote` already created one
+# (e.g. a reinstall/upgrade); default to NOT starting it on a fresh install where role isn't known
+# yet. Mirrors the equivalent check in res/DEBIAN/postinst.
+_enable_and_start_if_remote() {
+	CONFIG_FILE=/usr/share/rustdesk-direct-ip-remote-support/config.toml
+	ROLE=""
+	if [ -f "$CONFIG_FILE" ]; then
+		ROLE=$(grep -E '^[[:space:]]*role[[:space:]]*=' "$CONFIG_FILE" | head -1 | sed -E 's/^[[:space:]]*role[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/')
+	fi
+	if [ "$ROLE" = "remote" ]; then
+		systemctl enable rustdesk-direct-ip-remote-support
+		systemctl start rustdesk-direct-ip-remote-support
+	else
+		echo "rustdesk-direct-ip-remote-support: role is not 'remote' (or config.toml doesn't exist yet) - service installed but not enabled/started."
+		echo "Run 'rustdesk --setup-remote' then 'systemctl enable --now rustdesk-direct-ip-remote-support' to accept inbound connections."
+	fi
+}
+
 # arg 1:  the new package version
 post_install() {
 	# do something here
@@ -9,8 +28,7 @@ post_install() {
 	cp /usr/share/rustdesk-direct-ip-remote-support/files/rustdesk.desktop /usr/share/applications/rustdesk-direct-ip-remote-support.desktop
 	cp /usr/share/rustdesk-direct-ip-remote-support/files/rustdesk-link.desktop /usr/share/applications/rustdesk-direct-ip-remote-support-link.desktop
 	systemctl daemon-reload
-	systemctl enable rustdesk-direct-ip-remote-support
-	systemctl start rustdesk-direct-ip-remote-support
+	_enable_and_start_if_remote
 	update-desktop-database
 }
 
@@ -27,8 +45,7 @@ post_upgrade() {
 	cp /usr/share/rustdesk-direct-ip-remote-support/files/rustdesk.desktop /usr/share/applications/rustdesk-direct-ip-remote-support.desktop
 	cp /usr/share/rustdesk-direct-ip-remote-support/files/rustdesk-link.desktop /usr/share/applications/rustdesk-direct-ip-remote-support-link.desktop
 	systemctl daemon-reload
-	systemctl enable rustdesk-direct-ip-remote-support
-	systemctl start rustdesk-direct-ip-remote-support
+	_enable_and_start_if_remote
 	update-desktop-database
 }
 

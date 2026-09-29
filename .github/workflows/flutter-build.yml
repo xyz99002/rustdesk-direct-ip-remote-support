@@ -1842,17 +1842,11 @@ jobs:
             export CARGO_INCREMENTAL=0
             export DEB_ARCH=${{ matrix.job.deb_arch }}
             python3 ./build.py --flutter --skip-cargo
-
-            # Bundle config samples next to the binary for .deb packaging
-            # Copy to standard Linux bundle location for both x86_64 and aarch64
-            ls -la ./flutter/build/linux/ 2>/dev/null || echo "Flutter build dir not found"
-            for arch_dir in ./flutter/build/linux/*/release/bundle/; do
-              if [ -d "$arch_dir" ]; then
-                cp configs/local.toml "$arch_dir/local.toml" 2>/dev/null || true
-                cp configs/remote.toml "$arch_dir/remote.toml" 2>/dev/null || true
-                echo "Config samples bundled to $arch_dir"
-              fi
-            done
+            # Note: local.toml/remote.toml are bundled into the .deb by build.py's
+            # build_flutter_deb() itself (copied into tmpdeb/ before packaging) - a step used to
+            # duplicate this here by copying into ./flutter/build/linux/*/release/bundle/, but
+            # that runs *after* build.py has already packaged the .deb from a separate tmpdeb/
+            # staging copy, so those files never actually reached the installed package. Removed.
 
             for name in rustdesk*??.deb; do
               mv "$name" "${name%%.deb}-${{ matrix.job.arch }}.deb"

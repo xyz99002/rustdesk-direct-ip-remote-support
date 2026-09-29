@@ -27,6 +27,10 @@ package() {
   fi
   mkdir -p "${pkgdir}/usr/bin"
   pushd ${pkgdir} && ln -s /usr/share/rustdesk-direct-ip-remote-support/rustdesk usr/bin/rustdesk && popd
+  # Sample configs so `rustdesk --setup-local`/`--setup-remote` (fork_config.rs::copy_sample_config())
+  # have something to copy from on a freshly installed package.
+  install -Dm 644 $HBB/configs/local.toml "${pkgdir}/usr/share/rustdesk-direct-ip-remote-support/local.toml"
+  install -Dm 644 $HBB/configs/remote.toml "${pkgdir}/usr/share/rustdesk-direct-ip-remote-support/remote.toml"
   install -Dm 644 $HBB/res/rustdesk.service -t "${pkgdir}/usr/share/rustdesk-direct-ip-remote-support/files"
   install -Dm 644 $HBB/res/rustdesk.desktop -t "${pkgdir}/usr/share/rustdesk-direct-ip-remote-support/files"
   install -Dm 644 $HBB/res/rustdesk-link.desktop -t "${pkgdir}/usr/share/rustdesk-direct-ip-remote-support/files"

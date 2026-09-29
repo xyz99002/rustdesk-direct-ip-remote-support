@@ -292,14 +292,27 @@ From the prior cross-platform audit, all of the following independently hardcode
   `docs/UPSTREAM_UPGRADE_GUIDE.md` for the detailed tradeoff writeup.
 - **`res/rpm.spec`/`res/rpm-flutter.spec` left untouched** — confirmed dead (not referenced by any
   CI workflow step), so updating them would be speculative work with no way to verify it.
-- **Not implemented (deferred, see "What does NOT change" below and the UPSTREAM_UPGRADE_GUIDE
-  hook point for the reasoning)**:
-  - Install-time Local/Remote split (`postinst` unconditionally enables+starts the systemd service
-    regardless of role — this would need either two `.deb`/PKGBUILD build variants mirroring the
-    two-MSI Windows approach, or a smarter conditional `postinst`, neither of which exists).
-  - Pre-baked `config.toml` per variant (depends on the above split existing first).
+- **Install-time Local/Remote split: IMPLEMENTED 2026-09-29**, as a follow-up to the identity work
+  above, in a single package rather than two build variants (see "Linux Install-Time Role Gating" in
+  `docs/UPSTREAM_UPGRADE_GUIDE.md` for the full detail):
+  - `build.py::build_flutter_deb()` now bundles `configs/local.toml`/`configs/remote.toml` into the
+    package so `rustdesk --setup-local`/`--setup-remote` has something to read — this also fixed a
+    real bug where a prior CI step tried to do this same bundling but placed the files after
+    `build.py` had already packaged the `.deb` from a separate staging copy, so they never actually
+    reached the installed package.
+  - `res/DEBIAN/postinst` and `res/pacman_install` no longer unconditionally `systemctl enable`/
+    `start` the service — they read `role` from an already-existing `config.toml` (present only
+    after a prior `--setup-local`/`--setup-remote` run) and only enable+start for `role = "remote"`;
+    a fresh install with no `config.toml` yet defaults to installed-but-not-started.
+  - `res/PKGBUILD`/`res/pacman_install` got the equivalent config-bundling and role-check changes.
+  - **Deliberately not done**: splitting into two `.deb`/PKGBUILD build variants (mirroring the
+    two-MSI Windows approach) with a pre-baked `config.toml` per variant. Assessed as too large a
+    surface change to make safely without a real Linux build/install environment to verify against,
+    given it would also ripple into the AppImage/flatpak jobs (both built from the single `.deb`).
+    The single-package-with-role-check approach above achieves the same practical outcome (no
+    Local-role install ever auto-starts an inbound-accepting service) without that risk.
   - PAM service name (`/etc/pam.d/rustdesk`), polkit action ID, `/etc/rustdesk/` config directory
-    naming — assessed as lower collision risk than the items above; not renamed.
+    naming — assessed as lower collision risk than the items above; still not renamed.
 
 **Risk**: moderate — more files than Windows Phase 1, but all plain text/script changes (no
 compiled native code except the one-line `my_application.cc` fix, no WiX), and no verification

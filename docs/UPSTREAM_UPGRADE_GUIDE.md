@@ -318,20 +318,47 @@ Verify, on any upstream merge that touches `build.py`, `res/DEBIAN/*`, `res/rust
   `get_uri_prefix()`'s derivation ever changes, re-derive this exact string and re-check it against
   the `.desktop` file — a silent mismatch here means `rustdesk://`-style deep links resolve to
   nothing instead of erroring loudly.
-- **Explicitly deferred, not implemented**: PAM service name (`/etc/pam.d/rustdesk`), polkit action
-  ID, and the `/etc/rustdesk/` config directory are still shared/generic. Lower collision risk than
-  the items above (PAM/polkit are keyed by service name at authorization time, not by a persistent
-  install-time file collision; `/etc/rustdesk/` currently only holds `startwm.sh`/`xorg.conf`, which
-  are read-only reference files, not runtime state).
-- **Also explicitly deferred, not implemented**: install-time role gating. `res/DEBIAN/postinst`
-  still unconditionally does `systemctl enable`/`systemctl start` on the (now-renamed)
-  `rustdesk-direct-ip-remote-support.service` regardless of `role`. This is the Linux equivalent of
-  the Windows MSI's `get_create_service()` gate, which only creates the service for the Remote MSI
-  variant. Doing the same for Linux would need either two `.deb`/PKGBUILD build variants (mirroring
-  the two-MSI approach, with a pre-baked `config.toml` per variant) or a smarter conditional
-  `postinst` that reads a pre-seeded role before deciding whether to enable the service — neither is
-  implemented. Today, installing this fork's `.deb`/pacman package on Linux always installs and
-  starts the background service, even for what would be a "Local"-only install on Windows.
+
+### Linux Install-Time Role Gating (implemented 2026-09-29, `docs/PLAN-install-separator.md` Phase 2 follow-up)
+Verify, on any upstream merge that touches `res/DEBIAN/postinst`, `res/pacman_install`, or
+`build.py::build_flutter_deb()`:
+- **Deliberately kept as a single package**, unlike Windows's split Local/Remote MSI — a second
+  Linux build-variant axis (on top of `.deb`/archlinux/AppImage/flatpak, each already downstream of
+  the single `.deb`) was judged too large a surface to add safely without a real Linux test
+  environment. Instead, the *same* package now behaves correctly for both roles at install time:
+  - `build.py::build_flutter_deb()` now bundles `configs/local.toml` and `configs/remote.toml`
+    (unrenamed, as sample files) into the installed package next to the binary — this is what
+    `rustdesk --setup-local`/`--setup-remote` (`fork_config.rs::copy_sample_config()`) actually
+    reads from. **Fixed a real, previously-broken step here**: a prior CI step in
+    `.github/workflows/flutter-build.yml` tried to do this same bundling, but copied the sample
+    files into `./flutter/build/linux/*/release/bundle/` *after* `build.py` had already read from
+    that directory into its own `tmpdeb/` staging copy and packaged the `.deb` — so the files never
+    actually reached the installed package. That step is removed; the bundling now happens inside
+    `build_flutter_deb()` itself, before packaging.
+  - `res/DEBIAN/postinst` and `res/pacman_install` no longer unconditionally `systemctl enable`/
+    `start` the service. They now check `/usr/share/rustdesk-direct-ip-remote-support/config.toml`
+    for a `role = "..."` line (present only if a prior `--setup-local`/`--setup-remote` run, e.g. on
+    a reinstall/upgrade, already created one) and only enable+start when it reads `"remote"`. A
+    fresh install (no `config.toml` yet, role not yet chosen) defaults to installed-but-not-started
+    — the safe choice, matching the same "local role has no legitimate use for the background
+    service" reasoning as the runtime `--service`/`--server` gate above.
+  - **Upgrade check**: if a future upstream release changes `fork_config.rs`'s `[options]` table
+    format (e.g. quoting style, key renamed away from `role`), the `grep`/`sed` line in both scripts
+    that extracts the role value will need to change to match — it is deliberately a plain-text
+    regex against the TOML, not a real parser (no TOML library available in a bare postinst/pacman
+    shell script), so a format change silently breaks the extraction rather than erroring loudly.
+    Re-verify the regex still matches after any such change.
+- **Not implemented (still requires a real design decision, not just plumbing)**: there's currently
+  no way to flip an already-installed Local-behaving package into enabling the service *without*
+  reinstalling, other than the manual `rustdesk --setup-remote && systemctl enable --now
+  rustdesk-direct-ip-remote-support` sequence printed by `postinst`/`pacman_install` themselves.
+  This is intentional (matches "first-run setup is a one-time interactive/CLI step" elsewhere in
+  this fork) but worth knowing before assuming any packaging automation handles it.
+- **Still explicitly deferred, not implemented**: PAM service name (`/etc/pam.d/rustdesk`), polkit
+  action ID, and the `/etc/rustdesk/` config directory are still shared/generic. Lower collision
+  risk than the items in "Linux Install/Role Separation" above (PAM/polkit are keyed by service name
+  at authorization time, not by a persistent install-time file collision; `/etc/rustdesk/` currently
+  only holds `startwm.sh`/`xorg.conf`, which are read-only reference files, not runtime state).
 
 ### File Copy/Paste Default (implemented 2026-09-12)
 Verify:
