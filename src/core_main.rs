@@ -613,10 +613,27 @@ pub fn core_main() -> Option<Vec<String>> {
             crate::platform::uninstall_service(false, true);
             return None;
         } else if args[0] == "--service" {
-            log::info!("start --service");
-            crate::start_os_service();
+            // Fork config: a role=local (outgoing-only) instance never accepts inbound
+            // connections and has no background-service work to do (see the identical
+            // role=local gate on the plain-GUI-launch server spawn, above in this same
+            // function) - but on Linux/macOS this entry point is invoked unconditionally by
+            // systemd/launchd regardless of role, since the packaging install-time gate
+            // equivalent to Windows's is_outgoing_only()-checked service creation doesn't
+            // exist yet for these platforms. Gate here too so a role=local install's service
+            // unit exits cleanly instead of running a real (if functionally idle) background
+            // daemon.
+            if config::is_outgoing_only() {
+                log::info!("--service: role=local (outgoing-only), nothing to do, exiting");
+            } else {
+                log::info!("start --service");
+                crate::start_os_service();
+            }
             return None;
         } else if args[0] == "--server" {
+            if config::is_outgoing_only() {
+                log::info!("--server: role=local (outgoing-only), nothing to do, exiting");
+                return None;
+            }
             log::info!("start --server with user {}", crate::username());
             #[cfg(target_os = "linux")]
             {
