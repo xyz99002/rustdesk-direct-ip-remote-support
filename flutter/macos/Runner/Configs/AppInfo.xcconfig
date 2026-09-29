@@ -5,10 +5,16 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = RustDesk
+PRODUCT_NAME = RustDesk-DirectIP-RemoteSupport
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.carriez.flutterHbb
+//
+// Kept distinct from upstream's com.carriez.rustdesk so Launch Services, the sandboxed
+// ~/Library/Containers/<bundle-id> path, and app-identity APIs never collide with a real
+// RustDesk.app on the same machine - see docs/UPSTREAM_UPGRADE_GUIDE.md "macOS App Identity".
+// Note: this value is currently overridden directly in project.pbxproj's Runner target build
+// settings (all 3 configs) rather than inherited from here - keep both in sync.
+PRODUCT_BUNDLE_IDENTIFIER = com.rustdesk.DirectIPRemoteSupport
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 Purslane Tech Pte. Ltd. All rights reserved.
