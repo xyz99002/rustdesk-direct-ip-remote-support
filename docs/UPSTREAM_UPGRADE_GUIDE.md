@@ -266,6 +266,73 @@ Verify:
   to `res/rustdesk.service` (or the macOS launchd plists gain retry behavior), re-verify this gate
   still results in a single clean exit, not a crash-restart loop, for `role=local`.
 
+### Linux Install/Role Separation (implemented 2026-09-28, `docs/PLAN-install-separator.md` Phase 3)
+Verify, on any upstream merge that touches `build.py`, `res/DEBIAN/*`, `res/rustdesk*.desktop`,
+`res/rustdesk.service`, `res/PKGBUILD`, `res/pacman_install`, `appimage/AppImageBuilder-*.yml`, or
+`flatpak/rustdesk.json`:
+- **Package/app identity, not just filenames.** A prior CI fix (2026-09-27) already renames the
+  *output artifact filenames* (e.g. `rustdesk-direct-ip-*.zst`/`.AppImage`) post-build. That is
+  cosmetic only — it does not change what the package manager itself thinks the package is. The
+  identifiers that actually matter for avoiding a collision/replace with a real RustDesk install on
+  the same machine are: dpkg `Package:` field (`build.py::generate_control_file()`, now
+  `rustdesk-direct-ip-remote-support`), the PKGBUILD `pkgname` (`res/PKGBUILD`, same value), and the
+  flatpak `id` (`flatpak/rustdesk.json`, `com.rustdesk.DirectIPRemoteSupport`). Re-verify these
+  after any upstream change to the packaging scripts — it's easy to fix the CI rename step and miss
+  that the package's own internal identity is unchanged underneath.
+- **Install directory renamed**: `/usr/share/rustdesk` → `/usr/share/rustdesk-direct-ip-remote-support`
+  throughout `build.py` (`build_flutter_deb()`/`build_deb_from_folder()`), `res/PKGBUILD`,
+  `res/pacman_install`, and the appimage recipes. The **binary command name itself is deliberately
+  left as `rustdesk`** (matching the Windows precedent of keeping `rustdesk.exe` unchanged) — only
+  the directory it lives in and the package-level names around it are distinct. This means the
+  `/usr/bin/rustdesk` symlink target itself is still a shared global path; two packages (this fork's
+  `.deb`/PKGBUILD and a real RustDesk's) each installing that same symlink is a known, accepted
+  residual collision risk, deliberately not solved here (would require renaming the actual `rustdesk`
+  command, out of scope per explicit decision) — dpkg/pacman will flag a file conflict if both are
+  installed at once. Not an issue for flatpak/AppImage, which sandbox their own prefix.
+- **systemd unit renamed**: `res/rustdesk.service`'s `Description=` and the unit's *installed*
+  filename (`rustdesk-direct-ip-remote-support.service`, set in `res/DEBIAN/postinst`/`prerm` and
+  `res/pacman_install`, not in the `.service` file's own name in `res/`) both changed. `ExecStart=
+  /usr/bin/rustdesk --service` is unchanged (see binary-name note above).
+- **`.desktop` entries renamed**: `res/rustdesk.desktop`'s `Name=`/`Icon=` and
+  `res/rustdesk-link.desktop`'s `Name=`/`Icon=`/`MimeType=` all changed; their *installed* filenames
+  (`rustdesk-direct-ip-remote-support[.desktop|-link.desktop]`) are set at copy time in `build.py`/
+  `res/pacman_install`/the flatpak `rename-desktop-file` field, not in the `res/` source filenames
+  themselves (left as `rustdesk.desktop`/`rustdesk-link.desktop` on disk to minimize diff noise).
+  `Exec=`/`TryExec=rustdesk` unchanged (binary name). `StartupWMClass=rustdesk` unchanged — GTK's
+  default WM_CLASS derives from the process's argv[0]/prgname, which is still `rustdesk`, not from
+  this file.
+- **Icon filenames renamed** in the shared `/usr/share/icons/hicolor/{size}/apps/` namespace:
+  `rustdesk.png`/`rustdesk.svg` → `rustdesk-direct-ip-remote-support.{png,svg}`, everywhere they're
+  copied (`build.py`, `res/PKGBUILD`, appimage recipes). `flutter/linux/my_application.cc`'s
+  `gtk_icon_theme_load_icon()` call was updated to look up the new icon name — this is a real C++
+  code change (not just packaging), needed because the in-app window-icon lookup is by icon-theme
+  name, not path.
+- **Fixed a latent, previously-undiscovered bug found during this work**: `res/rustdesk-link.desktop`'s
+  `MimeType=x-scheme-handler/rustdesk;` was already stale *before* any of the above renaming — it
+  never matched the runtime `get_uri_prefix()` value (`format!("{}://",
+  get_app_name().to_lowercase())`), which has computed `rustdesk-directip-remotesupport://` on every
+  platform (Linux/macOS included) ever since the cross-platform `APP_NAME` fix, because that fix is
+  guarded only by `#[cfg(not(any(target_os = "android", target_os = "ios")))]` at the top of
+  `core_main()` — not Windows-only as the packaging files assumed. Now fixed to
+  `x-scheme-handler/rustdesk-directip-remotesupport;`. **Upgrade check**: if `APP_NAME` or
+  `get_uri_prefix()`'s derivation ever changes, re-derive this exact string and re-check it against
+  the `.desktop` file — a silent mismatch here means `rustdesk://`-style deep links resolve to
+  nothing instead of erroring loudly.
+- **Explicitly deferred, not implemented**: PAM service name (`/etc/pam.d/rustdesk`), polkit action
+  ID, and the `/etc/rustdesk/` config directory are still shared/generic. Lower collision risk than
+  the items above (PAM/polkit are keyed by service name at authorization time, not by a persistent
+  install-time file collision; `/etc/rustdesk/` currently only holds `startwm.sh`/`xorg.conf`, which
+  are read-only reference files, not runtime state).
+- **Also explicitly deferred, not implemented**: install-time role gating. `res/DEBIAN/postinst`
+  still unconditionally does `systemctl enable`/`systemctl start` on the (now-renamed)
+  `rustdesk-direct-ip-remote-support.service` regardless of `role`. This is the Linux equivalent of
+  the Windows MSI's `get_create_service()` gate, which only creates the service for the Remote MSI
+  variant. Doing the same for Linux would need either two `.deb`/PKGBUILD build variants (mirroring
+  the two-MSI approach, with a pre-baked `config.toml` per variant) or a smarter conditional
+  `postinst` that reads a pre-seeded role before deciding whether to enable the service — neither is
+  implemented. Today, installing this fork's `.deb`/pacman package on Linux always installs and
+  starts the background service, even for what would be a "Local"-only install on Windows.
+
 ### File Copy/Paste Default (implemented 2026-09-12)
 Verify:
 - `fork_config.rs::apply()` still unconditionally sets

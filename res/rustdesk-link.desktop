@@ -1,10 +1,10 @@
 [Desktop Entry]
-Name=RustDesk
+Name=RustDesk-DirectIP-RemoteSupport
 NoDisplay=true
-MimeType=x-scheme-handler/rustdesk;
+MimeType=x-scheme-handler/rustdesk-directip-remotesupport;
 TryExec=rustdesk
 Exec=rustdesk %u
-Icon=rustdesk
+Icon=rustdesk-direct-ip-remote-support
 Terminal=false
 Type=Application
 StartupNotify=false

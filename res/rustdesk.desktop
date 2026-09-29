@@ -1,9 +1,9 @@
 [Desktop Entry]
-Name=RustDesk
+Name=RustDesk-DirectIP-RemoteSupport
 GenericName=Remote Desktop
 Comment=Remote Desktop
 Exec=rustdesk %u
-Icon=rustdesk
+Icon=rustdesk-direct-ip-remote-support
 Terminal=false
 Type=Application
 StartupNotify=true
