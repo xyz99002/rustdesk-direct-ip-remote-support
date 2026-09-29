@@ -311,8 +311,15 @@ From the prior cross-platform audit, all of the following independently hardcode
     given it would also ripple into the AppImage/flatpak jobs (both built from the single `.deb`).
     The single-package-with-role-check approach above achieves the same practical outcome (no
     Local-role install ever auto-starts an inbound-accepting service) without that risk.
-  - PAM service name (`/etc/pam.d/rustdesk`), polkit action ID, `/etc/rustdesk/` config directory
-    naming — assessed as lower collision risk than the items above; still not renamed.
+  - **PAM service name, polkit action ID, `/etc/rustdesk/` naming: IMPLEMENTED 2026-09-29** (was
+    listed here as deferred; see "PAM service name"/"Polkit action ID"/"`/etc/rustdesk/` config
+    directory" in `docs/UPSTREAM_UPGRADE_GUIDE.md` for full detail). The PAM rename turned out to fix
+    a real, previously-undiscovered bug (`pam_get_service_name()` was silently falling back to the
+    `gdm` PAM stack on every install, since it already looked for a file matching the fork's own
+    `APP_NAME` that the packaging never actually installed under that name). The "polkit action ID"
+    item turned out not to exist in this codebase at all — no `.policy` file or polkit API call
+    anywhere — corrected rather than fixing something that isn't there. `/etc/rustdesk/` was renamed
+    for packaging hygiene only (nothing reads it by path).
 
 **Risk**: moderate — more files than Windows Phase 1, but all plain text/script changes (no
 compiled native code except the one-line `my_application.cc` fix, no WiX), and no verification
@@ -392,10 +399,15 @@ in `docs/UPSTREAM_UPGRADE_GUIDE.md` for the full detail, summarized here:
   `APP_NAME`/`get_uri_prefix()` are never customized there in the first place — the app still
   genuinely expects literal `rustdesk://`, so changing the manifest's registered scheme would have
   been a regression, not a fix.
-- **New finding, explicitly out of scope**: `flutter/ios/` has its own `com.carriez.rustdesk`-based
-  bundle identifier and a real `GoogleService-Info.plist` (Firebase) — the same identity-collision
-  question as Android, unaddressed. iOS was never one of this plan's phases; flagged for a possible
-  future phase, not silently assumed covered.
+- **iOS: IMPLEMENTED 2026-09-29 as a follow-on** (never one of this plan's original five phases —
+  see "iOS App Identity" in `docs/UPSTREAM_UPGRADE_GUIDE.md`). Changed `PRODUCT_BUNDLE_IDENTIFIER`
+  (`com.carriez.flutterHbb` → `com.rustdesk.DirectIPRemoteSupport`) and the app display name, after
+  confirming (not assuming) that the `aps-environment` entitlement and `GoogleService-Info.plist`
+  (Firebase) it carries are both fully dead — no Firebase dependency is active in `pubspec.yaml`, no
+  Firebase initialization call exists anywhere, and no push-notification handling code exists.
+  Deleted the now-doubly-stale, already-orphaned `GoogleService-Info.plist` rather than trying to
+  keep a dead file's bundle-id reference in sync. Left `CFBundleURLSchemes` unchanged for the same
+  reason as Android (`core_main()` excludes iOS too).
 
 <details>
 <summary>Original audit and proposed changes (2026-09-11, superseded above)</summary>

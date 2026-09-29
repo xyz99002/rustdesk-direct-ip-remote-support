@@ -327,7 +327,7 @@ def build_flutter_deb(version, features):
     system2('flutter build linux --release')
     system2('mkdir -p tmpdeb/usr/bin/')
     system2('mkdir -p tmpdeb/usr/share/rustdesk-direct-ip-remote-support')
-    system2('mkdir -p tmpdeb/etc/rustdesk/')
+    system2('mkdir -p tmpdeb/etc/rustdesk-direct-ip-remote-support/')
     system2('mkdir -p tmpdeb/etc/pam.d/')
     system2('mkdir -p tmpdeb/usr/share/rustdesk-direct-ip-remote-support/files/systemd/')
     system2('mkdir -p tmpdeb/usr/share/icons/hicolor/256x256/apps/')
@@ -356,11 +356,15 @@ def build_flutter_deb(version, features):
     system2(
         'cp ../res/rustdesk-link.desktop tmpdeb/usr/share/applications/rustdesk-direct-ip-remote-support-link.desktop')
     system2(
-        'cp ../res/startwm.sh tmpdeb/etc/rustdesk/')
+        'cp ../res/startwm.sh tmpdeb/etc/rustdesk-direct-ip-remote-support/')
     system2(
-        'cp ../res/xorg.conf tmpdeb/etc/rustdesk/')
+        'cp ../res/xorg.conf tmpdeb/etc/rustdesk-direct-ip-remote-support/')
+    # Renamed to match pam_get_service_name() (src/platform/linux_desktop_manager.rs), which
+    # looks for /etc/pam.d/{get_app_name().to_lowercase()} at runtime and silently falls back to
+    # the "gdm" PAM stack if that file doesn't exist - installing this under the old literal
+    # "rustdesk" name here would leave that check always failing.
     system2(
-        'cp ../res/pam.d/rustdesk.debian tmpdeb/etc/pam.d/rustdesk')
+        'cp ../res/pam.d/rustdesk.debian tmpdeb/etc/pam.d/rustdesk-direct-ip-remote-support')
     system2(
         "echo \"#!/bin/sh\" >> tmpdeb/usr/share/rustdesk-direct-ip-remote-support/files/polkit && chmod a+x tmpdeb/usr/share/rustdesk-direct-ip-remote-support/files/polkit")
 

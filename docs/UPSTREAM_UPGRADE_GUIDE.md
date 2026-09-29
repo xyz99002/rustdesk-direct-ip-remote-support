@@ -354,11 +354,37 @@ Verify, on any upstream merge that touches `res/DEBIAN/postinst`, `res/pacman_in
   rustdesk-direct-ip-remote-support` sequence printed by `postinst`/`pacman_install` themselves.
   This is intentional (matches "first-run setup is a one-time interactive/CLI step" elsewhere in
   this fork) but worth knowing before assuming any packaging automation handles it.
-- **Still explicitly deferred, not implemented**: PAM service name (`/etc/pam.d/rustdesk`), polkit
-  action ID, and the `/etc/rustdesk/` config directory are still shared/generic. Lower collision
-  risk than the items in "Linux Install/Role Separation" above (PAM/polkit are keyed by service name
-  at authorization time, not by a persistent install-time file collision; `/etc/rustdesk/` currently
-  only holds `startwm.sh`/`xorg.conf`, which are read-only reference files, not runtime state).
+- **PAM service name: IMPLEMENTED 2026-09-29 — and turned out to be a real, previously-undiscovered
+  functional bug, not just a collision-avoidance nice-to-have.** `src/platform/linux_desktop_manager.rs`'s
+  `pam_get_service_name()` already dynamically computes the *expected* PAM service filename as
+  `/etc/pam.d/{get_app_name().to_lowercase()}` and **silently falls back to the `"gdm"` PAM stack**
+  if that file doesn't exist. Since `APP_NAME` has been `"RustDesk-DirectIP-RemoteSupport"` since the
+  original cross-platform identity fix (well before any of this Linux packaging work), and the `.deb`
+  was still installing the PAM config at the literal old path `/etc/pam.d/rustdesk`, this check has
+  been failing and silently using `gdm`'s PAM stack instead of a fork-specific one on every install,
+  the whole time — a real bug, not a hypothetical. Fixed by renaming the installed file (in
+  `build.py::build_flutter_deb()`) to `/etc/pam.d/rustdesk-direct-ip-remote-support`, matching what
+  `pam_get_service_name()` already looked for. **Upgrade check**: if `pam_get_service_name()`'s
+  derivation ever changes (e.g. a different fallback name, or a different case transform), re-verify
+  the installed PAM file's name still matches exactly, or this silent-fallback bug returns.
+  Archlinux (`res/PKGBUILD`) does not install a PAM config file at all — confirmed pre-existing (not
+  a regression from this fix), so `pam_get_service_name()` always falls back to `gdm` there;
+  flagged, not fixed, since it would mean introducing a new file/behavior this plan didn't
+  previously ship on that platform.
+- **Polkit action ID: investigated, found not to be a real gap.** No `.policy` action-definition
+  file, D-Bus polkit authority check, or `pkexec`/`polkit` API call exists anywhere in this
+  codebase — `build.py` only `mkdir -p`s an (empty) `usr/share/polkit-1/actions/` directory and
+  drops an unrelated placeholder script at `.../files/polkit` (a no-op shell script containing only
+  a shebang, not installed into that actions directory). There is no actual polkit action ID to
+  rename. The item in the original audit was speculative/generic, not based on something present in
+  this repo — corrected here rather than fixing something that doesn't exist.
+- **`/etc/rustdesk/` config directory: IMPLEMENTED 2026-09-29** — renamed to
+  `/etc/rustdesk-direct-ip-remote-support/` in `build.py::build_flutter_deb()` (the only place that
+  installs into it; `res/PKGBUILD` doesn't install these files at all). Confirmed nothing in `src/`
+  or `libs/hbb_common` reads this path by name — it only holds `startwm.sh`/`xorg.conf`, reference
+  files for an xrdp-style X session setup that an admin would point a separate, externally-managed
+  X session manager config at manually; the rename is packaging-hygiene/collision-avoidance only,
+  not a functional fix like the PAM one above.
 
 ### macOS App Identity (implemented 2026-09-29, `docs/PLAN-install-separator.md` Phase 4)
 Verify, on any upstream merge that touches `flutter/macos/Runner/Configs/AppInfo.xcconfig`,
@@ -449,12 +475,45 @@ Verify, on any upstream merge that touches `flutter/android/app/build.gradle`:
   decision and update the manifest scheme to match at that point.
 - **Confirmed out of scope, not touched**: no `google-services.json`/Firebase configuration exists
   anywhere under `flutter/android/`, so the Firebase/push-notification dependency the original plan
-  worried about does not apply. **New finding, explicitly out of scope for this phase**: `flutter/ios/`
-  *does* have `GoogleService-Info.plist` and its own `com.carriez.rustdesk`-based
-  `PRODUCT_BUNDLE_IDENTIFIER` in `flutter/ios/Runner.xcodeproj/project.pbxproj` — the same class of
-  identity collision this phase fixes for Android, unaddressed on iOS. iOS was never one of this
-  plan's five phases (Windows/Linux/macOS/Android only); flagged here as a real, discovered gap for
-  a possible future phase, not silently left for someone to assume was covered.
+  worried about does not apply. (iOS *did* have a real `GoogleService-Info.plist` — see "iOS App
+  Identity" below, a follow-on phase added 2026-09-29 after this Android phase landed.)
+
+### iOS App Identity (implemented 2026-09-29, follow-on to `docs/PLAN-install-separator.md` Phase 5 —
+never one of the plan's original five phases; added after being flagged as a discovered gap)
+Verify, on any upstream merge that touches `flutter/ios/Runner.xcodeproj/project.pbxproj`,
+`flutter/ios/Runner/Info.plist`, or `flutter/ios/exportOptions.plist`:
+- **Changed**: `PRODUCT_BUNDLE_IDENTIFIER` (3 occurrences in `project.pbxproj`) `com.carriez.flutterHbb`
+  → `com.rustdesk.DirectIPRemoteSupport`; `Info.plist`'s `CFBundleDisplayName`/`CFBundleName`
+  (`RustDesk` → `RustDesk-DirectIP-RemoteSupport`) and `CFBundleURLName` (→
+  `$(PRODUCT_BUNDLE_IDENTIFIER)`, matching the macOS fix); `exportOptions.plist`'s
+  `provisioningProfiles` dictionary key (unused by CI — this file isn't referenced by any workflow —
+  but kept in sync for anyone doing a manual signed App Store export later).
+- **This carried a real risk the Android phase didn't**: iOS actually has `aps-environment` (push
+  notifications) in `Runner.entitlements` and a real `GoogleService-Info.plist` referencing
+  upstream's own Firebase project (`PROJECT_ID: rustdesk`, `BUNDLE_ID: com.carriez.flutterHbb`) — a
+  bundle-ID rename could plausibly break push notifications or Firebase initialization if either
+  were actually wired up. **Verified before proceeding, not assumed**: `flutter/pubspec.yaml`'s only
+  Firebase dependency (`firebase_analytics`) is commented out; no `firebase_core`/Firebase
+  initialization call exists anywhere in `flutter/lib/` or `flutter/ios/Runner/AppDelegate.swift`;
+  and `GoogleService-Info.plist` was not referenced anywhere in `project.pbxproj` (not a build
+  resource, not bundled into the IPA) — fully orphaned. No code path anywhere registers for push
+  notifications either. This confirmed the rename was safe to make.
+- **Deleted `flutter/ios/Runner/GoogleService-Info.plist`** rather than trying to keep it in sync —
+  it was already dead (see above), and leaving it in place would mean it permanently references a
+  stale bundle ID that no longer matches anything, for no functional benefit. **Upgrade check**: if
+  a future upstream release actually wires up Firebase (adds `firebase_core`, calls
+  `Firebase.initializeApp()`/`FirebaseApp.configure()`, or starts registering for remote
+  notifications), this whole assessment needs redoing — at that point a fork-owned Firebase project
+  would be needed before changing `PRODUCT_BUNDLE_IDENTIFIER` further, since Firebase apps are
+  registered per bundle ID against a specific project this fork doesn't control.
+- **Deliberately left unchanged, same reasoning as Android**: `CFBundleURLSchemes` (`rustdesk`) —
+  iOS is excluded from `core_main()` by the same `#[cfg(...)]` as Android, so `get_uri_prefix()` is
+  never customized here either; the app still expects literal `rustdesk://`.
+- **`PRODUCT_NAME` (`"$(TARGET_NAME)"`, resolving to the Xcode target's own name "Runner") was left
+  unchanged** — unlike macOS, iOS has no `AppInfo.xcconfig`-style override, and no CI step or script
+  hardcodes an expected `RustDesk.app`/`.ipa` product name for iOS (the `flutter build ipa` /
+  publish steps in `flutter-build.yml` are either unaffected or already commented out), so there was
+  nothing to keep in sync by renaming it.
 
 ### File Copy/Paste Default (implemented 2026-09-12)
 Verify:
