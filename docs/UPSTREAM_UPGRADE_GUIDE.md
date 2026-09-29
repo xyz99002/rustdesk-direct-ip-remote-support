@@ -254,6 +254,17 @@ Verify:
 - Not yet extended to `SENDER`'s other touchpoints (e.g. `check_mouse_time()`) — confirmed
   unreachable for `role=local` in practice (inbound-session-only call paths); re-verify this
   assumption if a future upstream release starts calling those from an outgoing-only code path.
+- **Extended 2026-09-28 to the Linux/macOS systemd/launchd entry point**: the original 2026-09-11
+  fix only covered the plain interactive GUI launch (`args.is_empty()`); it did **not** cover
+  `--service`/`--server`, the entry points systemd (`res/rustdesk.service`, unconditionally
+  enabled/started by `res/DEBIAN/postinst` regardless of role — see "Linux Install/Role
+  Separation" below) and launchd invoke. `core_main.rs`'s `--service` and `--server` arg branches
+  now both check `config::is_outgoing_only()` first and exit cleanly (logging why) instead of
+  calling `start_os_service()`/`start_server(true, false)` for `role=local` — confirmed the
+  systemd unit has no `Restart=` directive (defaults to `Restart=no`), so this clean exit does not
+  cause a restart loop. **Upgrade check**: if a future upstream release adds a `Restart=` directive
+  to `res/rustdesk.service` (or the macOS launchd plists gain retry behavior), re-verify this gate
+  still results in a single clean exit, not a crash-restart loop, for `role=local`.
 
 ### File Copy/Paste Default (implemented 2026-09-12)
 Verify:
