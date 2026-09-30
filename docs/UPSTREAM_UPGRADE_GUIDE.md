@@ -189,6 +189,36 @@ Verify:
   construction, or to `hbb_common::config::Config::path()`/`ipc_path()`'s use of `APP_NAME`, should
   be re-checked against this hook — the fix depends on `APP_NAME` still being the single source of
   truth for both.
+- **Third bug found and fixed 2026-09-30, same class of incident, found via user report**: the
+  Windows **portable exe wrapper** (`libs/portable/`, the self-extracting `rustdesk_portable.exe`
+  built by `libs/portable/generate.py` — distinct from both the MSI and the plain flutter-built
+  exe) was completely missed by the original App Identity fix, because it's a separate, standalone
+  Rust crate (its own `Cargo.toml`) that does not link against `hbb_common` or `src/`, so it never
+  even sees `APP_NAME`. Its `main.rs` hardcoded `const APP_PREFIX: &str = "rustdesk";`, used as
+  `dirs::data_local_dir().join(APP_PREFIX)` — i.e. the wrapper silently extracts the real
+  application (including `config.toml`, if bundled) to `%LOCALAPPDATA%\rustdesk\` and launches
+  *that* copy, every single time, regardless of this fork's `APP_NAME`. This is the exact same
+  class of collision the original App Identity fix exists to prevent — a real RustDesk's own
+  portable exe would extract to and share that exact same directory — it just went unnoticed until
+  a user reported being unable to find `config.toml` "next to" the portable exe they ran (it isn't
+  there; it needs to go in the extraction directory, which this bug also meant wasn't distinct).
+  Fixed by changing `APP_PREFIX` to the literal `"RustDesk-DirectIP-RemoteSupport"` (matching
+  `core_main.rs`'s `APP_NAME` value; the two can't share a real source of truth since they're
+  separate crates — same situation as the MSI build's own independent `MSI_APP_NAME` CI variable).
+  The portable exe now extracts to `%LOCALAPPDATA%\RustDesk-DirectIP-RemoteSupport\` — `config.toml`
+  needs to be placed there (or via `rustdesk --setup-local`/`--setup-remote` run from that extracted
+  copy) to affect a portable-exe launch, not next to the original downloaded `.exe`.
+  **Not changed** (out of scope for this fix, flagged for awareness): `libs/portable/src/main.rs`'s
+  `WIN_TOPMOST_INJECTED_PROCESS_EXE`/`win::copy_runtime_broker()` (privacy-mode magnifier helper
+  process name, `"RuntimeBroker_rustdesk.exe"`) is a *different* hardcoded literal that must stay
+  byte-for-byte identical to the canonical copy in
+  `src/privacy_mode/win_topmost_window.rs::WIN_TOPMOST_INJECTED_PROCESS_EXE` for the privacy-mode
+  magnifier trick to keep working — renaming one without the other breaks that feature. Left alone
+  because it wasn't part of what was reported and privacy mode can't be tested in this environment.
+  **Upgrade check**: if a future upstream release changes how `libs/portable` resolves its
+  extraction directory (e.g. reads an env var, a build-time metadata file), re-verify this literal
+  still tracks `APP_NAME` — this crate has no compile-time link to the runtime constant, so nothing
+  will fail loudly if they drift apart again.
 
 ### App Identity (MSI) (implemented 2026-09-11, `docs/PLAN-install-separator.md` Phase 1)
 Verify:

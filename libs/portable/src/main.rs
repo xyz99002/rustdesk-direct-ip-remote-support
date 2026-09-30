@@ -17,7 +17,13 @@ const APP_METADATA: &[u8] = include_bytes!("../app_metadata.toml");
 const APP_METADATA: &[u8] = &[];
 const APP_METADATA_CONFIG: &str = "meta.toml";
 const META_LINE_PREFIX_TIMESTAMP: &str = "timestamp = ";
-const APP_PREFIX: &str = "rustdesk";
+// Distinct from upstream's plain "rustdesk" so this fork's portable-exe extraction directory
+// (dirs::data_local_dir().join(APP_PREFIX), e.g. %LOCALAPPDATA%\<APP_PREFIX>\ on Windows) never
+// collides with a real RustDesk portable exe's own extraction directory on the same machine -
+// this crate is a separate, standalone binary (its own Cargo.toml) that doesn't link against
+// hbb_common::config::APP_NAME, so this has to be its own literal matching that same value
+// (see src/core_main.rs's APP_NAME.write() assignment) rather than a shared constant.
+const APP_PREFIX: &str = "RustDesk-DirectIP-RemoteSupport";
 const APPNAME_RUNTIME_ENV_KEY: &str = "RUSTDESK_APPNAME";
 #[cfg(windows)]
 const SET_FOREGROUND_WINDOW_ENV_KEY: &str = "SET_FOREGROUND_WINDOW";
