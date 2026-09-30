@@ -33,6 +33,41 @@ Verify:
 - is_outgoing_only()
 - HARD_SETTINGS["conn-type"]
 
+### Direct-IP Listener Enforcement (implemented 2026-09-30, found via a real user connection test)
+Verify, on any upstream merge that touches `src/rendezvous_mediator.rs`'s `direct_server()`/
+`get_direct_port()`, or `libs/hbb_common/src/config.rs`'s `OPTION_DIRECT_SERVER`/
+`OPTION_DIRECT_ACCESS_PORT`:
+- **Critical finding**: this fork has no rendezvous/relay accept path at all
+  (`docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md`) — `direct_server()` is the *only* code path that ever
+  binds a listening socket, and it explicitly does nothing when upstream's own `direct-server`
+  option is off. `configs/remote.toml` shipped `direct-server = "N"` (upstream's own default),
+  meaning **every "remote"-role instance, as shipped, never accepted a single inbound connection**
+  — confirmed by a real two-machine test (local role on one machine, remote role on another;
+  connection only succeeded once the remote side was switched to a plain upstream RustDesk build).
+  This was not caught by any of this fork's own test suite because `fork_config.rs`'s existing
+  tests check `is_incoming_only()`/`HARD_SETTINGS["conn-type"]`, not whether anything is actually
+  listening — those are necessary but not sufficient for "remote role actually works."
+- **Fixed** in `fork_config.rs::apply()`: `direct-server` is now unconditionally forced to `"Y"`
+  and `direct-access-port` is forced from this module's own `listen_port` schema field — both
+  written into `hbb_common::config::OVERWRITE_SETTINGS`, not just `Config::set_option`, so
+  `ui_interface::is_option_fixed()` also reports them as fixed, which the existing Settings UI
+  (`desktop_setting_page.dart`'s "Enable direct IP access" checkbox, `settings_page.dart`'s mobile
+  equivalent) already checks to grey out a control that must never actually be changeable — there
+  is deliberately no user-facing toggle for something that can only ever be one value, not just a
+  pre-ticked default.
+- **Also fixed, a smaller but real correctness issue found in the same pass**: `config.toml`'s
+  schema had *two* port-shaped keys — this module's own `listen-port` (validated since day one,
+  per its doc comment, but never actually wired to anything) and the plain mirrored upstream
+  `direct-access-port` (the one that actually did something, via `mirror_upstream_options()`).
+  `listen-port` is now the single authoritative source — `configs/local.toml`/`remote.toml` no
+  longer list `direct-server`/`direct-access-port` directly, since they're now fully overridden
+  regardless of what's in the file.
+- **Upgrade check**: if a future upstream release changes `direct_server()`'s gating condition,
+  renames `OPTION_DIRECT_SERVER`/`OPTION_DIRECT_ACCESS_PORT`, or changes how `is_option_fixed()`
+  resolves `OVERWRITE_SETTINGS`, re-verify a remote-role instance still actually binds a listener
+  end-to-end — this hook point exists specifically because that gap was invisible to unit tests
+  and only surfaced via a real network connection attempt.
+
 ### Authentication Mapping
 Verify:
 - approve-mode
