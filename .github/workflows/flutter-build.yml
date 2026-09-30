@@ -2284,7 +2284,11 @@ jobs:
             cp "rustdesk-${{ env.VERSION }}-${variant}-${{ matrix.job.arch }}.deb" appimage/rustdesk.deb
             pushd appimage
             sudo rm -rf ./AppDir
-            rm -f ./*.AppImage
+            # The previous variant's renamed output (if any) is root-owned - appimage-builder
+            # runs via sudo and the mv below that produces it does too - so a plain `rm -f` here
+            # fails with "Permission denied" on the second loop iteration. Same root-owned-file
+            # class of bug as the archlinux/appimage rename steps fixed earlier; same fix.
+            sudo rm -f ./*.AppImage
             sudo appimage-builder --skip-tests --recipe ./AppImageBuilder-${{ matrix.job.arch }}.yml
             for f in ./*.AppImage; do
               sudo mv "$f" "./rustdesk-${{ env.VERSION }}-${variant}-${{ matrix.job.arch }}.AppImage"
