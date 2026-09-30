@@ -1944,13 +1944,14 @@ jobs:
           # so neither package ever requires a manual `rustdesk --setup-local`/`--setup-remote`
           # step. Both passes produce the same pkgname/pkgver/arch output filename, so each is
           # renamed immediately before the next pass overwrites it.
+          # rustdesk-org/arch-makepkg-action's entrypoint flattens this multi-line block into a
+          # single `eval`'d line, joining lines with spaces rather than preserving them as
+          # statement separators - every statement below needs an explicit trailing `;` or it
+          # becomes a syntax error (confirmed: a bare newline-separated `for...do...done` failed
+          # with "syntax error near unexpected token `do'" because "cd res" and "for ...; do"
+          # were concatenated with no separator between them).
           scripts: |
-            cd res
-            for variant in local remote; do
-              echo "=== Building $variant archlinux package ==="
-              HBB=`pwd`/.. FLUTTER=1 ROLE=$variant makepkg -f
-              mv rustdesk-direct-ip-remote-support-*.pkg.tar.zst "rustdesk-${{ env.VERSION }}-${variant}-${{ matrix.job.arch }}.pkg.tar.zst"
-            done
+            cd res && for variant in local remote; do echo "=== Building $variant archlinux package ==="; HBB=`pwd`/.. FLUTTER=1 ROLE=$variant makepkg -f || exit 1; mv rustdesk-direct-ip-remote-support-*.pkg.tar.zst "rustdesk-${{ env.VERSION }}-${variant}-${{ matrix.job.arch }}.pkg.tar.zst" || exit 1; done
 
       - name: Rename archlinux release files (direct-ip)
         if: matrix.job.arch == 'x86_64' && env.UPLOAD_RELEASE == 'true'
