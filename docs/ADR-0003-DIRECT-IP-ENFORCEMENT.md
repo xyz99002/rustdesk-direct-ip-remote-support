@@ -49,6 +49,16 @@ This directly contradicts the product's core direct-IP-only claim at the protoco
   2. `direct_server(...)` and LAN listening remain structurally independent tokio tasks, spawned before the removed loop — a refactor that couples them to the registration loop would require redesigning this fix.
   3. `enable-lan-discovery`'s semantics in `src/lan.rs` haven't changed (still gates the ID-bearing `pong` response specifically).
   4. `RendezvousMediator::restart()` (called from several UI/IPC sites to force rendezvous reconnection after a settings change) is now an inert no-op for this fork — confirm no new call site starts depending on it actually doing something.
+  5. **Found 2026-09-30, via a real user test, not caught when this ADR was first implemented**:
+     removing the registration loop also silently broke the GUI's "online status" indicator —
+     `Config::update_latency()` (the only thing that ever populates `get_online_state()`'s backing
+     map) is only called from that now-dead loop, so every consumer of that value got stuck
+     permanently reporting "connecting," never "ready." Fixed in `src/ipc.rs`'s `Data::OnlineStatus`
+     handler and `src/flutter_ffi.rs::main_get_connect_status()`'s mobile branch — both now report
+     ready immediately instead of reading a value that can never become nonzero. See the "Direct-IP
+     Enforcement — GUI status side effect" hook point in `docs/UPSTREAM_UPGRADE_GUIDE.md` for the
+     full detail. Re-verify this is still the only place that value is consumed after any future
+     upstream change to `get_online_state()`/`ONLINE`.
 - See `docs/UPSTREAM_UPGRADE_GUIDE.md`'s regression checklist and `docs/HOOK_POINTS.md` for the mechanical verification steps.
 
 ## Verification performed

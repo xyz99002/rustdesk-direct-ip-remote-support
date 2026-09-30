@@ -772,7 +772,19 @@ async fn handle(data: Data, stream: &mut Connection) {
             }
         }
         Data::OnlineStatus(_) => {
-            let x = config::get_online_state();
+            // Direct-IP fork: `config::get_online_state()` (hbb_common) reports whether this
+            // instance has successfully registered with a rendezvous server - it only ever
+            // becomes nonzero via `Config::update_latency()`, which is called exclusively from
+            // the registration loop in `rendezvous_mediator.rs::RendezvousMediator::start_all()`
+            // that this fork permanently removed (see ADR-0003-DIRECT-IP-ENFORCEMENT.md). Using
+            // it as-is here left the GUI showing "Connecting to the {app} network..." forever
+            // for a role=remote instance - a stale upstream concept ("waiting to register")
+            // this fork never satisfies, found via a real user test, not a hypothetical. This
+            // fork has nothing to register with and nothing to wait for: report ready
+            // immediately instead. (role=local never reaches this handler at all - the IPC
+            // server this runs in is never started for an outgoing-only instance, see the
+            // "No Server/IPC for Local Mode" hook in docs/UPSTREAM_UPGRADE_GUIDE.md.)
+            let x = 1;
             let confirmed = Config::get_key_confirmed();
             allow_err!(stream.send(&Data::OnlineStatus(Some((x, confirmed)))).await);
         }

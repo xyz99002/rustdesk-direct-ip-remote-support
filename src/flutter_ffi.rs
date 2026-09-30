@@ -1147,10 +1147,11 @@ pub fn main_get_connect_status() -> String {
     }
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        let mut state = hbb_common::config::get_online_state();
-        if state > 0 {
-            state = 1;
-        }
+        // Direct-IP fork: `get_online_state()` reports rendezvous-registration success, which
+        // this fork permanently disables (ADR-0003-DIRECT-IP-ENFORCEMENT.md) - it would stay 0
+        // forever here too, same as the desktop IPC path fixed in `ipc.rs`'s `Data::OnlineStatus`
+        // handler (see the comment there for the full explanation). Report ready immediately.
+        let state = 1;
         serde_json::json!({ "status_num": state }).to_string()
     }
 }

@@ -652,6 +652,31 @@ Verify:
 - A `role=remote` instance, monitored at the network level, sends **no** outbound UDP/TCP traffic to any rendezvous server address, and does not respond to a LAN-broadcast discovery ping with its ID.
 - `RendezvousMediator::restart()`'s call sites (`flutter_ffi.rs`, `ipc.rs`, `ui_interface.rs`) still compile — the function itself is intentionally unmodified even though its effect is now inert.
 
+### Direct-IP Enforcement — GUI status side effect (found and fixed 2026-09-30, via a real user test)
+A downstream consequence of the registration-loop removal above that wasn't caught at the time:
+`Config::update_latency()` (`libs/hbb_common/src/config.rs`) — the only thing that ever populates
+the `ONLINE` map `get_online_state()` reads — is called exclusively from the registration loop
+that no longer runs. This meant `get_online_state()` always returned `0`, so every "online status"
+consumer stayed permanently in its initial "connecting" state:
+- `src/ipc.rs`'s `Data::OnlineStatus` handler (desktop, polled by the GUI over IPC from the running
+  server process) — visibly, the desktop home page showed **"Connecting to the {app} network..."
+  forever** for a `role=remote` instance, which a user reasonably read as "this thing is trying to
+  call home," even though it's cosmetic only (no bytes are actually sent anywhere) and the issue is
+  specific to a stale status *label*, not an actual network attempt. Confirmed this affects
+  `role=remote` only, in practice — `role=local` never starts the IPC server at all ("No Server/IPC
+  for Local Mode" above), so it never reaches this handler; it correctly shows "Service is not
+  running" instead.
+- `src/flutter_ffi.rs::main_get_connect_status()`'s `#[cfg(any(target_os = "android", target_os =
+  "ios"))]` branch — same underlying value, read directly (no IPC involved on mobile), same stuck
+  state.
+
+Both are fixed to report ready (`status_num = 1`) immediately rather than reading
+`get_online_state()` at all — there is nothing to wait for or register with in this fork, so a
+perpetual "connecting" label was actively misleading, not just imprecise. **Upgrade check**: if a
+future upstream release adds a *new* meaning to `get_online_state()`/`ONLINE` beyond rendezvous-
+registration latency tracking, this fix would need revisiting — re-verify nothing else depends on
+this value being genuinely wired before assuming the hardcoded `1` is still correct.
+
 ## Newly Discovered Upgrade Risks (found during Phase 3 implementation)
 
 - **Startup call-order dependency (revised 2026-09-11 — line numbers below now current).** Inside
