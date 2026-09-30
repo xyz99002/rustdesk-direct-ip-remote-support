@@ -3,9 +3,11 @@
 #}
 
 # Fork config: only auto-enable/start the background service for a "remote" (inbound) install -
-# read from config.toml if a prior `rustdesk --setup-local`/`--setup-remote` already created one
-# (e.g. a reinstall/upgrade); default to NOT starting it on a fresh install where role isn't known
-# yet. Mirrors the equivalent check in res/DEBIAN/postinst.
+# a "local" (outbound-only) install has no legitimate use for it. This package is built per-role
+# (see res/PKGBUILD's ROLE handling) with config.toml already pre-baked, mirroring the Windows
+# Local/Remote MSI split, so this check is fully automatic - no manual `rustdesk --setup-local`/
+# `--setup-remote` step is ever required. The "config.toml missing" fallback below is just a
+# safety net (e.g. a manual `makepkg -f` without ROLE set), not the normal path.
 _enable_and_start_if_remote() {
 	CONFIG_FILE=/usr/share/rustdesk-direct-ip-remote-support/config.toml
 	ROLE=""
@@ -15,8 +17,10 @@ _enable_and_start_if_remote() {
 	if [ "$ROLE" = "remote" ]; then
 		systemctl enable rustdesk-direct-ip-remote-support
 		systemctl start rustdesk-direct-ip-remote-support
+	elif [ "$ROLE" = "local" ]; then
+		echo "rustdesk-direct-ip-remote-support: local (outbound-only) install - background service not enabled/started."
 	else
-		echo "rustdesk-direct-ip-remote-support: role is not 'remote' (or config.toml doesn't exist yet) - service installed but not enabled/started."
+		echo "rustdesk-direct-ip-remote-support: config.toml missing or has no role - this should not happen on a normal install. Service installed but not enabled/started."
 		echo "Run 'rustdesk --setup-remote' then 'systemctl enable --now rustdesk-direct-ip-remote-support' to accept inbound connections."
 	fi
 }
