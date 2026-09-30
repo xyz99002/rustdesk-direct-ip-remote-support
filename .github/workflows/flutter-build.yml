@@ -1951,7 +1951,7 @@ jobs:
           # with "syntax error near unexpected token `do'" because "cd res" and "for ...; do"
           # were concatenated with no separator between them).
           scripts: |
-            cd res && for variant in local remote; do echo "=== Building $variant archlinux package ==="; HBB=`pwd`/.. FLUTTER=1 ROLE=$variant makepkg -f || exit 1; mv rustdesk-direct-ip-remote-support-*.pkg.tar.zst "rustdesk-${{ env.VERSION }}-${variant}-${{ matrix.job.arch }}.pkg.tar.zst" || exit 1; done
+            cd res && for variant in local remote; do echo "=== Building $variant archlinux package ==="; HBB=`pwd`/.. FLUTTER=1 ROLE=$variant makepkg -f || exit 1; mv rustdesk-direct-ip-remote-support-[0-9]*.pkg.tar.zst "rustdesk-${{ env.VERSION }}-${variant}-${{ matrix.job.arch }}.pkg.tar.zst" || exit 1; rm -f rustdesk-direct-ip-remote-support-debug-*.pkg.tar.zst; done
 
       - name: Rename archlinux release files (direct-ip)
         if: matrix.job.arch == 'x86_64' && env.UPLOAD_RELEASE == 'true'
