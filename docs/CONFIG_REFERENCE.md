@@ -131,8 +131,19 @@ missing required key is `ConfigError::MissingField`.
 
 ### 4.8–4.12 `direct-ip-listen-address`, `direct-ip-listen-port`, `direct-ip-video-quality`, `direct-ip-audio-quality`, `direct-ip-log-level`
 
-All required, all parsed and validated exactly as before the consolidation, all still
+All required, all parsed and validated exactly as before the consolidation.
+`direct-ip-listen-address`/`-video-quality`/`-audio-quality`/`-log-level` remain
 **❌ Not wired to any behavior** — `#[allow(dead_code)]` on the corresponding `ForkConfig` fields.
+
+**`direct-ip-listen-port` is now wired (2026-09-30)** — found and fixed via a real
+machine-to-machine connection test that failed silently: `apply()` forces this value into
+upstream's own `direct-access-port` option every startup, and unconditionally forces
+`direct-server = "Y"` alongside it (see section 5) — together these are the *only* thing that
+makes `rendezvous_mediator.rs::direct_server()` actually bind a listening socket, since this fork
+has no rendezvous/relay accept path at all (`docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md`). Before this
+fix, `configs/remote.toml` shipped `direct-server = "N"`, so a "remote"-role instance never
+accepted any inbound connection — this is also why the sample configs no longer list
+`direct-server`/`direct-access-port` directly; they're fully overridden.
 See [src/fork_config.rs](../src/fork_config.rs) for validation rules (IP format, nonzero port,
 enum values).
 
@@ -148,8 +159,10 @@ regardless of field values:
 | `HARD_SETTINGS["disable-account"]` | `"Y"` | Hides Account tab | ✅ Working |
 | `BUILTIN_SETTINGS["hide-network-settings"]` | `"Y"` | Hides Network tab | ✅ Working |
 | `Config::set_option("enable-lan-discovery", "N")` | `"N"` | Suppresses LAN-broadcast discovery reply | ✅ Working |
+| `OVERWRITE_SETTINGS["direct-server"]` | `"Y"` | Forces "Enable direct IP access" on (the only accept path this fork has); also makes the Settings UI toggle read-only via `is_option_fixed()` | ✅ Working (2026-09-30) |
+| `OVERWRITE_SETTINGS["direct-access-port"]` | from `direct-ip-listen-port` | The actual port `direct_server()` listens on | ✅ Working (2026-09-30) |
 
-If no `direct-ip-*` configuration is present/valid, none of these three apply either — pure
+If no `direct-ip-*` configuration is present/valid, none of these apply either — pure
 upstream behavior.
 
 ---
@@ -164,8 +177,9 @@ upstream behavior.
 | `direct-ip-support-enabled` | ✅ Working |
 | `direct-ip-desktop-share-enabled` | ⚠️ Partially working (local-only, no remote enforcement) |
 | `direct-ip-show-setup-ui` | ✅ Working (new, optional, defaults to shown) |
-| `direct-ip-listen-address` / `-listen-port` / `-video-quality` / `-audio-quality` / `-log-level` | ❌ Not wired |
-| *(unconditional)* disable-account / hide-network-settings / enable-lan-discovery | ✅ Working |
+| `direct-ip-listen-port` | ✅ Working (2026-09-30 — forced into `direct-access-port`) |
+| `direct-ip-listen-address` / `-video-quality` / `-audio-quality` / `-log-level` | ❌ Not wired |
+| *(unconditional)* disable-account / hide-network-settings / enable-lan-discovery / direct-server / direct-access-port | ✅ Working |
 
 ---
 

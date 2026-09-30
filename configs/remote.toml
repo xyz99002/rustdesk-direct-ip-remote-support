@@ -50,10 +50,16 @@ show-setup-ui = "Y"
 #                          operator. Use this for unattended support sessions.
 #   "ask_and_password" -> Either a manual click OR the temporary password is accepted; the
 #                          temporary password IS shown (upstream's own default behavior).
-# This sample uses "password" — the common unattended-remote-support case.
-auth-mode = "password"
+# This sample uses "ask_and_password" — upstream's own default, the safest choice when you don't
+# know in advance whether someone will be present to click Accept.
+auth-mode = "ask_and_password"
 
-# Parsed and validated, but NOT YET WIRED to any behavior.
+# listen-port is the REAL, authoritative port this instance listens on for inbound direct-IP
+# connections — fork_config.rs::apply() forces it into upstream's own "direct-access-port"
+# option every startup (see the "Settings > Safety > Security" section below: do NOT also set
+# direct-access-port there, it would just be overwritten back to this value).
+# listen-address is parsed/validated but NOT YET wired to any behavior — the underlying listener
+# has no configurable bind address yet.
 listen-address = "0.0.0.0"
 listen-port = "21118"
 video-quality = "medium"
@@ -93,9 +99,11 @@ allow-numeric-one-time-password = "N"   # "Numeric one-time password"
 
 # Settings > Safety > Security
 # enable-lan-discovery: forced "N" unconditionally by this fork (ADR-0003) — do not set here.
-direct-server = "N"                     # "Enable direct IP access" (a second, upstream listening mode;
-                                         #   distinct from this fork's own listen-* fields above)
-direct-access-port = "21118"            # "Port" shown under "Enable direct IP access" when it is on
+# direct-server / direct-access-port: this fork has no rendezvous/relay accept path at all
+#   (ADR-0003), so "Enable direct IP access" must always be on, not a user choice — fork_config.rs
+#   forces direct-server = "Y" unconditionally and direct-access-port from listen-port above (do
+#   not set either directly here, they would just be overwritten; the Settings UI toggle/port
+#   field are greyed out for the same reason, via ui_interface::is_option_fixed()).
 whitelist = ""                          # Comma-separated CIDR allow-list, e.g. "192.168.1.0/24"
 allow-auto-disconnect = "N"             # "Automatically disconnect on idle" checkbox
 auto-disconnect-timeout = "10"          # "Timeout in minutes" shown when the above is on
@@ -110,7 +118,9 @@ allow-auto-record-incoming = "N"        # "Automatically record incoming session
 
 # --- Resulting upstream options (written by fork_config.rs::apply() at every startup;
 #     shown here for reference only — do not hand-edit these, they will be overwritten) ---
-# approve-mode = "password"                        # <- from auth-mode
-# verification-method = "use-temporary-password"   # <- from auth-mode
+# approve-mode = ""                                 # <- from auth-mode (empty = upstream's Both default)
+# verification-method = ""                          # <- from auth-mode (empty = upstream's default)
 # enable-camera = "Y"                               # <- from support-enabled
 # enable-lan-discovery = "N"                        # <- unconditional, ADR-0003
+# direct-server = "Y"                               # <- unconditional, ADR-0003 (see Security section above)
+# direct-access-port = "21118"                      # <- from listen-port above

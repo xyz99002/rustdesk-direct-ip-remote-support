@@ -59,13 +59,18 @@
 //! (`DesktopSettingPage.tabKeys` and the `network()` builder in
 //! `flutter/lib/desktop/pages/desktop_setting_page.dart`). Direct-IP enforcement (also
 //! unconditional): `Config::set_option("enable-lan-discovery", "N")`
-//! closes the LAN-broadcast public-ID exposure path in `src/lan.rs`. See
+//! closes the LAN-broadcast public-ID exposure path in `src/lan.rs`. Since this fork has no
+//! rendezvous/relay accept path at all, upstream's own `"direct-server"` option is forced to
+//! `"Y"` (into `OVERWRITE_SETTINGS`, not just `Config::set_option` — see [`apply`]) for every
+//! role, and `"direct-access-port"` is likewise forced from this module's own `listen_port`
+//! schema field — together these are the only thing that makes
+//! `rendezvous_mediator.rs::direct_server()` actually bind a listener. See
 //! `docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md`.
 //!
 //! No authentication, transport, encryption, password storage, or Voice Call/VIEW_CAMERA code is
 //! modified or reimplemented here.
 
-use hbb_common::config::{Config, BUILTIN_SETTINGS, HARD_SETTINGS};
+use hbb_common::config::{Config, BUILTIN_SETTINGS, HARD_SETTINGS, OVERWRITE_SETTINGS};
 use hbb_common::log;
 use std::path::PathBuf;
 use toml::Table;
@@ -136,10 +141,10 @@ pub enum LogLevel {
 
 /// Fully parsed and validated fork configuration.
 ///
-/// `listen_address`, `listen_port`, `video_quality`, `audio_quality`, and `log_level` are
-/// validated here (so the schema is stable and won't need a version bump later) but are **not
-/// yet** wired to any behavior — that happens in the phases that own them (Direct-IP transport,
-/// minimal UI).
+/// `listen_address`, `video_quality`, `audio_quality`, and `log_level` are validated here (so the
+/// schema is stable and won't need a version bump later) but are **not yet** wired to any
+/// behavior — that happens in the phases that own them (Media, minimal UI). `listen_port` *is*
+/// wired, as of 2026-09-30 — see [`apply`].
 #[derive(Debug, Clone)]
 pub struct ForkConfig {
     pub version: u32,
@@ -154,12 +159,14 @@ pub struct ForkConfig {
     /// Gates whether the Settings UI entry point is reachable at all. Defaults to `true` if the
     /// `show-setup-ui` key is absent. See `docs/GUI_CONFIGURATION_CONTROL.md`.
     pub show_setup_ui: bool,
-    // Parsed and validated now so the schema is stable across phases; not read by any caller
-    // yet. Each will lose this `allow` when its owning phase wires it up: Direct-IP transport
-    // (listen_address, listen_port), Media (video_quality, audio_quality), minimal UI (log_level).
+    /// Parsed and validated (must be a valid IP), but genuinely unused — `hbb_common::tcp::
+    /// listen_any()` (the real listener [`apply`] forces on) takes only a port, no bind address,
+    /// so there is nothing to wire this to yet. Distinct from `listen_port` below, which *is*
+    /// wired — this field stays a placeholder for a future multi-NIC-binding phase.
     #[allow(dead_code)]
     pub listen_address: String,
-    #[allow(dead_code)]
+    /// Forced into upstream's real `direct-access-port` option by [`apply`] — this is the actual
+    /// port `direct_server()` (`src/rendezvous_mediator.rs`) listens on.
     pub listen_port: u16,
     #[allow(dead_code)]
     pub video_quality: Quality,
@@ -533,6 +540,38 @@ pub fn apply(config: &ForkConfig) {
     // Direct-IP enforcement (unconditional — see docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md).
     Config::set_option("enable-lan-discovery".to_owned(), "N".to_owned());
 
+    // This fork has no rendezvous/relay accept path at all (ADR-0003 above) - upstream's own
+    // "direct-server" option (src/rendezvous_mediator.rs::direct_server()) is the *only* thing
+    // that ever binds a listening socket, and it explicitly no-ops when that option is off. It
+    // shipped "N" by default in configs/remote.toml, which meant a "remote" instance never
+    // accepted any inbound connection at all - found via a real connection test. Forced on here,
+    // unconditionally (role=local never reaches this listener anyway, since
+    // RendezvousMediator::start_all() returns immediately for an outgoing-only instance, so
+    // forcing it for local is a harmless no-op, not a behavior change).
+    //
+    // Written into OVERWRITE_SETTINGS (not just Config::set_option) rather than just setting a
+    // default: this also makes `ui_interface::is_option_fixed()` return true for this key, which
+    // the existing Settings UI (desktop_setting_page.dart's "Enable direct IP access" checkbox,
+    // settings_page.dart's mobile equivalent) already checks to grey out a control it can't
+    // actually change - there is deliberately no user-facing toggle for something that must
+    // always be on, not just a pre-ticked one.
+    //
+    // `direct-access-port` (the port that listener actually binds) is likewise forced, from this
+    // module's own `listen_port` schema field - the schema already had two port-shaped keys
+    // (`listen-port` here, `direct-access-port` as a plain mirrored upstream option) because
+    // `listen_port` was validated from day one but never actually wired to anything until now.
+    // It's the authoritative one from here on; `direct-access-port` should not be hand-edited in
+    // config.toml separately from it (mirror_upstream_options will apply it as if it were
+    // independent, then the write below immediately overwrites it back to `listen_port` anyway).
+    {
+        let mut overwrite = OVERWRITE_SETTINGS.write().unwrap();
+        overwrite.insert("direct-server".to_owned(), "Y".to_owned());
+        overwrite.insert(
+            "direct-access-port".to_owned(),
+            config.listen_port.to_string(),
+        );
+    }
+
     log::info!(
         "fork_config: applied role={:?} auth_mode={:?} support_enabled={} desktop_share_enabled={} show_setup_ui={} \
          (conn-type={conn_type}, approve-mode={approve_mode:?})",
@@ -879,6 +918,7 @@ mod tests {
         _lock: std::sync::MutexGuard<'a, ()>,
         original_hard_settings: std::collections::HashMap<String, String>,
         original_builtin_settings: std::collections::HashMap<String, String>,
+        original_overwrite_settings: std::collections::HashMap<String, String>,
         original_approve_mode: String,
         original_verification_method: String,
         original_enable_camera: String,
@@ -896,6 +936,7 @@ mod tests {
                 _lock: lock,
                 original_hard_settings: HARD_SETTINGS.read().unwrap().clone(),
                 original_builtin_settings: BUILTIN_SETTINGS.read().unwrap().clone(),
+                original_overwrite_settings: OVERWRITE_SETTINGS.read().unwrap().clone(),
                 original_approve_mode: Config::get_option("approve-mode"),
                 original_verification_method: Config::get_option("verification-method"),
                 original_enable_camera: Config::get_option("enable-camera"),
@@ -910,6 +951,11 @@ mod tests {
         fn drop(&mut self) {
             *HARD_SETTINGS.write().unwrap() = self.original_hard_settings.clone();
             *BUILTIN_SETTINGS.write().unwrap() = self.original_builtin_settings.clone();
+            // Must be restored before the Config::set_option calls below: `apply()` writes
+            // "direct-server"/"direct-access-port" into OVERWRITE_SETTINGS, and
+            // `is_option_can_save()` rejects any `set_option` for a key still present there -
+            // restoring the other options first would silently no-op while this is still set.
+            *OVERWRITE_SETTINGS.write().unwrap() = self.original_overwrite_settings.clone();
             Config::set_option("approve-mode".to_owned(), self.original_approve_mode.clone());
             Config::set_option(
                 "verification-method".to_owned(),
@@ -1085,6 +1131,22 @@ mod tests {
                                 .get(hbb_common::config::keys::OPTION_ENABLE_FILE_COPY_PASTE),
                             "N"
                         );
+                        // Regression test for a real connectivity bug found via a user's actual
+                        // machine-to-machine test: `direct-server` (upstream's own "Enable direct
+                        // IP access" option) is the *only* thing that makes
+                        // `rendezvous_mediator.rs::direct_server()` bind a listener at all, since
+                        // this fork has no rendezvous/relay accept path (ADR-0003). It must be
+                        // forced on for every role, not just remote - role=local never reaches
+                        // that listener anyway (RendezvousMediator::start_all() returns early for
+                        // is_outgoing_only()), so forcing it there is a no-op, not a behavior
+                        // change.
+                        assert_eq!(Config::get_option("direct-server"), "Y");
+                        assert_eq!(Config::get_option("direct-access-port"), "21118");
+                        assert!(OVERWRITE_SETTINGS.read().unwrap().contains_key("direct-server"));
+                        assert!(OVERWRITE_SETTINGS
+                            .read()
+                            .unwrap()
+                            .contains_key("direct-access-port"));
                     }
                 }
             }
