@@ -290,36 +290,36 @@ From the prior cross-platform audit, all of the following independently hardcode
   binary name). This leaves the `/usr/bin/rustdesk` symlink target as a known, accepted residual
   collision point between this fork's package and a real RustDesk's on the same machine — see
   `docs/UPSTREAM_UPGRADE_GUIDE.md` for the detailed tradeoff writeup.
-- **`res/rpm.spec`/`res/rpm-flutter.spec` left untouched** — confirmed dead (not referenced by any
-  CI workflow step), so updating them would be speculative work with no way to verify it.
-- **Install-time Local/Remote split: IMPLEMENTED 2026-09-29**, as a follow-up to the identity work
-  above, in a single package rather than two build variants (see "Linux Install-Time Role Gating" in
-  `docs/UPSTREAM_UPGRADE_GUIDE.md` for the full detail):
-  - `build.py::build_flutter_deb()` now bundles `configs/local.toml`/`configs/remote.toml` into the
-    package so `rustdesk --setup-local`/`--setup-remote` has something to read — this also fixed a
-    real bug where a prior CI step tried to do this same bundling but placed the files after
-    `build.py` had already packaged the `.deb` from a separate staging copy, so they never actually
-    reached the installed package.
-  - `res/DEBIAN/postinst` and `res/pacman_install` no longer unconditionally `systemctl enable`/
-    `start` the service — they read `role` from an already-existing `config.toml` (present only
-    after a prior `--setup-local`/`--setup-remote` run) and only enable+start for `role = "remote"`;
-    a fresh install with no `config.toml` yet defaults to installed-but-not-started.
-  - `res/PKGBUILD`/`res/pacman_install` got the equivalent config-bundling and role-check changes.
-  - **Deliberately not done**: splitting into two `.deb`/PKGBUILD build variants (mirroring the
-    two-MSI Windows approach) with a pre-baked `config.toml` per variant. Assessed as too large a
-    surface change to make safely without a real Linux build/install environment to verify against,
-    given it would also ripple into the AppImage/flatpak jobs (both built from the single `.deb`).
-    The single-package-with-role-check approach above achieves the same practical outcome (no
-    Local-role install ever auto-starts an inbound-accepting service) without that risk.
-  - **PAM service name, polkit action ID, `/etc/rustdesk/` naming: IMPLEMENTED 2026-09-29** (was
-    listed here as deferred; see "PAM service name"/"Polkit action ID"/"`/etc/rustdesk/` config
-    directory" in `docs/UPSTREAM_UPGRADE_GUIDE.md` for full detail). The PAM rename turned out to fix
-    a real, previously-undiscovered bug (`pam_get_service_name()` was silently falling back to the
-    `gdm` PAM stack on every install, since it already looked for a file matching the fork's own
-    `APP_NAME` that the packaging never actually installed under that name). The "polkit action ID"
-    item turned out not to exist in this codebase at all — no `.policy` file or polkit API call
-    anywhere — corrected rather than fixing something that isn't there. `/etc/rustdesk/` was renamed
-    for packaging hygiene only (nothing reads it by path).
+- **`res/rpm.spec`/`res/rpm-suse.spec` left untouched** — confirmed dead (only the legacy Sciter
+  build path in `build.py` references them, which CI never invokes). **Correction**:
+  `res/rpm-flutter.spec`/`res/rpm-flutter-suse.spec` are *not* in this category — they are genuinely
+  built by CI (`flutter-build.yml`'s `build rustdesk linux` job runs `rpmbuild` on both) and were
+  incorrectly left unrenamed by the original Phase 3 pass; see below, now fixed.
+- **Install-time Local/Remote split: IMPLEMENTED 2026-09-29, then corrected the same day to a
+  proper two-package-variant split** after feedback that the first attempt (a single package with a
+  runtime role-check, requiring a manual `rustdesk --setup-remote` CLI step on a fresh Remote
+  install) reintroduced exactly the manual-interaction requirement the Windows Local/Remote MSI
+  split was built to eliminate. See "Linux Two-Variant Package Split" in
+  `docs/UPSTREAM_UPGRADE_GUIDE.md` for the full detail; summarized here:
+  - Every Linux package format (`.deb`, archlinux, AppImage, flatpak, and — newly — RPM) now builds
+    two variants, each with `config.toml` pre-baked at build time with the matching role, exactly
+    like the two-MSI Windows split. Neither variant ever requires a manual setup step.
+  - `build.py::build_flutter_deb()` now delegates to a new `package_deb_variant(version, variant)`,
+    called once per variant. `res/PKGBUILD` reads a `ROLE` env var the CI job sets per pass.
+    `res/DEBIAN/postinst`/`res/pacman_install`'s existing role-check logic needed no changes — it
+    now simply always finds a config to read.
+  - AppImage and flatpak (both built by extracting a `.deb`) now loop both variants, extracting the
+    matching `.deb` per pass and renaming the output before the next pass overwrites it.
+  - **Found and fixed a separate, more serious bug while doing this work**: `res/rpm-flutter.spec`/
+    `res/rpm-flutter-suse.spec` — genuinely CI-invoked, unlike the truly-dead `res/rpm.spec` — had
+    been completely missed by the original Phase 3 identity pass. Every Fedora/openSUSE `.rpm`
+    build was still using the literal upstream `Name: rustdesk`/`/usr/share/rustdesk`/bare
+    `rustdesk.service` — meaning Phase 3's collision-avoidance never actually applied to RPM at all,
+    contradicting what Phase 3's own original changelog claimed. Fixed now, with the same
+    `ROLE`-driven two-variant treatment as the other formats.
+  - PAM service name, polkit action ID, `/etc/rustdesk/` naming (previously listed as deferred, then
+    fixed 2026-09-29): unchanged by this later correction — see `docs/UPSTREAM_UPGRADE_GUIDE.md` for
+    the full detail on those.
 
 **Risk**: moderate — more files than Windows Phase 1, but all plain text/script changes (no
 compiled native code except the one-line `my_application.cc` fix, no WiX), and no verification

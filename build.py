@@ -325,6 +325,16 @@ def build_flutter_deb(version, features):
         ffi_bindgen_function_refactor()
     os.chdir('flutter')
     system2('flutter build linux --release')
+    # Two variants, each with its own role pre-baked into config.toml at package-build time -
+    # mirrors the Windows Local/Remote MSI split exactly, so installing either .deb never
+    # requires the user to run `rustdesk --setup-local`/`--setup-remote` by hand, and the
+    # postinst role-check (res/DEBIAN/postinst) always finds a config.toml to read.
+    for variant in ("local", "remote"):
+        package_deb_variant(version, variant)
+    os.chdir("..")
+
+
+def package_deb_variant(version, variant):
     system2('mkdir -p tmpdeb/usr/bin/')
     system2('mkdir -p tmpdeb/usr/share/rustdesk-direct-ip-remote-support')
     system2('mkdir -p tmpdeb/etc/rustdesk-direct-ip-remote-support/')
@@ -337,14 +347,12 @@ def build_flutter_deb(version, features):
     system2('rm tmpdeb/usr/bin/rustdesk || true')
     system2(
         f'cp -r {flutter_build_dir}/* tmpdeb/usr/share/rustdesk-direct-ip-remote-support/')
-    # Bundle the local/remote sample configs next to the binary so `rustdesk --setup-local` /
-    # `--setup-remote` (fork_config.rs::copy_sample_config()) have something to copy from on a
-    # freshly installed package - this single package has no pre-baked role/config.toml of its
-    # own (unlike Windows's split Local/Remote MSI), so first-run setup is still required.
+    # Bundle the matching sample config AS config.toml itself (not as a same-named sample file
+    # requiring a manual `rustdesk --setup-local`/`--setup-remote` step) - config_exists() is
+    # already true on first launch, so the first-run setup gate in core_main.rs is skipped
+    # entirely, exactly like the Windows MSI's pre-baked config.toml.
     system2(
-        'cp ../configs/local.toml tmpdeb/usr/share/rustdesk-direct-ip-remote-support/local.toml')
-    system2(
-        'cp ../configs/remote.toml tmpdeb/usr/share/rustdesk-direct-ip-remote-support/remote.toml')
+        f'cp ../configs/{variant}.toml tmpdeb/usr/share/rustdesk-direct-ip-remote-support/config.toml')
     system2(
         'cp ../res/rustdesk.service tmpdeb/usr/share/rustdesk-direct-ip-remote-support/files/systemd/rustdesk-direct-ip-remote-support.service')
     system2(
@@ -376,8 +384,7 @@ def build_flutter_deb(version, features):
 
     system2('/bin/rm -rf tmpdeb/')
     system2('/bin/rm -rf ../res/DEBIAN/control')
-    os.rename('rustdesk.deb', '../rustdesk-%s.deb' % version)
-    os.chdir("..")
+    os.rename('rustdesk.deb', f'../rustdesk-{version}-{variant}.deb')
 
 
 def build_deb_from_folder(version, binary_folder):

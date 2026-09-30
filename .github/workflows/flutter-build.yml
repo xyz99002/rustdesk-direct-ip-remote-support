@@ -1842,17 +1842,19 @@ jobs:
             export CARGO_INCREMENTAL=0
             export DEB_ARCH=${{ matrix.job.deb_arch }}
             python3 ./build.py --flutter --skip-cargo
-            # Note: local.toml/remote.toml are bundled into the .deb by build.py's
-            # build_flutter_deb() itself (copied into tmpdeb/ before packaging) - a step used to
-            # duplicate this here by copying into ./flutter/build/linux/*/release/bundle/, but
-            # that runs *after* build.py has already packaged the .deb from a separate tmpdeb/
-            # staging copy, so those files never actually reached the installed package. Removed.
+            # build.py::build_flutter_deb() now produces two pre-configured variants,
+            # rustdesk-<version>-local.deb and rustdesk-<version>-remote.deb (each with the
+            # matching role's config.toml already baked in - see package_deb_variant()), instead
+            # of a single rustdesk-<version>.deb. The loop below appends the arch suffix to
+            # whichever variant filenames it finds.
 
             for name in rustdesk*??.deb; do
               mv "$name" "${name%%.deb}-${{ matrix.job.arch }}.deb"
             done
 
-            # rpm package
+            # rpm package - two variants (local/remote), each with its role pre-baked into
+            # config.toml via rpm-flutter.spec's ROLE handling, mirroring the Windows Local/
+            # Remote MSI split (see build.py::build_flutter_deb() for the .deb equivalent).
             echo -e "start packaging fedora package"
             pushd /workspace
             case ${{ matrix.job.arch }} in
@@ -1860,13 +1862,18 @@ jobs:
                 sed -i "s/linux\/x64/linux\/arm64/g" ./res/rpm-flutter.spec
                 ;;
             esac
-            HBB=`pwd` rpmbuild ./res/rpm-flutter.spec -bb
-            pushd ~/rpmbuild/RPMS/${{ matrix.job.arch }}
-            for name in rustdesk*??.rpm; do
-                mv "$name" /workspace/"${name%%.rpm}.rpm"
+            for variant in local remote; do
+              echo "=== Building $variant fedora rpm ==="
+              rm -f ~/rpmbuild/RPMS/${{ matrix.job.arch }}/rustdesk*.rpm
+              HBB=`pwd` ROLE=$variant rpmbuild ./res/rpm-flutter.spec -bb
+              pushd ~/rpmbuild/RPMS/${{ matrix.job.arch }}
+              for name in rustdesk*??.rpm; do
+                  mv "$name" /workspace/"rustdesk-${{ env.VERSION }}-${variant}-${{ matrix.job.arch }}.rpm"
+              done
+              popd
             done
 
-            # rpm suse package
+            # rpm suse package - same two variants
             echo -e "start packaging suse package"
             pushd /workspace
             case ${{ matrix.job.arch }} in
@@ -1874,10 +1881,15 @@ jobs:
                 sed -i "s/linux\/x64/linux\/arm64/g" ./res/rpm-flutter-suse.spec
                 ;;
             esac
-            HBB=`pwd` rpmbuild ./res/rpm-flutter-suse.spec -bb
-            pushd ~/rpmbuild/RPMS/${{ matrix.job.arch }}
-            for name in rustdesk*??.rpm; do
-                mv "$name" /workspace/"${name%%.rpm}-suse.rpm"
+            for variant in local remote; do
+              echo "=== Building $variant suse rpm ==="
+              rm -f ~/rpmbuild/RPMS/${{ matrix.job.arch }}/rustdesk*.rpm
+              HBB=`pwd` ROLE=$variant rpmbuild ./res/rpm-flutter-suse.spec -bb
+              pushd ~/rpmbuild/RPMS/${{ matrix.job.arch }}
+              for name in rustdesk*??.rpm; do
+                  mv "$name" /workspace/"rustdesk-${{ env.VERSION }}-${variant}-${{ matrix.job.arch }}-suse.rpm"
+              done
+              popd
             done
 
       - name: Rename release files (direct-ip)
@@ -1906,8 +1918,10 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
+          # Two variants (local/remote, see build.py::build_flutter_deb()) bundled in one
+          # artifact zip, mirroring how the Windows MSI job has no per-variant artifact split.
           name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-linux-${{ matrix.job.arch }}.deb
-          path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
+          path: rustdesk-${{ env.VERSION }}-*-${{ matrix.job.arch }}.deb
 
       # only x86_64 for arch since we can not find newest arm64 docker image to build
       # old arch image does not make sense for arch since it is "arch" which always update to date
@@ -1925,8 +1939,18 @@ jobs:
         uses: rustdesk-org/arch-makepkg-action@04200739ed1d0bf6f2188b6736b26a767c57a7f9 # no release tag; commit 2026-05-26
         with:
           packages:
+          # Two variants (local/remote), each with its role pre-baked into config.toml at build
+          # time via res/PKGBUILD's ROLE handling - mirrors the Windows Local/Remote MSI split,
+          # so neither package ever requires a manual `rustdesk --setup-local`/`--setup-remote`
+          # step. Both passes produce the same pkgname/pkgver/arch output filename, so each is
+          # renamed immediately before the next pass overwrites it.
           scripts: |
-            cd res && HBB=`pwd`/.. FLUTTER=1 makepkg -f
+            cd res
+            for variant in local remote; do
+              echo "=== Building $variant archlinux package ==="
+              HBB=`pwd`/.. FLUTTER=1 ROLE=$variant makepkg -f
+              mv rustdesk-direct-ip-remote-support-*.pkg.tar.zst "rustdesk-${{ env.VERSION }}-${variant}-${{ matrix.job.arch }}.pkg.tar.zst"
+            done
 
       - name: Rename archlinux release files (direct-ip)
         if: matrix.job.arch == 'x86_64' && env.UPLOAD_RELEASE == 'true'
@@ -2232,20 +2256,15 @@ jobs:
           name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-linux-${{ matrix.job.arch }}.deb
           path: .
 
-      - name: Rename Binary
-        run: |
-          mv rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb appimage/rustdesk.deb
-
       - name: Bundle config samples into AppImage
         run: |
-          # The appimage-builder recipe extracts the .deb and builds AppDir
-          # We'll modify the recipe to include config samples during extraction
-          # For now, copy samples to appimage directory so the recipe can access them
+          # Extra sample files for manually switching mode later - not what makes each variant's
+          # AppImage below already role-configured (that comes from the pre-baked config.toml
+          # already inside each variant .deb, carried through by the recipe's `mv ./usr ./AppDir/usr`).
           cp configs/local.toml appimage/local.toml
           cp configs/remote.toml appimage/remote.toml
-          echo "Config samples copied to appimage directory"
 
-      - name: Build appimage package
+      - name: Build appimage packages (local + remote)
         shell: bash
         run: |
           # install libarchive-tools for bsdtar command used in AppImageBuilder.yml
@@ -2256,16 +2275,28 @@ jobs:
           # https://github.com/AppImage/AppImageKit/issues/1395
           sudo pip3 install "setuptools_scm<10"
           sudo pip3 install git+https://github.com/rustdesk-org/appimage-builder.git
-          # run appimage-builder
-          pushd appimage
-          sudo appimage-builder --skip-tests --recipe ./AppImageBuilder-${{ matrix.job.arch }}.yml
+          # Two variants (local/remote, see build.py::build_flutter_deb()), each built from its
+          # own pre-configured .deb - mirrors the Windows Local/Remote MSI split, so neither
+          # AppImage ever requires a manual `rustdesk --setup-local`/`--setup-remote` step.
+          for variant in local remote; do
+            echo "=== Building $variant AppImage ==="
+            cp "rustdesk-${{ env.VERSION }}-${variant}-${{ matrix.job.arch }}.deb" appimage/rustdesk.deb
+            pushd appimage
+            sudo rm -rf ./AppDir
+            rm -f ./*.AppImage
+            sudo appimage-builder --skip-tests --recipe ./AppImageBuilder-${{ matrix.job.arch }}.yml
+            for f in ./*.AppImage; do
+              sudo mv "$f" "./rustdesk-${{ env.VERSION }}-${variant}-${{ matrix.job.arch }}.AppImage"
+            done
+            popd
+          done
 
       - name: Upload appimage package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
           name: rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}-artifact-linux-${{ matrix.job.arch }}.AppImage
-          path: ./appimage/rustdesk-${{ env.VERSION }}-*.AppImage
+          path: ./appimage/rustdesk-${{ env.VERSION }}-*-${{ matrix.job.arch }}.AppImage
 
       - name: Rename release files (direct-ip)
         if: env.UPLOAD_RELEASE == 'true'
@@ -2346,8 +2377,18 @@ jobs:
           path: .
 
       - name: Rename Binary
+        # The sciter build (matrix.job.suffix == "-sciter") is a separate, unaffected legacy
+        # artifact - still a single .deb. The flutter build (suffix == "") now produces two
+        # pre-configured variants (see build.py::build_flutter_deb()); stage both under fixed
+        # names so the docker-run step below can tell which case it's in by file presence alone
+        # (matrix context isn't directly available inside that composite action's script).
         run: |
-          mv rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.deb flatpak/rustdesk.deb
+          if [ -f "rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.deb" ]; then
+            mv "rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.deb" flatpak/rustdesk.deb
+          else
+            mv "rustdesk-${{ env.VERSION }}-local-${{ matrix.job.arch }}.deb" flatpak/rustdesk-local.deb
+            mv "rustdesk-${{ env.VERSION }}-remote-${{ matrix.job.arch }}.deb" flatpak/rustdesk-remote.deb
+          fi
 
       - uses: rustdesk-org/run-on-arch-action@d3fcfbb632b84cf7f6bc772bfaaa2c2f4f8789a8 # no release tag; commit 2026-05-26
         name: Build rustdesk flatpak package for ${{ matrix.job.arch }}
@@ -2373,16 +2414,34 @@ jobs:
             # package
             pushd flatpak
             git clone https://github.com/flathub/shared-modules.git --depth=1
-            flatpak-builder --user --install-deps-from=flathub -y --force-clean --repo=repo ./build ./rustdesk.json
-            flatpak build-bundle ./repo rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak com.rustdesk.DirectIPRemoteSupport
+            if [ -f rustdesk.deb ]; then
+              # sciter: single legacy .deb, unaffected by the local/remote split
+              flatpak-builder --user --install-deps-from=flathub -y --force-clean --repo=repo ./build ./rustdesk.json
+              flatpak build-bundle ./repo rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak com.rustdesk.DirectIPRemoteSupport
+            else
+              # Two variants (local/remote), each built from its own pre-configured .deb -
+              # mirrors the Windows Local/Remote MSI split, so neither flatpak ever requires a
+              # manual `rustdesk --setup-local`/`--setup-remote` step.
+              for variant in local remote; do
+                echo "=== Building $variant flatpak ==="
+                cp "rustdesk-$variant.deb" rustdesk.deb
+                rm -rf build repo
+                flatpak-builder --user --install-deps-from=flathub -y --force-clean --repo=repo ./build ./rustdesk.json
+                flatpak build-bundle ./repo "rustdesk-${{ env.VERSION }}-${variant}-${{ matrix.job.arch }}.flatpak" com.rustdesk.DirectIPRemoteSupport
+              done
+            fi
 
       - name: Rename release files (direct-ip)
         if: env.UPLOAD_RELEASE == 'true'
         shell: bash
         run: |
+          shopt -s nullglob
           sfx=""; [ "${{ env.TAG_NAME }}" = "nightly" ] && sfx="-nightly"
-          cp -f flatpak/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak \
-            flatpak/rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-linux-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak
+          for f in flatpak/rustdesk-${{ env.VERSION }}-*${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak; do
+            b=$(basename "$f")
+            rest="${b#rustdesk-${{ env.VERSION }}-}"
+            cp -f "$f" "flatpak/rustdesk-direct-ip-${{ env.DIRECT_IP_VERSION }}${sfx}-linux-${rest}"
+          done
 
       - name: Publish flatpak package
         if: env.UPLOAD_RELEASE == 'true'
@@ -2391,7 +2450,7 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            flatpak/rustdesk-direct-ip-*-linux-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak
+            flatpak/rustdesk-direct-ip-*-linux-*${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak
 
   build-rustdesk-web:
     if: False

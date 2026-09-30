@@ -27,10 +27,16 @@ package() {
   fi
   mkdir -p "${pkgdir}/usr/bin"
   pushd ${pkgdir} && ln -s /usr/share/rustdesk-direct-ip-remote-support/rustdesk usr/bin/rustdesk && popd
-  # Sample configs so `rustdesk --setup-local`/`--setup-remote` (fork_config.rs::copy_sample_config())
-  # have something to copy from on a freshly installed package.
-  install -Dm 644 $HBB/configs/local.toml "${pkgdir}/usr/share/rustdesk-direct-ip-remote-support/local.toml"
-  install -Dm 644 $HBB/configs/remote.toml "${pkgdir}/usr/share/rustdesk-direct-ip-remote-support/remote.toml"
+  # Pre-bake config.toml with the matching role (set ROLE=local or ROLE=remote before calling
+  # makepkg) so this package never requires a manual `rustdesk --setup-local`/`--setup-remote`
+  # step - mirrors the Windows Local/Remote MSI split. Falls back to bundling both as loose
+  # sample files if ROLE isn't set (e.g. a manual `makepkg -f` outside CI).
+  if [[ "${ROLE}" == "local" || "${ROLE}" == "remote" ]]; then
+    install -Dm 644 $HBB/configs/${ROLE}.toml "${pkgdir}/usr/share/rustdesk-direct-ip-remote-support/config.toml"
+  else
+    install -Dm 644 $HBB/configs/local.toml "${pkgdir}/usr/share/rustdesk-direct-ip-remote-support/local.toml"
+    install -Dm 644 $HBB/configs/remote.toml "${pkgdir}/usr/share/rustdesk-direct-ip-remote-support/remote.toml"
+  fi
   install -Dm 644 $HBB/res/rustdesk.service -t "${pkgdir}/usr/share/rustdesk-direct-ip-remote-support/files"
   install -Dm 644 $HBB/res/rustdesk.desktop -t "${pkgdir}/usr/share/rustdesk-direct-ip-remote-support/files"
   install -Dm 644 $HBB/res/rustdesk-link.desktop -t "${pkgdir}/usr/share/rustdesk-direct-ip-remote-support/files"
