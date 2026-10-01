@@ -665,6 +665,49 @@ independent — neither triggers the other. **Upgrade check**: if a future upstr
 how Support-style camera sessions are initiated, make sure this fork's `onSupport()` doesn't
 regain an implicit second connect call.
 
+### Connection Manager Chat: Floating Window Instead of Side Panel (fixed 2026-10-01, found via real testing)
+Verify, on any upstream merge that touches `flutter/lib/models/chat_model.dart`'s
+`toggleCMSidePage()`/`toggleCMChatPage()`/`showChatPage()`, or
+`flutter/lib/desktop/pages/server_page.dart`'s `ConnectionManagerState`/`buildSidePage()`:
+- **Problem found**: upstream's own connection-manager chat (`toggleCMSidePage()`) widens the CM
+  window and shows chat as a side panel next to whichever client tab is currently selected
+  (`buildSidePage()`'s `Row` layout in `server_page.dart`). On a CM window with multiple connected
+  clients, switching tabs while chat was open for one client could end up effectively hiding a
+  still-pending accept/permission prompt for another — a real, reported problem, not hypothetical.
+- **Fixed** by routing `role=remote`'s CM-side chat through the *same floating, draggable overlay
+  window* (`toggleChatOverlay()`/`DraggableChatWindow`, `common/widgets/overlay.dart`) that a
+  regular remote session already uses for chat, instead of the side-panel/window-resize approach:
+  - `ConnectionManagerState` (`server_page.dart`) now owns a `BlockableOverlayState`, wires it to
+    `gFFI` via `applyFfi()` in `initState()`, and wraps its entire `build()` return value in a
+    `BlockableOverlay` — infrastructure that didn't exist on the CM side before this fix (it did
+    already exist for regular remote-session pages).
+  - `chat_model.dart`'s `toggleCMChatPage()` now calls `toggleChatOverlay()` instead of
+    `toggleCMSidePage()` (same method name/call sites, different implementation) — also now
+    explicitly clears `client.unreadChatMessageCount` itself, since `changeCurrentKey()`'s own
+    unread-clear (`mobileClearClientUnread`) is a no-op on desktop and the removed
+    `toggleCMSidePage()` call used to be what cleared it on this path.
+  - `buildSidePage()` in `server_page.dart` is now file-transfer only — its chat branch is
+    unreachable dead code (kept as `Offstage()` rather than removed/asserted, in case of a future
+    caller), since nothing calls `toggleCMSidePage()` for chat anymore.
+  - **File transfer's side panel is deliberately unaffected** — it still uses
+    `toggleCMFilePage()`/`toggleCMSidePage()`/the window-resize approach exactly as before; only
+    chat changed.
+  - As a side effect of reusing this existing mechanism, CM chat now also has a visible close
+    button (`DraggableChatWindow`'s app bar), which the side-panel version never had — this was a
+    second complaint the same fix resolves, not a separate change.
+- **Deliberately not done**: auto-closing the floating chat window when the connection ends. Per
+  explicit product decision, not needed — the window simply stays open (unlike the old side panel,
+  which also didn't auto-close, just went read-only via `ChatPageType.desktopCM`'s `readOnly`
+  check in `chat_page.dart` — note the floating path no longer passes a `type` to `ChatPage` at
+  all, so that specific read-only-after-disconnect behavior is lost as a minor, accepted side
+  effect of this fix, not something to "fix back").
+- **Upgrade check**: if a future upstream release changes `BlockableOverlayState`/
+  `DraggableChatWindow`/`toggleChatOverlay()`'s behavior or requirements (e.g. requires something
+  from a per-page `FFI` instance that CM's shared `gFFI` doesn't provide), re-verify the CM window
+  still correctly renders the floating chat window — this fix depends on CM's `gFFI` being a
+  sufficiently complete stand-in for the per-session `FFI` instances this mechanism was originally
+  built for.
+
 ### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
 Verify:
 - `src/rendezvous_mediator.rs::start_all()` still has both `--- BEGIN/END DIRECT-IP FORK ---` blocks: the `hbbs_http::sync::start()` call removed, and the registration loop replaced with `loop { sleep(1.).await; }`.

@@ -17,7 +17,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../common.dart';
-import '../../common/widgets/chat_page.dart';
+import '../../common/widgets/overlay.dart';
 import '../../models/file_model.dart';
 import '../../models/platform_model.dart';
 import '../../models/server_model.dart';
@@ -115,6 +115,17 @@ class ConnectionManagerState extends State<ConnectionManager>
   final RxBool _controlPageBlock = false.obs;
   final RxBool _sidePageBlock = false.obs;
 
+  // Fork: lets chat use a floating, draggable overlay window (the same mechanism a regular
+  // remote session already uses) instead of widening the CM window into a side panel. Found via
+  // real testing that the side-panel approach, on a multi-client CM window, could end up
+  // effectively hiding a still-pending accept/permission prompt when switching between client
+  // tabs while chat was open. The floating overlay renders on top instead of replacing/resizing
+  // the view, and - as a side effect of reusing this existing mechanism - already has its own
+  // visible close button (see DraggableChatWindow's app bar in common/widgets/overlay.dart),
+  // which the side-panel chat never had. File transfer's side panel (buildSidePage() below) is
+  // unaffected - this only changes chat.
+  final BlockableOverlayState _blockableOverlayState = BlockableOverlayState();
+
   ConnectionManagerState() {
     gFFI.serverModel.tabController.onSelected = (client_id_str) {
       final client_id = int.tryParse(client_id_str);
@@ -152,6 +163,10 @@ class ConnectionManagerState extends State<ConnectionManager>
   void initState() {
     gFFI.serverModel.updateClientState();
     WidgetsBinding.instance.addObserver(this);
+    // Wires gFFI.chatModel (and gFFI.dialogManager) to this window's own overlay, so the
+    // floating chat window (toggleChatOverlay()) has somewhere to render into - see
+    // _blockableOverlayState's doc comment above.
+    _blockableOverlayState.applyFfi(gFFI);
     super.initState();
   }
 
@@ -172,7 +187,7 @@ class ConnectionManagerState extends State<ConnectionManager>
       }
     }
 
-    return serverModel.clients.isEmpty
+    final underlying = serverModel.clients.isEmpty
         ? Column(
             children: [
               buildTitleBar(),
@@ -263,8 +278,15 @@ class ConnectionManagerState extends State<ConnectionManager>
               ),
             ),
           );
+    return BlockableOverlay(
+        underlying: underlying, state: _blockableOverlayState);
   }
 
+  // Fork: file transfer only now - chat used to also render here, but now uses its own floating
+  // overlay window instead (see _blockableOverlayState's doc comment above). This still only
+  // triggers for ClientType.file (buildSidePage() is only ever reached via toggleCMFilePage()'s
+  // window resize now), but the clientType re-check below is kept so switching tabs away from a
+  // file-transfer client while this panel is open doesn't keep showing stale content.
   Widget buildSidePage() {
     final selected = gFFI.serverModel.tabController.state.value.selected;
     if (selected < 0 || selected >= gFFI.serverModel.clients.length) {
@@ -274,7 +296,9 @@ class ConnectionManagerState extends State<ConnectionManager>
     if (clientType == ClientType.file) {
       return _FileTransferLogPage();
     } else {
-      return ChatPage(type: ChatPageType.desktopCM);
+      // Unreachable in practice - chat no longer opens via this side panel - but kept as a
+      // harmless fallback rather than asserting, in case some other caller is added later.
+      return Offstage();
     }
   }
 
