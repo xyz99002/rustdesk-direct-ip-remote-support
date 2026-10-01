@@ -262,8 +262,11 @@ class ChatModel with ChangeNotifier {
   showChatPage(MessageKey key) async {
     if (isDesktop) {
       if (isConnManager) {
-        if (!_isShowCMSidePage) {
-          await toggleCMChatPage(key);
+        if (gFFI.chatModel.currentKey != key) {
+          gFFI.chatModel.changeCurrentKey(key);
+        }
+        if (_isChatOverlayHide()) {
+          await toggleChatOverlay();
         }
       } else {
         if (_isChatOverlayHide()) {
@@ -279,11 +282,25 @@ class ChatModel with ChangeNotifier {
     }
   }
 
+  // Fork: on the connection-manager side, chat now opens as a floating overlay window (see
+  // ConnectionManagerState._blockableOverlayState's doc comment, desktop/pages/server_page.dart)
+  // instead of widening the CM window into a side panel via toggleCMSidePage() - found via real
+  // testing that the side-panel approach could end up effectively hiding a still-pending accept
+  // prompt when switching client tabs while chat was open. The method name/call sites are
+  // unchanged; only what it actually does changed.
   toggleCMChatPage(MessageKey key) async {
     if (gFFI.chatModel.currentKey != key) {
       gFFI.chatModel.changeCurrentKey(key);
     }
-    await toggleCMSidePage();
+    // changeCurrentKey()'s own unread-clear (mobileClearClientUnread) is a no-op on desktop -
+    // the old toggleCMSidePage()-based path used to clear this itself when opening; do the same
+    // here so the chat icon's unread badge still clears when you actually open the chat.
+    final client = parent.target?.serverModel.clients
+        .firstWhereOrNull((c) => c.id == key.connId);
+    if (client != null) {
+      client.unreadChatMessageCount.value = 0;
+    }
+    await toggleChatOverlay();
   }
 
   toggleCMFilePage() async {

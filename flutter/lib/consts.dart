@@ -342,6 +342,10 @@ extension StringExtension on String {
 }
 
 const Size kConnectionManagerWindowSizeClosedChat = Size(300, 490);
+// Fork: despite the name, this is now only used when the file-transfer side panel is open -
+// chat moved to its own floating overlay window instead (see
+// ConnectionManagerState._blockableOverlayState's doc comment, desktop/pages/server_page.dart).
+// Kept the existing name to avoid touching every reference to it for a label-only rename.
 const Size kConnectionManagerWindowSizeOpenChat = Size(700, 490);
 // Tabbar transition duration, now we remove the duration
 const Duration kTabTransitionDuration = Duration.zero;
