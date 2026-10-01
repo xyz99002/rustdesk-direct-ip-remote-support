@@ -137,15 +137,18 @@ class _ConnectionPageState extends State<ConnectionPage>
   /// docs/FORK_PROFILE_SPEC.md for why this has no remote-side enforcement.
   bool get _desktopShareEnabled => mainGetBoolOptionSync("desktop-share-enabled");
 
-  /// Callback for the Support button. Always opens a VIEW_CAMERA session (which starts a
-  /// Voice Call on it once connected — see ViewCameraPage.initState()); additionally opens a
-  /// plain DEFAULT_CONN session when desktop sharing is enabled. Both reuse the existing
-  /// `connect()` call unmodified.
+  /// Callback for the Support button. Opens *only* a VIEW_CAMERA session (which starts a
+  /// Voice Call on it once connected — see ViewCameraPage.initState()).
+  ///
+  /// Previously this also opened a second, plain DEFAULT_CONN (desktop) session whenever
+  /// desktop-share-enabled was also true - two independent sessions dialing out at once,
+  /// each producing its own accept/approval prompt on the remote side. Found via real testing:
+  /// this caused synchronization issues and confusing double prompts when both Support and
+  /// Desktop buttons were enabled together. Support and Desktop are now fully independent -
+  /// Support opens only a camera/voice-call session, Desktop (below) opens only a plain
+  /// desktop session; neither triggers the other.
   void onSupport() {
     onConnect(isViewCamera: true);
-    if (_desktopShareEnabled) {
-      onConnect();
-    }
   }
 
   void _onSubmit() {

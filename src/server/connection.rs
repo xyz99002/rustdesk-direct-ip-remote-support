@@ -2527,6 +2527,24 @@ impl Connection {
             if self.authorized {
                 return true;
             }
+            // Fork identity check (see crate::fork_config::FORK_MARKER's doc comment): this
+            // product is a closed, direct-IP-only pairing between this fork's own "local" and
+            // "remote" instances (docs/ADR-0003-DIRECT-IP-ENFORCEMENT.md) - it never registers
+            // with, or expects callers from, the public RustDesk network. Reject anything that
+            // doesn't carry our marker immediately, rather than falling through to a normal
+            // (and normally successful) password/approval flow that would otherwise happily
+            // accept a connection from an unrelated RustDesk build. This is the first thing
+            // done with a freshly received LoginRequest, before any other login processing.
+            if !crate::fork_config::is_fork_peer_version(&lr.version) {
+                log::warn!(
+                    "Rejecting login from a non-fork peer (version: {:?})",
+                    lr.version
+                );
+                self.send_login_error("Rejected: not a Direct-IP fork peer")
+                    .await;
+                sleep(1.).await;
+                return false;
+            }
             self.reset_session_scope_for_login();
             match lr.union {
                 Some(login_request::Union::FileTransfer(ft)) => {

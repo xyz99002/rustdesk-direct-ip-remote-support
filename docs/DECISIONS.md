@@ -89,12 +89,56 @@ side effect, not a bug.
 
 ## Fork Peer Marker
 
-**Status: BLOCKED 2026-09-11, not implemented.** Goal: a `role=local` instance dialing an IP:port
-should get a clear, immediate rejection if what answers isn't this fork's `role=remote` (e.g. a
-real RustDesk instance happening to listen there), instead of falling through to normal password
-authentication and producing a generic, confusing failure — a different concern from the
-app-identity/install-separation work (`docs/PLAN-install-separator.md`), which is about OS-level
-process/installer identity *before* any connection exists; this is about the connection itself.
+**Status: IMPLEMENTED 2026-09-30**, superseding the 2026-09-11 BLOCKED status below (kept for
+history). Goal: a `role=local` instance dialing an IP:port should get a clear, immediate rejection
+if what answers isn't this fork's `role=remote` (e.g. a real RustDesk instance happening to listen
+there), instead of falling through to normal password authentication and producing a generic,
+confusing failure.
+
+The 2026-09-11 attempt (quoted below) correctly identified that adding a new `fork_marker` field to
+`LoginRequest` requires modifying `libs/hbb_common/protos/message.proto` — forbidden, since
+`hbb_common` is a submodule pointing at the real upstream repo. It also examined `LoginRequest`'s
+existing fields (`avatar`, `hwid`, `version`) and judged none safe to repurpose. **That judgment on
+`version` turned out to be overly cautious** — a closer look at exactly how it's consumed
+(`hbb_common::get_version_number()`, used everywhere a numeric version-gate check is done) shows it
+only ever reads the *first two* `-`-separated segments of the string, and silently ignores anything
+after the second `-`. Confirmed by reading the function directly: it calls `.next()` on the
+`'-'`-split iterator exactly twice and never again. This means a third segment can be appended to
+`version` with **zero effect on any existing numeric comparison**, anywhere in the codebase —
+distinct from blindly repurposing the field, which was the actual risk the original analysis was
+(correctly) worried about.
+
+Implemented as:
+- `src/fork_config.rs`: a new `FORK_MARKER` constant (`"rddipfork"`) and `is_fork_peer_version()`
+  helper — both new code in this fork's own crate, nothing touched in `hbb_common`. Deliberately
+  *not* placed in `src/version.rs`: that file is generated fresh at every build by
+  `hbb_common::gen_version()` (called from this crate's own `build.rs`) and is gitignored, so
+  anything hand-added there would be silently discarded and never actually committed.
+- `src/client.rs`: the one real `LoginRequest` construction site (used for the direct-IP connect
+  flow) sets `version: format!("{}-0-{}", crate::VERSION, crate::fork_config::FORK_MARKER)` instead
+  of the plain `crate::VERSION.to_string()` — e.g. `"1.4.9-0-rddipfork"`. (A second, unrelated
+  `version` field exists on `PunchHoleRequest` in the same file, used only by the rendezvous
+  NAT-punching flow this fork permanently disables — left untouched, it's dead code regardless.)
+- `src/server/connection.rs::on_message()`: the first thing done with a freshly received, not-yet-
+  authorized `LoginRequest` is now checking `crate::fork_config::is_fork_peer_version(&lr.version)`
+  — a mismatch sends a clear login-error message and closes the connection immediately, before any
+  password/approval processing happens.
+
+This only ever runs on the *accepting* side (`role=remote`'s server thread, which `role=local` never
+starts at all — see "No Server/IPC for Local Mode" in `docs/UPSTREAM_UPGRADE_GUIDE.md`), so dialing
+*out* to a real, non-fork RustDesk instance (a deliberately-supported scenario — this fork's "local"
+role can connect to any direct-IP-reachable peer, fork or not) is completely unaffected: the real
+RustDesk's own unmodified `get_version_number()` parsing ignores our marker segment exactly the same
+way ours does, so it just sees a normal-looking version string and proceeds as usual. Only an
+inbound connection *to this fork's own remote instance* is rejected when it lacks the marker —
+exactly the one-directional safeguard the original design wanted.
+
+**Upgrade check**: if a future upstream release changes `get_version_number()`'s parsing (e.g. reads
+a third segment for something new), re-verify this marker still has no side effects — this
+implementation depends specifically on that function's current "only ever two segments" behavior.
+
+<details>
+<summary>Original 2026-09-11 analysis (superseded above, kept for history)</summary>
 
 The natural design — add a `fork_marker` field to `LoginRequest`, set by every connection this
 fork initiates, checked as the first thing done with an incoming `LoginRequest` before any other
@@ -124,6 +168,8 @@ Options going forward, none yet decided:
    that case; the gap is only "a confusing generic error" rather than "a clear one."
 3. Some other repurposing of an existing field, accepting a documented risk to that field's real
    function — not recommended without a specific proposal and sign-off, given the risks above.
+
+</details>
 
 ## Upstream Base
 
