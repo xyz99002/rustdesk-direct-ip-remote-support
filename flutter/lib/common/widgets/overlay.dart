@@ -18,13 +18,19 @@ class DraggableChatWindow extends StatelessWidget {
       this.position = Offset.zero,
       required this.width,
       required this.height,
-      required this.chatModel})
+      required this.chatModel,
+      this.type})
       : super(key: key);
 
   final Offset position;
   final double width;
   final double height;
   final ChatModel chatModel;
+  // Fork: passed through so ChatPage can still apply its ChatPageType.desktopCM read-only-
+  // after-disconnect check (see chat_page.dart) even though CM chat now renders via this
+  // floating overlay instead of the old side panel - see toggleCMChatPage()'s doc comment
+  // (models/chat_model.dart) for the full context.
+  final ChatPageType? type;
 
   @override
   Widget build(BuildContext context) {
@@ -42,7 +48,7 @@ class DraggableChatWindow extends StatelessWidget {
                 children: [
                   _buildMobileAppBar(context),
                   Expanded(
-                    child: ChatPage(chatModel: chatModel),
+                    child: ChatPage(chatModel: chatModel, type: type),
                   ),
                 ],
               );
@@ -64,7 +70,7 @@ class DraggableChatWindow extends StatelessWidget {
                       ? _buildDesktopAppBar(context)
                       : _buildMobileAppBar(context),
                 ),
-                body: ChatPage(chatModel: chatModel),
+                body: ChatPage(chatModel: chatModel, type: type),
               );
               return Container(
                   decoration:

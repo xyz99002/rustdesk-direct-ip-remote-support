@@ -696,11 +696,12 @@ Verify, on any upstream merge that touches `flutter/lib/models/chat_model.dart`'
     button (`DraggableChatWindow`'s app bar), which the side-panel version never had — this was a
     second complaint the same fix resolves, not a separate change.
 - **Deliberately not done**: auto-closing the floating chat window when the connection ends. Per
-  explicit product decision, not needed — the window simply stays open (unlike the old side panel,
-  which also didn't auto-close, just went read-only via `ChatPageType.desktopCM`'s `readOnly`
-  check in `chat_page.dart` — note the floating path no longer passes a `type` to `ChatPage` at
-  all, so that specific read-only-after-disconnect behavior is lost as a minor, accepted side
-  effect of this fix, not something to "fix back").
+  explicit product decision, not needed — the window simply stays open, same as the old side panel.
+  The old side panel's read-only-after-disconnect behavior (`ChatPageType.desktopCM`'s `readOnly`
+  check in `chat_page.dart`) *is* preserved: `DraggableChatWindow`/`showChatWindowOverlay()`/
+  `toggleChatOverlay()` all now take an optional `type: ChatPageType?` parameter, and both CM call
+  sites (`showChatPage`'s CM branch, `toggleCMChatPage()`) pass `type: ChatPageType.desktopCM`
+  through to `ChatPage`, so CM chat still goes read-only once the client disconnects.
 - **Upgrade check**: if a future upstream release changes `BlockableOverlayState`/
   `DraggableChatWindow`/`toggleChatOverlay()`'s behavior or requirements (e.g. requires something
   from a per-page `FFI` instance that CM's shared `gFFI` doesn't provide), re-verify the CM window

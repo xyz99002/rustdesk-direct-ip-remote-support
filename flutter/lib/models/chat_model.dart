@@ -17,6 +17,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import '../consts.dart';
 import '../common.dart';
+import '../common/widgets/chat_page.dart';
 import '../common/widgets/overlay.dart';
 import '../main.dart';
 import 'model.dart';
@@ -194,7 +195,7 @@ class ChatModel with ChangeNotifier {
     }
   }
 
-  showChatWindowOverlay({Offset? chatInitPos}) {
+  showChatWindowOverlay({Offset? chatInitPos, ChatPageType? type}) {
     if (chatWindowOverlayEntry != null) return;
     isWindowFocus.value = true;
     _blockableOverlayState.setMiddleBlocked(true);
@@ -219,7 +220,8 @@ class ChatModel with ChangeNotifier {
               position: chatInitPos ?? chatWindowPosition,
               width: 250,
               height: 350,
-              chatModel: this));
+              chatModel: this,
+              type: type));
     });
     overlayState.insert(overlay);
     chatWindowOverlayEntry = overlay;
@@ -239,13 +241,13 @@ class ChatModel with ChangeNotifier {
       ((!(isDesktop || isWebDesktop) && chatIconOverlayEntry == null) ||
           chatWindowOverlayEntry == null);
 
-  toggleChatOverlay({Offset? chatInitPos}) {
+  toggleChatOverlay({Offset? chatInitPos, ChatPageType? type}) {
     if (_isChatOverlayHide()) {
       gFFI.invokeMethod("enable_soft_keyboard", true);
       if (!(isDesktop || isWebDesktop)) {
         showChatIconOverlay();
       }
-      showChatWindowOverlay(chatInitPos: chatInitPos);
+      showChatWindowOverlay(chatInitPos: chatInitPos, type: type);
     } else {
       hideChatIconOverlay();
       hideChatWindowOverlay();
@@ -266,7 +268,7 @@ class ChatModel with ChangeNotifier {
           gFFI.chatModel.changeCurrentKey(key);
         }
         if (_isChatOverlayHide()) {
-          await toggleChatOverlay();
+          await toggleChatOverlay(type: ChatPageType.desktopCM);
         }
       } else {
         if (_isChatOverlayHide()) {
@@ -300,7 +302,7 @@ class ChatModel with ChangeNotifier {
     if (client != null) {
       client.unreadChatMessageCount.value = 0;
     }
-    await toggleChatOverlay();
+    await toggleChatOverlay(type: ChatPageType.desktopCM);
   }
 
   toggleCMFilePage() async {
