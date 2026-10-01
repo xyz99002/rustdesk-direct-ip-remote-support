@@ -2725,7 +2725,11 @@ impl LoginConfigHandler {
             my_platform,
             option: self.get_option_message(true).into(),
             session_id: self.session_id,
-            version: crate::VERSION.to_string(),
+            // Fork identity marker - see crate::fork_config::FORK_MARKER's doc comment for why
+            // this is safe to embed in the existing `version` field rather than needing a new
+            // LoginRequest field (which would require modifying the forbidden hbb_common
+            // submodule).
+            version: format!("{}-0-{}", crate::VERSION, crate::fork_config::FORK_MARKER),
             os_login: Some(OSLogin {
                 username: os_username,
                 password: os_password,

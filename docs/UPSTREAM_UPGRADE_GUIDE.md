@@ -635,13 +635,35 @@ Verify:
   to match this fork's existing pattern of permanent, non-persisted product defaults; revisit if
   a genuinely user-adjustable-and-sticky default is wanted instead.
 
-### Fork Peer Marker — NOT IMPLEMENTED, blocked (see `docs/DECISIONS.md`)
-No hook point exists in the code today; nothing to verify. Recorded here only so a future upgrade
-doesn't rediscover the same blocker from scratch: adding a protocol-level "is this actually a fork
-peer" marker to `LoginRequest` requires editing `libs/hbb_common/protos/message.proto`, which
-lives inside the `libs/hbb_common` git submodule — the official upstream `rustdesk/hbb_common`
-repo, not something this fork owns. See `docs/DECISIONS.md` "Fork Peer Marker" for the full
-writeup and the options under consideration before this can be implemented.
+### Fork Peer Marker (implemented 2026-09-30, see `docs/DECISIONS.md` for the full rationale)
+Verify, on any upstream merge that touches `libs/hbb_common::get_version_number()`, `src/client.rs`'s
+`LoginRequest` construction, or `src/server/connection.rs::on_message()`:
+- `hbb_common::get_version_number()` still reads only the first two `-`-separated segments of its
+  input and ignores everything after the second `-` — this is the exact property that makes it
+  safe to embed `crate::fork_config::FORK_MARKER` as a third segment of `LoginRequest.version` without affecting
+  any of the many numeric version-gate checks throughout `src/server/connection.rs`/`src/client.rs`
+  that call this function. If a future upstream release starts reading a third segment for some
+  new purpose, this marker would either collide with that or stop being silently ignored —
+  re-verify before assuming it's still inert.
+- `src/client.rs`'s single `LoginRequest { ... }` construction site still sets `version:
+  format!("{}-0-{}", crate::VERSION, crate::fork_config::FORK_MARKER)` rather than plain `crate::VERSION`.
+- `src/server/connection.rs::on_message()` still checks `crate::fork_config::is_fork_peer_version(&lr.version)`
+  as the first thing done with a freshly received, not-yet-authorized `LoginRequest`, rejecting
+  immediately (clear login error, no password/approval processing reached) if it doesn't match.
+- This check only runs on the accepting (`role=remote`) side — confirm dialing *out* to a real,
+  non-fork RustDesk instance (a deliberately-supported scenario for `role=local`) still works,
+  since that path never reaches this check at all.
+
+### Support/Desktop Button Independence (fixed 2026-09-30, found via real two-machine testing)
+`flutter/lib/desktop/pages/connection_page.dart`'s `onSupport()` used to open a VIEW_CAMERA session
+*and*, if `desktop-share-enabled` was also true, a second plain DEFAULT_CONN session at the same
+time — two independent sessions dialing out together, each producing its own accept/approval
+prompt on the remote side, found to cause real synchronization/double-prompt issues once someone
+actually tested with both buttons enabled. Fixed: `onSupport()` now opens only the VIEW_CAMERA
+session; the Desktop button (unchanged) opens only a plain DEFAULT_CONN session. The two are fully
+independent — neither triggers the other. **Upgrade check**: if a future upstream release changes
+how Support-style camera sessions are initiated, make sure this fork's `onSupport()` doesn't
+regain an implicit second connect call.
 
 ### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
 Verify:

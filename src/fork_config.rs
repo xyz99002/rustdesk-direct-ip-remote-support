@@ -85,6 +85,41 @@ const CONFIG_FILE_NAME: &str = "config.toml";
 /// old values.
 pub const SUPPORTED_CONFIG_VERSION: u32 = 1;
 
+/// Fork identity marker embedded in the `version` field of every `LoginRequest` this fork
+/// initiates (see `src/client.rs`'s `LoginRequest` construction) and checked on every inbound
+/// `LoginRequest` this fork accepts (see `src/server/connection.rs::on_message()`). This is
+/// *not* a protocol/schema change — `LoginRequest.version` already exists as a free-form string
+/// field, and already carries a `-`-separated "patch version" suffix upstream itself supports
+/// (`hbb_common::get_version_number()`'s own doc comment: "Support 1.1.10-1, the number after -
+/// is a patch version" — that function only ever reads the first two `-`-separated segments, so
+/// a third segment is silently ignored by every existing numeric version-gate check in the
+/// codebase, confirmed by reading `get_version_number()` itself).
+///
+/// Deliberately defined here rather than in `src/version.rs`: that file is *generated* at every
+/// build by `hbb_common::gen_version()` (called from this crate's own `build.rs`) and is
+/// gitignored — anything hand-added there would be silently overwritten and never actually
+/// committed. `fork_config.rs` is this fork's own, genuinely version-controlled home for
+/// fork-specific additions like this one.
+///
+/// This mirrors the "Fork Peer Marker" design from `docs/DECISIONS.md`, which was originally
+/// blocked because it required adding a new field to `LoginRequest` in
+/// `libs/hbb_common/protos/message.proto` — a file inside the `hbb_common` git submodule this
+/// fork must never modify (it points at the real upstream repo). Reusing the existing `version`
+/// field instead needed no submodule change at all.
+///
+/// A connecting ("local" role) instance's `LoginRequest.version` therefore looks like
+/// `"1.4.9-0-rddipfork"` instead of plain `"1.4.9"` — the `-0` keeps the "patch version" segment
+/// explicit (rather than relying on it being silently absent) so this stays self-documenting
+/// without altering the computed version number at all.
+pub const FORK_MARKER: &str = "rddipfork";
+
+/// `true` if `version` (as received in an incoming `LoginRequest.version`) carries this fork's
+/// marker.
+#[inline]
+pub fn is_fork_peer_version(version: &str) -> bool {
+    version.contains(FORK_MARKER)
+}
+
 /// This module's own option keys, read from `config.toml`'s `[options]` table. Every key here is a
 /// distinct string from any upstream `OPTION_*` constant in `libs/hbb_common/src/config.rs` —
 /// verified by grep against that file at the time this was written, to guarantee no collision
