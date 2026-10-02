@@ -709,6 +709,37 @@ Verify, on any upstream merge that touches `flutter/lib/models/chat_model.dart`'
   sufficiently complete stand-in for the per-session `FFI` instances this mechanism was originally
   built for.
 
+### Duplicate Voice Call Prevention (fixed 2026-10-01, found via real testing)
+Verify, on any upstream merge that touches voice-call request sites or `ChatModel`'s voice-call
+state:
+- **Problem found**: audio on the remote side is a single shared capture resource — the
+  remote's audio service is a singleton (`src/server/audio_service.rs`), and a voice call
+  additionally reroutes the remote's mic input away from normal PC-audio broadcast and toward
+  whichever connection is in a call. If a local machine opens a Desktop session to a remote and
+  starts a voice call, then also opens a Support session to the *same* remote (or just clicks
+  "Voice call" again), a second, fully independent `VoiceCallRequest` was sent with nothing
+  stopping it — resource contention on the remote's one audio stream, not a crash but a real
+  functional conflict.
+- **Fixed** client-side only (no `hbb_common`/server changes) by adding a static,
+  peer-id-keyed registry in `flutter/lib/models/chat_model.dart`:
+  `ChatModel._peerVoiceCallStatus` (`Map<String, VoiceCallStatus>`), updated from
+  `onVoiceCallWaiting()`/`onVoiceCallStarted()`/`onVoiceCallClosed()` using the owning
+  session's `FFI.id` (peer id) — note this is intentionally a *static* map, unlike
+  `_voiceCallStatus` itself which is per-`ChatModel`/per-session, specifically so it is visible
+  across multiple separate `FFI`/session instances connected to the same peer.
+  `ChatModel.hasActiveVoiceCall(peerId)` is checked before every outbound
+  `bind.sessionRequestVoiceCall(...)` call site, and shows a toast + no-ops instead of dialing
+  when true. Call sites updated: `flutter/lib/desktop/widgets/remote_toolbar.dart`'s
+  `_ChatMenu.voiceCall()`, `flutter/lib/desktop/pages/view_camera_page.dart`'s auto-dial-on-
+  first-image (Support mode), `flutter/lib/mobile/pages/remote_page.dart` and
+  `flutter/lib/mobile/pages/view_camera_page.dart`'s `showChatOptions().onPressVoiceCall()`.
+- **Deliberately not done**: server-side/audio-conferencing changes. Per user direction, this is
+  phase 1 (block the duplicate call) only. A phase 2 — audio conferencing, where multiple
+  locals with an active call to the same remote share the one mic stream instead of
+  conflicting — is a larger `src/server/audio_service.rs`/`connection.rs` change, deferred.
+- **Upgrade check**: if upstream adds a new path that sends `VoiceCallRequest` (e.g. a new
+  button or an auto-dial flow), route it through `ChatModel.hasActiveVoiceCall(peerId)` too.
+
 ### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
 Verify:
 - `src/rendezvous_mediator.rs::start_all()` still has both `--- BEGIN/END DIRECT-IP FORK ---` blocks: the `hbbs_http::sync::start()` call removed, and the registration loop replaced with `loop { sleep(1.).await; }`.
