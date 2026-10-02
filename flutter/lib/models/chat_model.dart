@@ -57,6 +57,20 @@ class MessageBody {
 class ChatModel with ChangeNotifier {
   static final clientModeID = -1;
 
+  // Fork: registry of peer id -> voice call status, so this local machine can detect it
+  // already has an active (connected) or pending (waitingForResponse) voice call to a given
+  // remote peer, even across separate sessions/windows to that same peer (e.g. a Desktop
+  // session and a Support session opened to the same remote). Audio is a single shared
+  // resource on the remote side (see docs/UPSTREAM_UPGRADE_GUIDE.md), so a second concurrent
+  // call to the same peer must be refused client-side rather than silently created.
+  static final Map<String, VoiceCallStatus> _peerVoiceCallStatus = {};
+
+  static bool hasActiveVoiceCall(String peerId) {
+    final status = _peerVoiceCallStatus[peerId];
+    return status == VoiceCallStatus.waitingForResponse ||
+        status == VoiceCallStatus.connected;
+  }
+
   OverlayEntry? chatIconOverlayEntry;
   OverlayEntry? chatWindowOverlayEntry;
 
@@ -543,10 +557,18 @@ class ChatModel with ChangeNotifier {
 
   void onVoiceCallWaiting() {
     _voiceCallStatus.value = VoiceCallStatus.waitingForResponse;
+    final peerId = parent.target?.id;
+    if (peerId != null && peerId.isNotEmpty) {
+      _peerVoiceCallStatus[peerId] = VoiceCallStatus.waitingForResponse;
+    }
   }
 
   void onVoiceCallStarted() {
     _voiceCallStatus.value = VoiceCallStatus.connected;
+    final peerId = parent.target?.id;
+    if (peerId != null && peerId.isNotEmpty) {
+      _peerVoiceCallStatus[peerId] = VoiceCallStatus.connected;
+    }
     if (isAndroid) {
       parent.target?.invokeMethod("on_voice_call_started");
     }
@@ -554,6 +576,10 @@ class ChatModel with ChangeNotifier {
 
   void onVoiceCallClosed(String reason) {
     _voiceCallStatus.value = VoiceCallStatus.notStarted;
+    final peerId = parent.target?.id;
+    if (peerId != null && peerId.isNotEmpty) {
+      _peerVoiceCallStatus.remove(peerId);
+    }
     if (isAndroid) {
       // We can always invoke "on_voice_call_closed"
       // no matter if the `_voiceCallStatus` was `VoiceCallStatus.notStarted` or not.
