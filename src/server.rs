@@ -74,6 +74,7 @@ pub mod portable_service;
 mod service;
 mod video_qos;
 pub mod video_service;
+mod voice_conference;
 
 #[cfg(all(target_os = "windows", feature = "flutter"))]
 pub mod printer_service;

@@ -123,7 +123,13 @@ mod pa_impl {
             #[cfg(target_os = "linux")]
             if let Ok(data) = stream.next_raw().await {
                 if data.len() == 0 {
-                    send_f32(&zero_audio_frame, &mut encoder, &sp);
+                    send_f32(
+                        &zero_audio_frame,
+                        crate::platform::PA_SAMPLE_RATE,
+                        2,
+                        &mut encoder,
+                        &sp,
+                    );
                     continue;
                 }
 
@@ -135,7 +141,7 @@ mod pa_impl {
                 let data = unsafe {
                     std::slice::from_raw_parts::<f32>(data.as_ptr() as _, data.len() / 4)
                 };
-                send_f32(data, &mut encoder, &sp);
+                send_f32(data, crate::platform::PA_SAMPLE_RATE, 2, &mut encoder, &sp);
             }
 
             #[cfg(target_os = "android")]
@@ -147,7 +153,7 @@ mod pa_impl {
                         android_data.len() / 4,
                     )
                 };
-                send_f32(data, &mut encoder, &sp);
+                send_f32(data, crate::platform::PA_SAMPLE_RATE, 2, &mut encoder, &sp);
             } else {
                 hbb_common::sleep(0.1).await;
             }
@@ -256,7 +262,7 @@ mod cpal_impl {
                 encode_channel,
             )
         }
-        send_f32(&data, encoder, sp);
+        send_f32(&data, sample_rate, encode_channel, encoder, sp);
     }
 
     #[cfg(feature = "screencapturekit")]
@@ -465,7 +471,18 @@ fn create_format_msg(sample_rate: u32, channels: u16) -> Message {
 const MAX_AUDIO_ZERO_COUNT: u16 = 800;
 static mut AUDIO_ZERO_COUNT: u16 = 0;
 
-fn send_f32(data: &[f32], encoder: &mut Encoder, sp: &GenericService) {
+fn send_f32(
+    data: &[f32],
+    sample_rate: u32,
+    channels: u16,
+    encoder: &mut Encoder,
+    sp: &GenericService,
+) {
+    // Fork: feed the remote's own mic PCM to voice_conference, which mixes it into any other
+    // in-call connections' personalized audio. No-op unless a conference is actually in
+    // progress. Deliberately before the zero-gate logic below, so the mixer sees true silence
+    // rather than the gate's "last loud frame repeated" behavior.
+    super::voice_conference::on_remote_mic_frame(data, sample_rate, channels);
     if data.iter().filter(|x| **x != 0.).next().is_some() {
         unsafe {
             AUDIO_ZERO_COUNT = 0;

@@ -733,12 +733,67 @@ state:
   `_ChatMenu.voiceCall()`, `flutter/lib/desktop/pages/view_camera_page.dart`'s auto-dial-on-
   first-image (Support mode), `flutter/lib/mobile/pages/remote_page.dart` and
   `flutter/lib/mobile/pages/view_camera_page.dart`'s `showChatOptions().onPressVoiceCall()`.
-- **Deliberately not done**: server-side/audio-conferencing changes. Per user direction, this is
-  phase 1 (block the duplicate call) only. A phase 2 — audio conferencing, where multiple
-  locals with an active call to the same remote share the one mic stream instead of
-  conflicting — is a larger `src/server/audio_service.rs`/`connection.rs` change, deferred.
+- **Phase 2 (implemented 2026-10-02): audio conferencing.** See the next section.
 - **Upgrade check**: if upstream adds a new path that sends `VoiceCallRequest` (e.g. a new
   button or an auto-dial flow), route it through `ChatModel.hasActiveVoiceCall(peerId)` too.
+
+### Audio Conferencing for Concurrent Voice Calls (phase 2, implemented 2026-10-02)
+Verify, on any upstream merge that touches `handle_voice_call`/`close_voice_call`/`on_close`/the
+`AudioFormat`/`AudioFrame` receive handlers in `src/server/connection.rs`, or the
+capture/encode path in `src/server/audio_service.rs`:
+- **Problem**: when *different* local machines each have an active voice call with the same
+  remote, nothing combined their audio. The remote's own mic already broadcast to every
+  subscriber (direction 1, already worked via `audio_service`'s singleton `GenericService`), but
+  no local's mic ever reached any *other* local — only the remote itself heard each caller
+  independently, via its own per-connection decode/output pipeline in `src/client.rs`'s
+  `start_audio_thread` (unaffected by this change). Separately, the remote's singleton
+  mic-capture device toggle (`audio_service::set_voice_call_input_device`) was reset
+  unconditionally by `close_voice_call()`/connection teardown regardless of whether *other*
+  connections were still mid-call — a bug upstream's own code already flagged in a comment at
+  `on_close()` as a known, accepted limitation ("We can add a (Vec<conn_id>, input device) to
+  avoid this. But it's not necessary now...").
+- **Fixed** entirely server-side (new file `src/server/voice_conference.rs`, no
+  `libs/hbb_common` changes, no Flutter changes):
+  - A registry of "connections currently in a voice call" (`voice_conference::MEMBERS`),
+    populated by `register()`/`unregister()` calls added to `handle_voice_call`'s accepted
+    branch, `close_voice_call()`, and the `on_close()` teardown path. `unregister()` returns
+    whether it removed the *last* in-call connection — only then is
+    `set_voice_call_input_device(None, true)` actually called, fixing the bug above.
+  - While fewer than 2 connections are in a call, the module is a complete no-op (every public
+    fn's first check is `members.len() < 2`) — a solo caller's audio path is byte-for-byte
+    identical to upstream, zero added overhead.
+  - Once a *second* connection joins, every in-call connection is unsubscribed from
+    `audio_service`'s plain broadcast (`set_broadcast_subscription`) and instead gets a
+    *personalized* mix: the remote's own mic plus every *other* in-call connection's mic,
+    excluding its own — built by decoding each source to PCM (`on_local_frame`/
+    `on_remote_mic_frame`, tapped from `connection.rs`'s `AudioFrame` handler and
+    `audio_service.rs`'s `send_f32`), summing at a fixed internal format (48kHz stereo) using
+    the existing `crate::common::audio_resample`/`audio_rechannel` helpers, then re-encoding
+    per recipient at whatever format `audio_service`'s broadcast last announced
+    (`BROADCAST_FORMAT`) — so a recipient's client needs no awareness this happened at all; it
+    receives an ordinary `AudioFrame` exactly as before. A background 10ms ticker
+    (`voice_conference::tick`) drives the mix/re-encode/send loop; a source that's gone quiet
+    for >100ms is treated as silence rather than repeated stale audio.
+  - `AudioFormat`'s handler in `connection.rs` now also calls `voice_conference::on_local_format`
+    (builds that connection's own Opus decoder, matched to its negotiated mic-upload format)
+    before the existing `start_audio_thread()` call — unaffected by this change.
+- **Investigated, found to be a non-issue**: whether the CM (connection-manager) UI could
+  visually confuse two overlapping incoming calls from different clients. It cannot — the CM's
+  multi-client accept/reject UI (`flutter/lib/desktop/pages/server_page.dart`'s client list) is
+  already driven by **per-client** `Client.inVoiceCall`/`incomingVoiceCall` fields (populated by
+  `ServerModel.updateVoiceCallState`), not the shared `ChatModel.voiceCallStatus` Rx value —
+  that shared value is only read by the single-session caller-side UI
+  (`remote_toolbar.dart`/mobile pages), which is correctly scoped to its own session already.
+- **Deliberately not done**: dynamically re-subscribing/toggling if `disable_audio` changes
+  *while* a 2+-member conference is already in progress — a pre-existing `update_options`
+  audio-toggle path could in principle re-subscribe a conferencing connection to the plain
+  broadcast out from under this module. Not handled; a rare interaction, not a regression (no
+  worse than the equivalent toggle during a normal single call), flagged here for whoever next
+  touches that path.
+- **Upgrade check**: if upstream changes `magnum_opus`'s `Decoder`/`Encoder` API, or the
+  `AudioFrame`/`AudioFormat` message shapes, re-verify `voice_conference.rs` against
+  `src/client.rs`'s own `AudioHandler::handle_format`/`handle_frame` (the reference usage this
+  module's decode calls were modeled on).
 
 ### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
 Verify:

@@ -3543,6 +3543,15 @@ impl Connection {
                     },
                     Some(misc::Union::AudioFormat(format)) => {
                         if !self.disable_audio {
+                            // Fork: tell voice_conference about this connection's negotiated
+                            // mic-upload format before `format` is moved below, so it can build
+                            // a matching decoder if/when a conference starts. No-op unless this
+                            // connection is actually registered (i.e. has an active voice call).
+                            super::voice_conference::on_local_format(
+                                self.inner.id(),
+                                format.sample_rate,
+                                format.channels as u16,
+                            );
                             // Drop the audio sender previously.
                             drop(std::mem::replace(&mut self.audio_sender, None));
                             self.audio_sender = Some(start_audio_thread());
@@ -3639,6 +3648,11 @@ impl Connection {
                 },
                 Some(message::Union::AudioFrame(frame)) => {
                     if !self.disable_audio {
+                        // Fork: feed this connection's mic audio to voice_conference before the
+                        // move below, so a 2+-connection conference can mix it into the other
+                        // members' personalized streams. No-op unless a conference is actually
+                        // in progress.
+                        super::voice_conference::on_local_frame(self.inner.id(), &frame);
                         if let Some(sender) = &self.audio_sender {
                             allow_err!(sender.send(MediaData::AudioFrame(Box::new(frame))));
                         } else {
@@ -4400,6 +4414,18 @@ impl Connection {
                         self.audio_enabled() && accepted,
                     );
                 }
+                if accepted {
+                    // Fork: track this connection so a second, different connection also
+                    // calling this same remote gets a personalized audio mix instead of
+                    // resource contention on the remote's one mic-capture stream. See
+                    // src/server/voice_conference.rs.
+                    super::voice_conference::register(
+                        self.inner.id(),
+                        self.inner.clone(),
+                        self.server.clone(),
+                        self.audio_enabled(),
+                    );
+                }
             }
         } else {
             log::warn!("Possible a voice call attack.");
@@ -4407,7 +4433,15 @@ impl Connection {
     }
 
     pub async fn close_voice_call(&mut self) {
-        crate::audio_service::set_voice_call_input_device(None, true);
+        // Fork: only the *last* connection to leave a voice call may reset the remote's
+        // mic-capture device back to normal PC audio - resetting it while another connection
+        // is still mid-call would kill that connection's audio too (the capture stream is a
+        // singleton, see src/server/audio_service.rs). voice_conference::unregister() is a
+        // harmless no-op if this connection was never registered (e.g. a rejected call).
+        let last_in_call = super::voice_conference::unregister(self.inner.id());
+        if last_in_call {
+            crate::audio_service::set_voice_call_input_device(None, true);
+        }
         // Notify the connection manager that the voice call has been closed.
         self.send_to_cm(Data::CloseVoiceCall("".to_owned()));
         self.voice_calling = false;
@@ -4803,16 +4837,14 @@ impl Connection {
             return;
         }
         self.closed = true;
-        // If voice A,B -> C, and A,B has voice call
-        // B disconnects, C will reset the voice call input.
-        //
-        // It may be acceptable, because it's not a common case,
-        // and it's immediately known when the input device changes.
-        // C can change the input device manually in cm interface.
-        //
-        // We can add a (Vec<conn_id>, input device) to avoid this.
-        // But it's not necessary now and we have to consider two audio services(client, server).
-        crate::audio_service::set_voice_call_input_device(None, true);
+        // Fork: the upstream comment this replaced described exactly this bug (voice A,B -> C,
+        // B disconnects, C's call audio gets reset) as an accepted limitation requiring a
+        // per-connection tracking structure to fix. voice_conference::unregister() is that
+        // structure (see src/server/voice_conference.rs) - only reset the input device if no
+        // other connection is still mid-call.
+        if super::voice_conference::unregister(self.inner.id()) {
+            crate::audio_service::set_voice_call_input_device(None, true);
+        }
         log::info!("#{} Connection closed: {}", self.inner.id(), reason);
         if lock && self.lock_after_session_end && self.keyboard {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
