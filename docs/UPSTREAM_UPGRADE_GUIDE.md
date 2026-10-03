@@ -706,6 +706,21 @@ Verify, on any upstream merge that touches `src/server/connection.rs`'s `PeerInf
   (not `io_loop.rs`'s `handle_msg_from_peer`) and does not get this check - port forwarding isn't
   exposed by this fork's minimal UI (no peer list, Desktop/Support buttons only), so this is a
   low-priority gap, not an oversight to silently ignore if that ever changes.
+- **Known limitation, deliberately not addressed yet (2026-10-03)**: this check only runs once
+  login has fully completed (`PeerInfo` is the last message of a successful login) - meaning a
+  non-fork remote's operator can briefly see a normal accept prompt (in click-to-accept mode)
+  before we disconnect right after. A genuinely earlier rejection point exists and was discussed
+  but deliberately deferred: `connection.rs::on_open()` sends a `Hash { salt, challenge }`
+  message (`connection.rs:1423`) immediately on TCP connect, *before* any `LoginRequest` is even
+  processed - if `FORK_MARKER` were appended to `challenge` (the secondary replay-protection
+  hash input, not the primary password-derivation `salt` - lower risk of the two, though both are
+  used as opaque bytes for hashing on both ends so either would likely work safely) and checked
+  on receipt, a non-fork remote could be rejected before the remote ever shows an accept prompt
+  at all. Not implemented because it touches actual authentication-hash input rather than a
+  purely informational field like `version`, and the current login-complete-time check was judged
+  sufficient for now. If this becomes worth doing later: append the marker to `Hash.challenge` in
+  `on_open()`, check for it in the client's `Hash` message handler (io_loop.rs), and disconnect
+  immediately before ever sending a `LoginRequest` if absent.
 - **Upgrade check**: if upstream adds another path that processes `login_response::Union::PeerInfo`
   outside `io_loop.rs::handle_msg_from_peer` (besides the already-known `port_forward.rs` gap),
   route it through `check_fork_peer_support`-equivalent logic too.
