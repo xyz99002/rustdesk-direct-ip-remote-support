@@ -708,6 +708,38 @@ Verify, on any upstream merge that touches `flutter/lib/models/chat_model.dart`'
   still correctly renders the floating chat window — this fix depends on CM's `gFFI` being a
   sufficiently complete stand-in for the per-session `FFI` instances this mechanism was originally
   built for.
+- **Follow-up bug found and fixed (2026-10-02, found via real two-machine testing)**: wrapping
+  the CM window's entire `build()` return value in `BlockableOverlay` (to give the floating chat
+  window somewhere to render) broke the CM's own client-list display. `BlockableOverlay.build()`
+  constructs `Overlay(key: state.key, initialEntries: [OverlayEntry(builder: (_) => underlying),
+  ...])` — but `Overlay`'s `initialEntries` is a Flutter quirk: it's only consulted once, when
+  its `OverlayState` is first created. `server_page.dart` computed `underlying` as
+  `serverModel.clients.isEmpty ? <"Waiting" placeholder> : <client DesktopTab>` directly in
+  `build()`, then passed it into `BlockableOverlay` — on every subsequent rebuild (e.g. a client
+  actually connecting), a *new* `underlying` value was computed and handed to a *new*
+  `BlockableOverlay`/`Overlay` widget, but since `state.key` keeps the same `OverlayState` alive
+  across rebuilds, that new `initialEntries` list is silently ignored. The result: the CM window
+  stayed frozen on whichever branch was true the very first time it was built — in practice the
+  empty "Waiting" placeholder, since that's always true before any client has connected — and
+  never updated even after a client successfully connected (confirmed via a live two-machine
+  test: the viewer saw the remote's desktop just fine, but the remote's own CM window still
+  showed "Waiting" instead of the connected client's tab/accept controls).
+  - **Fixed** by moving the reactive `serverModel.clients.isEmpty` branch *inside* a
+    `Consumer<ServerModel>` nested within the one-time-captured `underlying` tree, instead of
+    switching on it in the outer `build()` before handing the result to `BlockableOverlay`.
+    `Consumer` subscribes to `ServerModel`'s ambient `Provider` directly through the element
+    tree's own dependency mechanism, so it keeps rebuilding correctly even though the `Overlay`
+    around it never re-reads `initialEntries` again.
+  - **Not a regression anywhere else**: the other `BlockableOverlay` call sites
+    (`remote_page.dart`/`view_camera_page.dart`, desktop and mobile) don't hit this, because their
+    `bodyWidget()`s already route all dynamic behavior through nested `Obx`/`Consumer` widgets
+    *inside* a structurally stable top-level tree — the same pattern this fix now also follows in
+    `server_page.dart`. Checked at the time of this fix; re-verify this stays true if those files'
+    `bodyWidget()`s are restructured.
+  - **Upgrade check**: if upstream ever changes how `ConnectionManagerState.build()` switches
+    between its empty and client-list states, make sure that switch stays inside a
+    `Consumer`/`Obx`-style reactive wrapper nested within whatever gets handed to
+    `BlockableOverlay`, not computed as a plain conditional in the outer `build()`.
 
 ### Duplicate Voice Call Prevention (fixed 2026-10-01, found via real testing)
 Verify, on any upstream merge that touches voice-call request sites or `ChatModel`'s voice-call

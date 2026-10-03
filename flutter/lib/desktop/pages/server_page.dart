@@ -187,97 +187,116 @@ class ConnectionManagerState extends State<ConnectionManager>
       }
     }
 
-    final underlying = serverModel.clients.isEmpty
-        ? Column(
-            children: [
-              buildTitleBar(),
-              Expanded(
-                child: Center(
-                  child: Text(translate("Waiting")),
-                ),
-              ),
-            ],
-          )
-        : Listener(
-            onPointerDown: pointerHandler,
-            onPointerMove: pointerHandler,
-            child: DesktopTab(
-              showTitle: false,
-              showMaximize: false,
-              showMinimize: true,
-              showClose: true,
-              onWindowCloseButton: handleWindowCloseButton,
-              controller: serverModel.tabController,
-              selectedBorderColor: MyTheme.accent,
-              maxLabelWidth: 100,
-              tail: null, //buildScrollJumper(),
-              tabBuilder: (key, icon, label, themeConf) {
-                final client = serverModel.clients
-                    .firstWhereOrNull((client) => client.id.toString() == key);
-                return Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Tooltip(
-                        message: key,
-                        waitDuration: Duration(seconds: 1),
-                        child: label),
-                    unreadMessageCountBuilder(client?.unreadChatMessageCount)
-                        .marginOnly(left: 4),
-                  ],
-                );
-              },
-              pageViewBuilder: (pageView) => LayoutBuilder(
-                builder: (context, constrains) {
-                  var borderWidth = 0.0;
-                  if (constrains.maxWidth >
-                      kConnectionManagerWindowSizeClosedChat.width) {
-                    borderWidth = kConnectionManagerWindowSizeOpenChat.width -
-                        constrains.maxWidth;
-                  } else {
-                    borderWidth = kConnectionManagerWindowSizeClosedChat.width -
-                        constrains.maxWidth;
-                  }
-                  if (borderWidth < 0 || borderWidth > 50) {
-                    borderWidth = 0;
-                  }
-                  final realClosedWidth =
-                      kConnectionManagerWindowSizeClosedChat.width -
-                          borderWidth;
-                  final realChatPageWidth =
-                      constrains.maxWidth - realClosedWidth;
-                  final row = Row(children: [
-                    if (constrains.maxWidth >
-                        kConnectionManagerWindowSizeClosedChat.width)
-                      Consumer<ChatModel>(
-                          builder: (_, model, child) => SizedBox(
-                                width: realChatPageWidth,
-                                child: allowRemoteCMModification()
-                                    ? buildSidePage()
-                                    : buildRemoteBlock(
-                                        child: buildSidePage(),
-                                        block: _sidePageBlock,
-                                        mask: true),
-                              )),
-                    SizedBox(
-                        width: realClosedWidth,
-                        child: SizedBox(
+    // Fork: the client-list content is wrapped in its own Consumer<ServerModel> (rather than
+    // switched on serverModel.clients.isEmpty directly here) because it ends up inside
+    // BlockableOverlay's Overlay below, whose `initialEntries` is only consulted once, when the
+    // OverlayState is first created - recomputing `underlying` on every outer build() and
+    // passing it into a new Overlay widget on each rebuild is silently ignored by Flutter, since
+    // the existing OverlayState just keeps its original entries. That left this window frozen on
+    // whichever branch was true the very first time it was built - in practice the empty
+    // "Waiting" placeholder, since it's built before any client has connected - and never
+    // updating even after a client connected (found via real testing). Consumer subscribes to
+    // ServerModel directly through the ambient Provider, independent of whether this outer
+    // build() or the Overlay itself ever re-runs, so it keeps working correctly inside a
+    // one-time-built Overlay entry.
+    final underlying = Consumer<ServerModel>(
+      builder: (context, serverModel, child) {
+        return serverModel.clients.isEmpty
+            ? Column(
+                children: [
+                  buildTitleBar(),
+                  Expanded(
+                    child: Center(
+                      child: Text(translate("Waiting")),
+                    ),
+                  ),
+                ],
+              )
+            : Listener(
+                onPointerDown: pointerHandler,
+                onPointerMove: pointerHandler,
+                child: DesktopTab(
+                  showTitle: false,
+                  showMaximize: false,
+                  showMinimize: true,
+                  showClose: true,
+                  onWindowCloseButton: handleWindowCloseButton,
+                  controller: serverModel.tabController,
+                  selectedBorderColor: MyTheme.accent,
+                  maxLabelWidth: 100,
+                  tail: null, //buildScrollJumper(),
+                  tabBuilder: (key, icon, label, themeConf) {
+                    final client = serverModel.clients.firstWhereOrNull(
+                        (client) => client.id.toString() == key);
+                    return Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Tooltip(
+                            message: key,
+                            waitDuration: Duration(seconds: 1),
+                            child: label),
+                        unreadMessageCountBuilder(
+                                client?.unreadChatMessageCount)
+                            .marginOnly(left: 4),
+                      ],
+                    );
+                  },
+                  pageViewBuilder: (pageView) => LayoutBuilder(
+                    builder: (context, constrains) {
+                      var borderWidth = 0.0;
+                      if (constrains.maxWidth >
+                          kConnectionManagerWindowSizeClosedChat.width) {
+                        borderWidth =
+                            kConnectionManagerWindowSizeOpenChat.width -
+                                constrains.maxWidth;
+                      } else {
+                        borderWidth =
+                            kConnectionManagerWindowSizeClosedChat.width -
+                                constrains.maxWidth;
+                      }
+                      if (borderWidth < 0 || borderWidth > 50) {
+                        borderWidth = 0;
+                      }
+                      final realClosedWidth =
+                          kConnectionManagerWindowSizeClosedChat.width -
+                              borderWidth;
+                      final realChatPageWidth =
+                          constrains.maxWidth - realClosedWidth;
+                      final row = Row(children: [
+                        if (constrains.maxWidth >
+                            kConnectionManagerWindowSizeClosedChat.width)
+                          Consumer<ChatModel>(
+                              builder: (_, model, child) => SizedBox(
+                                    width: realChatPageWidth,
+                                    child: allowRemoteCMModification()
+                                        ? buildSidePage()
+                                        : buildRemoteBlock(
+                                            child: buildSidePage(),
+                                            block: _sidePageBlock,
+                                            mask: true),
+                                  )),
+                        SizedBox(
                             width: realClosedWidth,
-                            child: allowRemoteCMModification()
-                                ? pageView
-                                : buildRemoteBlock(
-                                    child: _buildKeyEventBlock(pageView),
-                                    block: _controlPageBlock,
-                                    mask: false,
-                                  ))),
-                  ]);
-                  return Container(
-                    color: Theme.of(context).scaffoldBackgroundColor,
-                    child: row,
-                  );
-                },
-              ),
-            ),
-          );
+                            child: SizedBox(
+                                width: realClosedWidth,
+                                child: allowRemoteCMModification()
+                                    ? pageView
+                                    : buildRemoteBlock(
+                                        child: _buildKeyEventBlock(pageView),
+                                        block: _controlPageBlock,
+                                        mask: false,
+                                      ))),
+                      ]);
+                      return Container(
+                        color: Theme.of(context).scaffoldBackgroundColor,
+                        child: row,
+                      );
+                    },
+                  ),
+                ),
+              );
+      },
+    );
     return BlockableOverlay(
         underlying: underlying, state: _blockableOverlayState);
   }
