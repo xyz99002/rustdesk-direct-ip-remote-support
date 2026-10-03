@@ -222,7 +222,22 @@ pub fn core_main() -> Option<Vec<String>> {
         let has_setup_flag = std::env::args()
             .any(|a| a == "--setup-local" || a == "--setup-remote");
         if arg_count <= 1 || has_setup_flag {
-            return handle_first_run_setup();
+            // Fork: `handle_first_run_setup()` only ever returns `Some(vec![])` (setup
+            // succeeded, config.toml now exists) or `None` (user cancelled, or the config
+            // write failed) - never any other value. Returning its `Some(vec![])` result
+            // directly from core_main() here used to short-circuit the rest of this function,
+            // skipping the background "server" thread spawn further below (gated on
+            // `!config::is_outgoing_only()`) that the GUI's "Ready"/"Not ready" status and
+            // one-time-password generation actually depend on. Found via real testing: the app
+            // got stuck on "Not ready"/"Generating..." forever specifically on the very first
+            // launch (no config.toml yet), but worked normally on every subsequent run, since
+            // config.toml already existing skips this whole block and reaches that spawn. Only
+            // bail out early on actual failure/cancellation (`None`); on success, fall through
+            // to the rest of core_main()'s normal startup instead of returning here.
+            match handle_first_run_setup() {
+                Some(_) => {} // success - fall through to the normal startup path below
+                None => return None,
+            }
         }
         // Other CLI invocations proceed without the fork config (upstream defaults).
     }

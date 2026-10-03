@@ -319,6 +319,31 @@ Verify:
 - Not yet extended to `SENDER`'s other touchpoints (e.g. `check_mouse_time()`) — confirmed
   unreachable for `role=local` in practice (inbound-session-only call paths); re-verify this
   assumption if a future upstream release starts calling those from an outgoing-only code path.
+
+### First-Run Setup Skipped the Server Thread Spawn (fixed 2026-10-03, found via real testing)
+Verify, on any upstream merge that touches `core_main.rs`'s first-run `config_exists()` check or
+`handle_first_run_setup()`:
+- **Problem found**: `core_main()`'s first-run branch did `return handle_first_run_setup();` —
+  that function only ever returns `Some(vec![])` (setup succeeded, `config.toml` now exists) or
+  `None` (cancelled/failed), but returning its `Some(vec![])` result *directly* short-circuited
+  the rest of `core_main()`, skipping the background "server" thread spawn further down
+  (`std::thread::spawn(move || crate::start_server(false, no_server))`, gated on
+  `!config::is_outgoing_only()` — see "No Server/IPC for Local Mode" above) that the GUI's
+  "Ready"/"Not ready" status and one-time-password generation actually depend on. Confirmed via a
+  real test: the app got stuck forever on "Not ready. Please check your connection" with the
+  one-time password stuck on "Generating..." specifically on the very first launch (before
+  `config.toml` exists) — a second launch (config now present, this whole branch skipped,
+  reaching the normal spawn) worked correctly every time, including without admin elevation
+  (elevation was a red herring from an earlier, incorrect diagnosis of this same symptom — it
+  isn't a UAC/elevation issue at all).
+- **Fixed**: the first-run branch now only returns early on actual failure/cancellation
+  (`handle_first_run_setup()` returning `None`); on success it falls through to the rest of
+  `core_main()`'s normal startup (which calls `fork_config::load_and_apply()` again harmlessly —
+  idempotent, just re-reads the config file `handle_first_run_setup()` just wrote — then proceeds
+  through the same arg-parsing/server-spawn path a second launch would take).
+- **Upgrade check**: if `handle_first_run_setup()`'s return contract ever changes (e.g. starts
+  returning a non-empty `Vec<String>` for some new reason), re-verify this fall-through logic
+  still only treats `None` as a hard stop.
 - **Extended 2026-09-28 to the Linux/macOS systemd/launchd entry point**: the original 2026-09-11
   fix only covered the plain interactive GUI launch (`args.is_empty()`); it did **not** cover
   `--service`/`--server`, the entry points systemd (`res/rustdesk.service`, unconditionally
