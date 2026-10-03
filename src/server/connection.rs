@@ -1692,7 +1692,14 @@ impl Connection {
         let mut res = LoginResponse::new();
         let mut pi = PeerInfo {
             username: username.clone(),
-            version: VERSION.to_owned(),
+            // Fork: embed FORK_MARKER the same way LoginRequest.version already does
+            // (src/client.rs), so the connecting "local" side can verify this remote is also
+            // our fork and refuse to proceed otherwise (src/client/io_loop.rs's
+            // check_fork_peer_support) - the remote-side login gate
+            // (crate::fork_config::is_fork_peer_version, above) only protects us from outside
+            // callers; this is the other half, protecting our own "local" side from completing
+            // a connection to someone else's unrelated remote.
+            version: format!("{}-0-{}", VERSION, crate::fork_config::FORK_MARKER),
             ..Default::default()
         };
 

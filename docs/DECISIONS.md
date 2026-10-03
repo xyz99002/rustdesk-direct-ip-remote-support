@@ -137,6 +137,17 @@ exactly the one-directional safeguard the original design wanted.
 a third segment for something new), re-verify this marker still has no side effects — this
 implementation depends specifically on that function's current "only ever two segments" behavior.
 
+**Addendum 2026-10-02 — the one-directional design above was reversed.** Found via a real test:
+the "deliberately-supported scenario" described above (role=local connecting to a real, non-fork
+RustDesk remote) is no longer desired — the decision now is that role=local should refuse to
+complete a connection to anything that isn't also this fork, with a clear rejection message,
+rather than silently succeeding against a stock remote. Implemented symmetrically, reusing the
+exact same safe mechanism: `src/server/connection.rs`'s `PeerInfo.version` (sent back to the
+connecting side on successful login) now also carries `FORK_MARKER`, and
+`src/client/io_loop.rs::check_fork_peer_support()` checks it on receipt, rejecting with an error
+message and aborting the connection if absent. See "Symmetric Fork Peer Check" in
+`docs/UPSTREAM_UPGRADE_GUIDE.md` for the implementation details and upgrade-check notes.
+
 <details>
 <summary>Original 2026-09-11 analysis (superseded above, kept for history)</summary>
 

@@ -1299,6 +1299,29 @@ impl<T: InvokeUiSession> Remote<T> {
         return false;
     }
 
+    // Fork: the remote-side login gate (src/server/connection.rs) already refuses any
+    // LoginRequest that doesn't carry our FORK_MARKER, protecting our own remote from
+    // outside/stock RustDesk callers. That's one-directional, though - nothing stopped *us*
+    // (the connecting "local" side) from happily completing a connection to someone else's
+    // stock RustDesk remote, since stock RustDesk has no concept of our marker and just accepts
+    // the login normally. This is the other half: our remote now also embeds FORK_MARKER in the
+    // PeerInfo.version it sends back on successful login (connection.rs's `pi.version` field),
+    // so we can check the peer identified itself as our fork too, and refuse to proceed with a
+    // clear message otherwise - a stock RustDesk remote's version string never contains our
+    // marker, so this never false-positives against a real stock peer.
+    fn check_fork_peer_support(&self, peer_version: &str) -> bool {
+        if crate::fork_config::is_fork_peer_version(peer_version) {
+            return true;
+        }
+        self.handler.msgbox(
+            "error",
+            "Connection Rejected",
+            "This remote is not a Direct-IP RemoteSupport peer. Refusing to connect.",
+            "",
+        );
+        return false;
+    }
+
     fn check_terminal_support(&self, peer_version: &str) -> bool {
         if self.peer_info.support_terminal {
             return true;
@@ -1371,6 +1394,10 @@ impl<T: InvokeUiSession> Remote<T> {
                         let peer_version = pi.version.clone();
                         let peer_platform = pi.platform.clone();
                         self.set_peer_info(&pi);
+                        if !self.check_fork_peer_support(&peer_version) {
+                            self.handler.lc.write().unwrap().handle_peer_info(&pi);
+                            return false;
+                        }
                         if self.handler.is_view_camera() {
                             if !self.check_view_camera_support(&peer_version, &peer_platform) {
                                 self.handler.lc.write().unwrap().handle_peer_info(&pi);

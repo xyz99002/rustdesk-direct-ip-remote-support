@@ -650,9 +650,40 @@ Verify, on any upstream merge that touches `libs/hbb_common::get_version_number(
 - `src/server/connection.rs::on_message()` still checks `crate::fork_config::is_fork_peer_version(&lr.version)`
   as the first thing done with a freshly received, not-yet-authorized `LoginRequest`, rejecting
   immediately (clear login error, no password/approval processing reached) if it doesn't match.
-- This check only runs on the accepting (`role=remote`) side — confirm dialing *out* to a real,
-  non-fork RustDesk instance (a deliberately-supported scenario for `role=local`) still works,
-  since that path never reaches this check at all.
+- **Policy change (2026-10-02, superseding the note below as originally written)**: this is no
+  longer one-directional. Dialing out to a non-fork RustDesk instance from `role=local` is now
+  **also** rejected, client-side, with a clear message — see "Symmetric Fork Peer Check" below.
+  The scenario the line below used to call "deliberately-supported" is no longer supported by
+  design; if a future need re-opens connecting to genuine stock RustDesk remotes, that's a
+  deliberate reversal of this entry, not a bug.
+
+### Symmetric Fork Peer Check (implemented 2026-10-02, found via real testing)
+Verify, on any upstream merge that touches `src/server/connection.rs`'s `PeerInfo` construction or
+`src/client/io_loop.rs`'s `login_response::Union::PeerInfo` handling:
+- **Problem found**: the original Fork Peer Marker (above) only protects our own remote from
+  accepting outside callers - it does nothing to stop *our* local from completing a connection to
+  someone else's stock RustDesk remote, since stock RustDesk has no concept of our marker and
+  just accepts our (marked) `LoginRequest` normally. Confirmed via a real test: our fork's local
+  build successfully connected to a plain stock RustDesk remote.
+- **Fixed** by embedding `FORK_MARKER` the other direction too: `src/server/connection.rs`'s
+  `PeerInfo { version: ..., ... }` construction (sent back to the connecting side on successful
+  login) now sets `version: format!("{}-0-{}", VERSION, crate::fork_config::FORK_MARKER)` instead
+  of plain `VERSION` - the exact same safe, schema-free reuse of a free-form `version` string
+  field as the original marker (see `get_version_number()`'s two-segments-only parsing, above).
+  `src/client/io_loop.rs` adds `check_fork_peer_support(peer_version)` (mirroring the existing
+  `check_view_camera_support`/`check_terminal_support` pattern exactly), called first thing in
+  the `Some(login_response::Union::PeerInfo(pi))` arm of `handle_msg_from_peer`: if the peer's
+  `version` doesn't carry our marker, shows an error msgbox ("This remote is not a Direct-IP
+  RemoteSupport peer. Refusing to connect.") and aborts the connection (`return false`) before any
+  session/video/control setup proceeds - a stock RustDesk remote's version string never contains
+  our marker, so this never false-positives against a real stock peer.
+- **Deliberately not done**: `src/port_forward.rs` has its own separate PeerInfo-handling loop
+  (not `io_loop.rs`'s `handle_msg_from_peer`) and does not get this check - port forwarding isn't
+  exposed by this fork's minimal UI (no peer list, Desktop/Support buttons only), so this is a
+  low-priority gap, not an oversight to silently ignore if that ever changes.
+- **Upgrade check**: if upstream adds another path that processes `login_response::Union::PeerInfo`
+  outside `io_loop.rs::handle_msg_from_peer` (besides the already-known `port_forward.rs` gap),
+  route it through `check_fork_peer_support`-equivalent logic too.
 
 ### Support/Desktop Button Independence (fixed 2026-09-30, found via real two-machine testing)
 `flutter/lib/desktop/pages/connection_page.dart`'s `onSupport()` used to open a VIEW_CAMERA session
