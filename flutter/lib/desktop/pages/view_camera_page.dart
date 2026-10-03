@@ -14,7 +14,6 @@ import '../../common.dart';
 import '../../common/widgets/dialog.dart';
 import '../../common/widgets/toolbar.dart';
 import '../../models/model.dart';
-import '../../models/chat_model.dart';
 import '../../models/platform_model.dart';
 import '../../common/shared_state.dart';
 import '../../utils/image.dart';
@@ -115,13 +114,7 @@ class _ViewCameraPageState extends State<ViewCameraPage>
       // is only ever reached via the Support button (connection_page.dart's onSupport()).
       // The call still goes through the existing upstream accept/reject workflow on the
       // remote side - this only sends the request, it doesn't bypass that.
-      // Also refuse to auto-dial a second concurrent call if this local machine already
-      // has an active/pending voice call to this same peer (e.g. a Desktop session to the
-      // same remote already has a call in progress) - the remote has one shared audio
-      // capture stream to offer, not one per session.
-      if (!ChatModel.hasActiveVoiceCall(widget.id)) {
-        bind.sessionRequestVoiceCall(sessionId: _ffi.sessionId);
-      }
+      bind.sessionRequestVoiceCall(sessionId: _ffi.sessionId);
     });
     _ffi.start(
       widget.id,

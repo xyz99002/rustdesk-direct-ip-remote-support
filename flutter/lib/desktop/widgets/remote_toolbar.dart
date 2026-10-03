@@ -2647,16 +2647,8 @@ class _ChatMenuState extends State<_ChatMenu> {
     return MenuButton(
       child: Text(translate('Voice call')),
       ffi: widget.ffi,
-      onPressed: () {
-        // Fork: refuse a second concurrent voice call from this local machine to a remote
-        // it's already calling (e.g. a Desktop session and a Support session opened to the
-        // same peer) - the remote only has one shared audio capture stream to offer.
-        if (ChatModel.hasActiveVoiceCall(widget.ffi.id)) {
-          showToast(translate('Voice call already in progress'));
-          return;
-        }
-        bind.sessionRequestVoiceCall(sessionId: widget.ffi.sessionId);
-      },
+      onPressed: () =>
+          bind.sessionRequestVoiceCall(sessionId: widget.ffi.sessionId),
     );
   }
 }

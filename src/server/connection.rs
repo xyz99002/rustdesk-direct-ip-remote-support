@@ -81,6 +81,40 @@ lazy_static::lazy_static! {
     pub static ref CONTROL_PERMISSIONS_ARRAY: Arc::<Mutex<Vec<(i32, ControlPermissions)>>> = Default::default();
     static ref WAKELOCK_SENDER: Arc::<Mutex<std::sync::mpsc::Sender<(usize, usize)>>> = Arc::new(Mutex::new(start_wakelock_thread()));
     static ref WAKELOCK_KEEP_AWAKE_OPTION: Arc::<Mutex<Option<bool>>> = Default::default();
+    // Fork: my_id (the connecting peer's own id, LoginRequest.my_id) -> the conn_id currently
+    // holding a pending-or-active voice call for that peer. Server-side, authoritative
+    // enforcement that a given connecting peer can only ever have one voice call in flight to
+    // this remote at a time - rejects a second VoiceCallRequest from the same peer outright,
+    // before it even reaches the CM operator's accept/reject prompt. Deliberately server-side
+    // rather than relying solely on the connecting client's own lifecycle/disconnect handling to
+    // keep state consistent - this map is only ever touched from this connection's own request/
+    // accept/close/teardown points, so it can't be left stale by anything the client does.
+    static ref VOICE_CALL_BY_PEER: Arc::<Mutex<HashMap<String, i32>>> = Default::default();
+}
+
+/// Reserve `my_id` for `conn_id`'s voice call attempt. Returns `false` (reservation refused) if
+/// a *different* connection already holds it - the caller must reject the request in that case.
+/// Idempotent for the same `(my_id, conn_id)` pair (e.g. a stray duplicate request from a
+/// connection that already holds the reservation).
+fn try_reserve_voice_call(my_id: &str, conn_id: i32) -> bool {
+    let mut map = VOICE_CALL_BY_PEER.lock().unwrap();
+    match map.get(my_id) {
+        Some(&existing) if existing != conn_id => false,
+        _ => {
+            map.insert(my_id.to_owned(), conn_id);
+            true
+        }
+    }
+}
+
+/// Release `my_id`'s reservation, but only if it's still held by `conn_id` - never clears a
+/// *different*, newer connection's reservation for the same peer id (e.g. a stale/duplicate
+/// close arriving after this connection already lost the reservation some other way).
+fn release_voice_call_reservation(my_id: &str, conn_id: i32) {
+    let mut map = VOICE_CALL_BY_PEER.lock().unwrap();
+    if map.get(my_id) == Some(&conn_id) {
+        map.remove(my_id);
+    }
 }
 
 #[cfg(feature = "flutter")]
@@ -3671,6 +3705,23 @@ impl Connection {
                 }
                 Some(message::Union::VoiceCallRequest(request)) => {
                     if request.is_connect {
+                        // Fork: reject outright, before ever notifying the CM operator, if this
+                        // same connecting peer (my_id) already has a pending-or-active voice
+                        // call on a *different* connection - e.g. a Desktop session and a
+                        // Support session from the same local machine to this remote. Enforced
+                        // server-side (VOICE_CALL_BY_PEER, above) rather than relying on the
+                        // connecting client's own UI to not ask twice - that's just a courtesy,
+                        // this is the actual guard.
+                        if !try_reserve_voice_call(&self.lr.my_id, self.inner.id()) {
+                            log::warn!(
+                                "Rejecting voice call request from {}: already has a pending or active call",
+                                self.lr.my_id
+                            );
+                            let ts = NonZeroI64::new(request.req_timestamp)
+                                .unwrap_or(NonZeroI64::new(get_time()).unwrap());
+                            self.send(new_voice_call_response(ts.get(), false)).await;
+                            return true;
+                        }
                         self.voice_call_request_timestamp = Some(
                             NonZeroI64::new(request.req_timestamp)
                                 .unwrap_or(NonZeroI64::new(get_time()).unwrap()),
@@ -4410,6 +4461,10 @@ impl Connection {
                 self.send_to_cm(Data::StartVoiceCall);
             } else {
                 self.send_to_cm(Data::CloseVoiceCall("".to_owned()));
+                // Fork: operator rejected the request - release this peer's reservation
+                // (VOICE_CALL_BY_PEER, above) so they can request again. Kept held when
+                // accepted; close_voice_call() releases it once the call actually ends.
+                release_voice_call_reservation(&self.lr.my_id, self.inner.id());
             }
             self.send(msg).await;
             self.voice_calling = accepted;
@@ -4440,6 +4495,9 @@ impl Connection {
     }
 
     pub async fn close_voice_call(&mut self) {
+        // Fork: release this peer's reservation (VOICE_CALL_BY_PEER, above) now that the call
+        // is ending, so a future request from the same peer isn't refused forever.
+        release_voice_call_reservation(&self.lr.my_id, self.inner.id());
         // Fork: only the *last* connection to leave a voice call may reset the remote's
         // mic-capture device back to normal PC audio - resetting it while another connection
         // is still mid-call would kill that connection's audio too (the capture stream is a
@@ -4844,6 +4902,12 @@ impl Connection {
             return;
         }
         self.closed = true;
+        // Fork: release this peer's voice-call reservation (VOICE_CALL_BY_PEER, above)
+        // unconditionally on connection teardown, regardless of how the connection ends (clean
+        // hangup, abrupt drop, crash) - this is what makes the reservation self-correcting
+        // without depending on the connecting client's own disconnect handling at all. A no-op
+        // if this connection never held one.
+        release_voice_call_reservation(&self.lr.my_id, self.inner.id());
         // Fork: the upstream comment this replaced described exactly this bug (voice A,B -> C,
         // B disconnects, C's call audio gets reset) as an accepted limitation requiring a
         // per-connection tracking structure to fix. voice_conference::unregister() is that

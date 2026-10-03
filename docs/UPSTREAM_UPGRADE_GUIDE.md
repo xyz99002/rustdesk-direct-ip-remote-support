@@ -797,9 +797,9 @@ Verify, on any upstream merge that touches `flutter/lib/models/chat_model.dart`'
     `Consumer`/`Obx`-style reactive wrapper nested within whatever gets handed to
     `BlockableOverlay`, not computed as a plain conditional in the outer `build()`.
 
-### Duplicate Voice Call Prevention (fixed 2026-10-01, found via real testing)
-Verify, on any upstream merge that touches voice-call request sites or `ChatModel`'s voice-call
-state:
+### Duplicate Voice Call Prevention (implemented 2026-10-01, reworked server-side 2026-10-03)
+Verify, on any upstream merge that touches `VoiceCallRequest`/`handle_voice_call`/
+`close_voice_call`/`on_close` in `src/server/connection.rs`:
 - **Problem found**: audio on the remote side is a single shared capture resource — the
   remote's audio service is a singleton (`src/server/audio_service.rs`), and a voice call
   additionally reroutes the remote's mic input away from normal PC-audio broadcast and toward
@@ -808,22 +808,40 @@ state:
   "Voice call" again), a second, fully independent `VoiceCallRequest` was sent with nothing
   stopping it — resource contention on the remote's one audio stream, not a crash but a real
   functional conflict.
-- **Fixed** client-side only (no `hbb_common`/server changes) by adding a static,
-  peer-id-keyed registry in `flutter/lib/models/chat_model.dart`:
-  `ChatModel._peerVoiceCallStatus` (`Map<String, VoiceCallStatus>`), updated from
-  `onVoiceCallWaiting()`/`onVoiceCallStarted()`/`onVoiceCallClosed()` using the owning
-  session's `FFI.id` (peer id) — note this is intentionally a *static* map, unlike
-  `_voiceCallStatus` itself which is per-`ChatModel`/per-session, specifically so it is visible
-  across multiple separate `FFI`/session instances connected to the same peer.
-  `ChatModel.hasActiveVoiceCall(peerId)` is checked before every outbound
-  `bind.sessionRequestVoiceCall(...)` call site, and shows a toast + no-ops instead of dialing
-  when true. Call sites updated: `flutter/lib/desktop/widgets/remote_toolbar.dart`'s
-  `_ChatMenu.voiceCall()`, `flutter/lib/desktop/pages/view_camera_page.dart`'s auto-dial-on-
-  first-image (Support mode), `flutter/lib/mobile/pages/remote_page.dart` and
-  `flutter/lib/mobile/pages/view_camera_page.dart`'s `showChatOptions().onPressVoiceCall()`.
-- **Phase 2 (implemented 2026-10-02): audio conferencing.** See the next section.
-- **Upgrade check**: if upstream adds a new path that sends `VoiceCallRequest` (e.g. a new
-  button or an auto-dial flow), route it through `ChatModel.hasActiveVoiceCall(peerId)` too.
+- **First attempt (2026-10-01) was client-side only** (a static, peer-id-keyed registry in
+  `flutter/lib/models/chat_model.dart`, checked before dialing) — **reverted 2026-10-03, found
+  via real testing to be unreliable**: the registry was only ever cleared by an explicit "voice
+  call closed" event, so an abrupt disconnect (window closed, connection dropped) left a stale
+  entry behind, causing a false "already in progress" that persisted until the app restarted —
+  confirmed with zero actual calls in progress. Phase 2's audio-sharing work (next section) also
+  removed the *implicit* protection the old resource-contention failure used to provide, which is
+  what exposed that the client-side check was never reliably blocking the actual duplicate
+  request in the first place — once a second connection's audio started actually working, the
+  duplicate became obviously visible instead of silently broken.
+- **Fixed server-side instead** (`src/server/connection.rs`): a `VOICE_CALL_BY_PEER: Mutex<HashMap<String, i32>>`
+  maps each connecting peer's own id (`LoginRequest.my_id`) to the `conn_id` currently holding a
+  pending-or-active call for it. `try_reserve_voice_call()`/`release_voice_call_reservation()`
+  are the only two entry points:
+  - A `VoiceCallRequest` with `is_connect = true` calls `try_reserve_voice_call` *before* ever
+    setting `voice_call_request_timestamp` or notifying the CM — if a *different* connection
+    already holds the reservation for that `my_id`, the request is rejected immediately (a
+    normal `VoiceCallResponse { accepted: false }`, which the client already handles identically
+    to an operator rejection — no client-side change needed) and the CM operator is never even
+    shown a prompt for it.
+  - The reservation is released in exactly three places: `handle_voice_call`'s rejected branch
+    (operator declines), `close_voice_call()` (call ends normally), and — critically —
+    `on_close()`'s connection teardown, **unconditionally**, regardless of *how* the connection
+    ends. This last one is what makes it self-correcting: it depends only on this connection's
+    own teardown running, never on the connecting client's own disconnect/lifecycle handling,
+    which is exactly the class of bug that made the client-side attempt unreliable.
+- **Phase 2 (implemented 2026-10-02): audio conferencing.** See the next section. Unaffected by
+  this rework — this reservation only governs whether a *second* request from the *same peer* is
+  even accepted; it says nothing about two *different* peers calling concurrently, which is
+  exactly phase 2's scenario.
+- **Upgrade check**: if upstream adds a new path that can produce a `VoiceCallRequest` outside
+  this one message handler, route it through `try_reserve_voice_call`/
+  `release_voice_call_reservation` too — do not reintroduce a client-side-only check as the
+  primary guard.
 
 ### Audio Conferencing for Concurrent Voice Calls (phase 2, implemented 2026-10-02)
 Verify, on any upstream merge that touches `handle_voice_call`/`close_voice_call`/`on_close`/the

@@ -493,15 +493,7 @@ class _ViewCameraPageState extends State<ViewCameraPage>
   }
 
   showChatOptions(String id) async {
-    onPressVoiceCall() {
-      // Fork: refuse a second concurrent voice call from this local machine to a remote
-      // it's already calling - the remote has one shared audio capture stream to offer.
-      if (ChatModel.hasActiveVoiceCall(id)) {
-        showToast(translate('Voice call already in progress'));
-        return;
-      }
-      bind.sessionRequestVoiceCall(sessionId: sessionId);
-    }
+    onPressVoiceCall() => bind.sessionRequestVoiceCall(sessionId: sessionId);
     onPressEndVoiceCall() => bind.sessionCloseVoiceCall(sessionId: sessionId);
 
     makeTextMenu(String label, Widget icon, VoidCallback onPressed,
