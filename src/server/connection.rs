@@ -4485,10 +4485,17 @@ impl Connection {
         if let Some(ts) = self.voice_call_request_timestamp.take() {
             let msg = new_voice_call_response(ts.get(), accepted);
             if accepted {
-                crate::audio_service::set_voice_call_input_device(
-                    crate::get_default_sound_input(),
-                    false,
-                );
+                let input = crate::get_default_sound_input();
+                if input.is_none() {
+                    // Fork: with no default input device the voice-call capture can't switch
+                    // to a microphone at all (it stays on system-audio loopback and callers
+                    // hear themselves back) - say so loudly instead of failing silently.
+                    log::warn!(
+                        "Voice call accepted but no default sound input device was found; \
+                         the remote's microphone will not be captured"
+                    );
+                }
+                crate::audio_service::set_voice_call_input_device(input, false);
                 self.send_to_cm(Data::StartVoiceCall);
             } else {
                 self.send_to_cm(Data::CloseVoiceCall("".to_owned()));

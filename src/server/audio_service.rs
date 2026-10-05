@@ -268,7 +268,9 @@ mod cpal_impl {
     #[cfg(feature = "screencapturekit")]
     fn get_device() -> ResultType<(Device, SupportedStreamConfig)> {
         let audio_input = super::get_audio_input();
-        if !audio_input.is_empty() {
+        // Fork: see the Windows get_device() below - an active voice call must never fall
+        // through to the system-audio (loopback) capture.
+        if !audio_input.is_empty() || super::get_voice_call_input_device().is_some() {
             return get_audio_input(&audio_input);
         }
         if !is_screen_capture_kit_available() {
@@ -289,7 +291,15 @@ mod cpal_impl {
     #[cfg(windows)]
     fn get_device() -> ResultType<(Device, SupportedStreamConfig)> {
         let audio_input = super::get_audio_input();
-        if !audio_input.is_empty() {
+        // Fork: while a voice call is active the capture must be a microphone, never the
+        // speaker loopback below. Upstream only guaranteed that when the voice-call input name
+        // was non-empty - but the option-sync path (ipc.rs, `voice-call-input`) and the CM's
+        // device picker can set it to "" (meaning "default"), which fell through to the
+        // loopback: the remote then captured and re-broadcast whatever its speaker was playing
+        // (the callers' own voices) instead of its mic. Found via real testing: callers heard
+        // themselves back, and with two callers the remote's mic reached nobody while each
+        // heard the other. `get_audio_input("")` already resolves to the default input device.
+        if !audio_input.is_empty() || super::get_voice_call_input_device().is_some() {
             return get_audio_input(&audio_input);
         }
         let device = HOST

@@ -955,6 +955,39 @@ capture/encode path in `src/server/audio_service.rs`:
   `src/client.rs`'s own `AudioHandler::handle_format`/`handle_frame` (the reference usage this
   module's decode calls were modeled on).
 
+### Voice Call Captured the Speaker Loopback Instead of the Mic (fixed 2026-10-05, found via real testing)
+Verify, on any upstream merge that touches `audio_service.rs`'s `get_device()`/
+`get_audio_input()`/`get_voice_call_input_device()`, or `ipc.rs`'s `voice-call-input` handling:
+- **Problem found (upstream, not fork-introduced)**: during a voice call the remote's
+  `audio_service` capture is meant to switch from the speaker loopback (normal PC audio) to a
+  microphone via `set_voice_call_input_device(Some(<default input name>))`. But every
+  `get_device()` variant only took the microphone path when the resolved input *name* was
+  non-empty — and two upstream paths can set the voice-call device to `Some("")` ("default"):
+  the option-sync in `ipc.rs` (`if self.voice_call_input != Config::get_option("voice-call-input")
+  { set_voice_call_input_device(Some(<option>), true) }`) and the `voice-call-input` config
+  setter used by the CM's device picker. `Some("")` fell straight through to the loopback branch,
+  so the remote captured and re-broadcast **what its own speaker was playing** — i.e. the callers'
+  voices — instead of its mic. Observed symptoms, all now explained: in a 1:1 call the caller hears
+  their own voice back; with two callers (tested on a build *without* the fork's conferencing
+  code, and reproducible on stock RustDesk) the remote's mic reaches nobody while each caller
+  hears the other. This also fully corrupted the fork's conferencing, whose "remote mic" input
+  is this same capture.
+- **Fixed** in `get_device()` (Windows and screencapturekit variants): take the microphone path
+  whenever a voice call is active (`get_voice_call_input_device().is_some()`), not only when the
+  name is non-empty — `get_audio_input("")` already resolves to the default input device. The
+  non-Windows/non-SCK variant always used `get_audio_input()` and needed no change.
+  `handle_voice_call` now also logs a warning if `get_default_sound_input()` is `None` (no
+  input device at all — the capture then genuinely cannot switch to a mic).
+- **How to confirm on a machine**: right after a call is accepted, the remote's log (the
+  `log` folder next to its config directory) shows `Input device: <name>` for the microphone
+  path versus `Default output device: <name>` for the loopback path.
+- **Not fixed here**: the Linux/PulseAudio path sends the (possibly empty) name to the `_pa`
+  helper as `audio-input`; whether an empty name there selects the default *source* (mic) or a
+  *monitor* (loopback) was not checked - verify with the same log test before relying on voice
+  calls from a Linux remote.
+- **Upgrade check**: if upstream reworks `get_device()`, keep the invariant "voice call active ⇒
+  never the loopback branch", and keep `get_audio_input("")` resolving to a real input device.
+
 ### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
 Verify:
 - `src/rendezvous_mediator.rs::start_all()` still has both `--- BEGIN/END DIRECT-IP FORK ---` blocks: the `hbbs_http::sync::start()` call removed, and the registration loop replaced with `loop { sleep(1.).await; }`.
