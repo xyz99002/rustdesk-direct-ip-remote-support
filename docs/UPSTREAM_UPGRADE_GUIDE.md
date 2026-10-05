@@ -849,6 +849,17 @@ Verify, on any upstream merge that touches `VoiceCallRequest`/`handle_voice_call
     ends. This last one is what makes it self-correcting: it depends only on this connection's
     own teardown running, never on the connecting client's own disconnect/lifecycle handling,
     which is exactly the class of bug that made the client-side attempt unreliable.
+- **User feedback on refusal (2026-10-05)**: `VoiceCallResponse` has no text field, and the
+  client shows nothing for `accepted = false` (true of a plain operator decline too), so a
+  refused duplicate just made the call UI quietly reset. The remote now also sends a `MessageBox`
+  (existing generic mid-session notice, no schema change) with the fork-specific
+  `msgtype = "voice-call-duplicate"`. The remote cannot tell a manual "Voice call" click from the
+  Support button's automatic call attempt (identical requests), and a popup is only wanted for
+  the former — so the *client* decides: `handleMsgBox` (`flutter/lib/models/model.dart`) shows
+  it only if `ChatModel.voiceCallAutoDialed` is false. That per-session flag is set `true` by
+  the one automatic site (`desktop/pages/view_camera_page.dart`'s first-image auto-dial) and
+  `false` by every manual site (`remote_toolbar.dart`'s `_ChatMenu.voiceCall()`, the two mobile
+  `onPressVoiceCall`s) immediately before each request. Any new request site must set it.
 - **Phase 2 (implemented 2026-10-02): audio conferencing.** See the next section. Unaffected by
   this rework — this reservation only governs whether a *second* request from the *same peer* is
   even accepted; it says nothing about two *different* peers calling concurrently, which is

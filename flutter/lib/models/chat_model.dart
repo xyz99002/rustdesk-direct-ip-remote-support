@@ -62,6 +62,12 @@ class ChatModel with ChangeNotifier {
 
   bool isConnManager = false;
 
+  // Fork: true when this session's last voice-call request was the Support button's automatic
+  // one (desktop view_camera_page.dart), false when the user clicked "Voice call" themselves.
+  // Read by handleMsgBox (model.dart) to decide whether a remote's "already in a call in
+  // another window" refusal is worth a popup - the remote itself can't tell the two apart.
+  bool voiceCallAutoDialed = false;
+
   RxBool isWindowFocus = true.obs;
   BlockableOverlayState _blockableOverlayState = BlockableOverlayState();
   final Rx<VoiceCallStatus> _voiceCallStatus = Rx(VoiceCallStatus.notStarted);

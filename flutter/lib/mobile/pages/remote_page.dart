@@ -811,7 +811,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   }
 
   showChatOptions(String id) async {
-    onPressVoiceCall() => bind.sessionRequestVoiceCall(sessionId: sessionId);
+    onPressVoiceCall() {
+      // Fork: manual request - a refusal from the remote should be shown (see handleMsgBox).
+      gFFI.chatModel.voiceCallAutoDialed = false;
+      bind.sessionRequestVoiceCall(sessionId: sessionId);
+    }
     onPressEndVoiceCall() => bind.sessionCloseVoiceCall(sessionId: sessionId);
 
     makeTextMenu(String label, Widget icon, VoidCallback onPressed,

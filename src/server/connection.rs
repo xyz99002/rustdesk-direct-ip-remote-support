@@ -3736,9 +3736,13 @@ impl Connection {
                             // mid-session notice mechanism (no hbb_common/schema change) already
                             // used elsewhere in this file for very similar purposes - reused here
                             // purely for user-facing explanation, no protocol/behavior meaning.
+                            // msgtype is a fork-specific tag: the client decides whether to
+                            // show it (flutter/lib/models/model.dart handleMsgBox) - only
+                            // for a manual call attempt, not the Support button's automatic
+                            // one, which this remote can't distinguish from here.
                             let mut notice = Message::new();
                             notice.set_message_box(MessageBox {
-                                msgtype: "error".to_owned(),
+                                msgtype: "voice-call-duplicate".to_owned(),
                                 title: "Voice Call".to_owned(),
                                 text: "This computer already has an active or pending voice call \
                                        to this remote open in another window."

@@ -2647,8 +2647,12 @@ class _ChatMenuState extends State<_ChatMenu> {
     return MenuButton(
       child: Text(translate('Voice call')),
       ffi: widget.ffi,
-      onPressed: () =>
-          bind.sessionRequestVoiceCall(sessionId: widget.ffi.sessionId),
+      onPressed: () {
+        // Fork: a manual request - a refusal from the remote should be shown (see
+        // handleMsgBox in models/model.dart).
+        widget.ffi.chatModel.voiceCallAutoDialed = false;
+        bind.sessionRequestVoiceCall(sessionId: widget.ffi.sessionId);
+      },
     );
   }
 }

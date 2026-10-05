@@ -114,6 +114,10 @@ class _ViewCameraPageState extends State<ViewCameraPage>
       // is only ever reached via the Support button (connection_page.dart's onSupport()).
       // The call still goes through the existing upstream accept/reject workflow on the
       // remote side - this only sends the request, it doesn't bypass that.
+      // Marked as automatic so that, if the remote refuses it because this machine already
+      // has a call open to it in another window (e.g. Desktop sharing), no popup is shown -
+      // see handleMsgBox in models/model.dart.
+      _ffi.chatModel.voiceCallAutoDialed = true;
       bind.sessionRequestVoiceCall(sessionId: _ffi.sessionId);
     });
     _ffi.start(

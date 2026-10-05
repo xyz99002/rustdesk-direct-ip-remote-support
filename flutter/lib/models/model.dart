@@ -971,6 +971,15 @@ class FfiModel with ChangeNotifier {
       final hasRetry = evt['hasRetry'] == 'true';
       showPrivacyFailedDialog(
           sessionId, type, title, text, link, hasRetry, dialogManager);
+    } else if (type == 'voice-call-duplicate') {
+      // Fork: the remote refused this session's voice call because this machine already has
+      // one open to it in another window. The remote can't tell *why* the request was sent;
+      // only this side knows. Show it when the user asked for a call explicitly, stay silent
+      // when the Support button's automatic call attempt was simply superseded by a call
+      // already running in another session (e.g. Desktop sharing).
+      if (!(parent.target?.chatModel.voiceCallAutoDialed ?? false)) {
+        showMsgBox(sessionId, 'error', title, text, link, false, dialogManager);
+      }
     } else {
       var hasRetry = evt['hasRetry'] == 'true';
       if (!hasRetry) {
