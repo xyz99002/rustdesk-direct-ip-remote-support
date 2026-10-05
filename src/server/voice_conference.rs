@@ -7,11 +7,13 @@
 //!    ring buffer (zero-padded if it hasn't arrived yet),
 //! 2. plays the sum of every member's mic on the remote's speaker, through ONE playback - the
 //!    same proven `start_audio_thread` path upstream uses per connection, just a single shared
-//!    instance - so this never depends on N concurrent output streams coexisting on the device,
-//! 3. sends each member a personalized stream: the remote's mic plus every *other* member's mic,
-//!    never its own, so nobody hears themselves echoed back - delivered with the service's own
-//!    `send_to`, while the plain broadcast to non-members (ordinary PC-audio listeners) is left
-//!    untouched.
+//!    instance fed PCM directly (`MediaData::AudioPcm`, no encode/decode round trip) - so this
+//!    never depends on N concurrent output streams coexisting on the device,
+//! 3. once there are at least two members, sends each one a personalized stream: the remote's
+//!    mic plus every *other* member's mic, never its own, so nobody hears themselves echoed
+//!    back - delivered with the service's own `send_to`, while the plain broadcast to everyone
+//!    else is left untouched. A lone member just stays on that plain broadcast (one capture
+//!    encode for everyone, exactly as upstream): its mix would be the remote's mic alone.
 //!
 //! Everything is driven by the real capture clock and mixed/encoded in the capture's exact
 //! format, so frame sizes are always ones the encoder accepts (the capture encoder already
@@ -46,7 +48,6 @@ struct Member {
 
 struct Speaker {
     sender: MediaSender,
-    encoder: AudioEncoder,
 }
 
 #[derive(Default)]
@@ -84,13 +85,6 @@ fn clamp(v: &mut [f32]) {
 }
 
 fn new_speaker(sample_rate: u32, channels: u16) -> Option<Speaker> {
-    let encoder = match AudioEncoder::new(sample_rate, opus_channels(channels), LowDelay) {
-        Ok(e) => e,
-        Err(e) => {
-            log::error!("voice_conference: failed to create speaker encoder: {e}");
-            return None;
-        }
-    };
     let sender = start_audio_thread();
     let format = AudioFormat {
         sample_rate,
@@ -98,7 +92,7 @@ fn new_speaker(sample_rate: u32, channels: u16) -> Option<Speaker> {
         ..Default::default()
     };
     allow_err!(sender.send(MediaData::AudioFormat(format)));
-    Some(Speaker { sender, encoder })
+    Some(Speaker { sender })
 }
 
 /// Called once a connection's voice call is accepted, whatever its connection type.
@@ -236,19 +230,17 @@ pub fn on_capture_frame(
             st.speaker = new_speaker(sample_rate, channels);
         }
         if let Some(speaker) = st.speaker.as_mut() {
-            match speaker.encoder.encode_vec_float(&sum, sum.len() * 6) {
-                Ok(encoded) => {
-                    let af = AudioFrame {
-                        data: encoded.into(),
-                        ..Default::default()
-                    };
-                    allow_err!(speaker.sender.send(MediaData::AudioFrame(Box::new(af))));
-                }
-                Err(e) => log::warn!("voice_conference: speaker encode failed: {e}"),
-            }
+            // PCM straight into the playback thread - no encode/decode round trip.
+            allow_err!(speaker.sender.send(MediaData::AudioPcm(sum)));
         }
 
-        // 3. Each member: remote's mic plus every OTHER member, never its own.
+        // 3. Each member: remote's mic plus every OTHER member, never its own. Only worth a
+        // per-member encode once there are at least two members - a lone caller's mix would
+        // be the remote's mic alone, which is exactly what the plain broadcast already carries
+        // (one capture encode for everyone, as upstream), so leave it on that.
+        if st.members.len() < 2 {
+            continue;
+        }
         for (id, m) in st.members.iter_mut() {
             let mut mix = frame.to_vec();
             for (other, chunk) in &chunks {

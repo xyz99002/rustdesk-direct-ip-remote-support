@@ -927,11 +927,17 @@ capture/encode path in `src/server/audio_service.rs`:
     subscribers (ordinary PC-audio listeners) are untouched and **nobody is ever
     unsubscribed/resubscribed**.
   - With no members, `on_capture_frame` returns immediately and `send_f32` broadcasts exactly
-    as upstream. With one member, that caller's mic reaches the remote's speaker through the
-    conference's shared playback (not upstream's per-connection `audio_sender` thread) and it
-    receives its personalized stream (= remote mic only) — same audio content as upstream, one
-    extra Opus encode per 10ms. This is deliberate: it means a listener never switches encoder
-    mid-call when a second caller joins or leaves.
+    as upstream. With **one** member there is no per-member encode at all: its mix would be the
+    remote's mic alone, which is exactly what the plain broadcast already carries, so it simply
+    stays on that (one capture encode for everyone, as upstream). Personalized streams start only
+    at two members — at that moment a listener's incoming stream switches from the capture
+    encoder to its per-member encoder, a few-ms decoder discontinuity comparable to one lost
+    packet, accepted. The remote's speaker playback of callers is fed decoded PCM directly
+    (`MediaData::AudioPcm`, a fork-added variant handled by `start_audio_thread`'s loop via the
+    new `AudioHandler::handle_pcm` in `src/client.rs`) — no encode/decode round trip. So a lone
+    caller costs nothing extra over upstream on the encode side; the only difference is that its
+    mic plays through the conference's shared playback rather than upstream's per-connection
+    `audio_sender` thread.
   - If the capture (re)starts in a new format (device change via `restart()`), rings, member
     encoders and the shared speaker are reset to the new format; clients keep receiving
     `create_format_msg` as usual since they stay subscribed.
@@ -947,9 +953,10 @@ capture/encode path in `src/server/audio_service.rs`:
   matches what disabling audio means (its own mic still reaches the remote and the other
   callers). Mixing is a plain sum with hard clamping to [-1, 1]; with several simultaneous loud
   talkers this clips rather than ducking — acceptable for a support-call scenario, revisit with
-  per-source gain if it ever matters. The remote's speaker now plays callers through one shared
-  playback even for a single caller (see above) — if a solo-call regression is ever suspected,
-  this path (not upstream's per-connection `audio_sender`) is where to look.
+  per-source gain if it ever matters. The remote's speaker plays callers through one shared
+  PCM-fed playback even for a single caller (see above) — if a solo-call regression is ever
+  suspected on the remote's speaker, this path (not upstream's per-connection `audio_sender`) is
+  where to look; what a solo caller *hears* is upstream's unchanged broadcast path.
 - **Upgrade check**: if upstream changes `magnum_opus`'s `Decoder`/`Encoder` API, or the
   `AudioFrame`/`AudioFormat` message shapes, re-verify `voice_conference.rs` against
   `src/client.rs`'s own `AudioHandler::handle_format`/`handle_frame` (the reference usage this

@@ -1426,42 +1426,55 @@ impl AudioHandler {
             log::debug!("PulseAudio simple binding does not exists");
             return;
         }
-        self.audio_decoder.as_mut().map(|(d, buffer)| {
-            if let Ok(n) = d.decode_float(&frame.data, buffer, false) {
-                let channels = self.channels;
-                let n = n * (channels as usize);
-                #[cfg(not(target_os = "linux"))]
-                {
-                    let sample_rate0 = self.sample_rate.0;
-                    let sample_rate = self.sample_rate.1;
-                    let mut buffer = buffer[0..n].to_owned();
-                    if sample_rate != sample_rate0 {
-                        buffer = crate::audio_resample(
-                            &buffer[0..n],
-                            sample_rate0,
-                            sample_rate,
-                            channels,
-                        );
-                    }
-                    if self.channels != self.device_channel {
-                        buffer = crate::audio_rechannel(
-                            buffer,
-                            sample_rate,
-                            sample_rate,
-                            self.channels,
-                            self.device_channel,
-                        );
-                    }
-                    self.audio_buffer.append_pcm(&buffer);
-                }
-                #[cfg(target_os = "linux")]
-                {
-                    let data_u8 =
-                        unsafe { std::slice::from_raw_parts::<u8>(buffer.as_ptr() as _, n * 4) };
-                    self.simple.as_mut().map(|x| x.write(data_u8));
-                }
+        let channels = self.channels as usize;
+        let pcm = match self.audio_decoder.as_mut() {
+            Some((d, buffer)) => match d.decode_float(&frame.data, buffer, false) {
+                Ok(n) => buffer[0..n * channels].to_owned(),
+                Err(_) => return,
+            },
+            None => return,
+        };
+        self.handle_pcm(pcm);
+    }
+
+    /// Play already-decoded PCM in the peer's format (the `AudioFormat` given to
+    /// [`handle_format`]): resample/rechannel to the output device and queue it. Fork: split out
+    /// of `handle_frame` so `MediaData::AudioPcm` can feed this thread PCM directly.
+    pub fn handle_pcm(&mut self, pcm: Vec<f32>) {
+        #[cfg(not(target_os = "linux"))]
+        if self.audio_stream.is_none() || !self.ready.lock().unwrap().clone() {
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        if self.simple.is_none() {
+            return;
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let sample_rate0 = self.sample_rate.0;
+            let sample_rate = self.sample_rate.1;
+            let channels = self.channels;
+            let mut buffer = pcm;
+            if sample_rate != sample_rate0 {
+                buffer = crate::audio_resample(&buffer, sample_rate0, sample_rate, channels);
             }
-        });
+            if self.channels != self.device_channel {
+                buffer = crate::audio_rechannel(
+                    buffer,
+                    sample_rate,
+                    sample_rate,
+                    self.channels,
+                    self.device_channel,
+                );
+            }
+            self.audio_buffer.append_pcm(&buffer);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let data_u8 =
+                unsafe { std::slice::from_raw_parts::<u8>(pcm.as_ptr() as _, pcm.len() * 4) };
+            self.simple.as_mut().map(|x| x.write(data_u8));
+        }
     }
 
     /// Build audio output stream for current device.
@@ -2845,6 +2858,10 @@ pub enum MediaData {
     VideoFrame(Box<VideoFrame>),
     AudioFrame(Box<AudioFrame>),
     AudioFormat(AudioFormat),
+    // Fork: already-decoded PCM in the format announced by the preceding AudioFormat - lets
+    // src/server/voice_conference.rs play its mix of callers on the remote's speaker through
+    // this same playback thread without an encode/decode round trip.
+    AudioPcm(Vec<f32>),
     Reset,
     RecordScreen(bool),
 }
@@ -3023,6 +3040,9 @@ pub fn start_audio_thread() -> MediaSender {
                     MediaData::AudioFormat(f) => {
                         log::debug!("recved audio format, sample rate={}", f.sample_rate);
                         audio_handler.handle_format(f);
+                    }
+                    MediaData::AudioPcm(pcm) => {
+                        audio_handler.handle_pcm(pcm);
                     }
                     _ => {}
                 }
