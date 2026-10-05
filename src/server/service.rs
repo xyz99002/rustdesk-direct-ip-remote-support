@@ -252,6 +252,19 @@ impl<T: Subscriber + From<ConnInner>> ServiceTmpl<T> {
         }
     }
 
+    // Fork: `send_without` for a set - used by audio_service to keep its plain broadcast away
+    // from voice-call members that just received a personalized frame instead
+    // (see src/server/voice_conference.rs).
+    pub fn send_except(&self, msg: Message, excluded: &HashSet<i32>) {
+        let mut lock = self.0.write().unwrap();
+        let msg = Arc::new(msg);
+        for (sid, s) in lock.subscribes.iter_mut() {
+            if !excluded.contains(sid) {
+                s.send(msg.clone());
+            }
+        }
+    }
+
     pub fn repeat<S, F, Svc>(svc: &Svc, interval_ms: u64, callback: F)
     where
         F: 'static + FnMut(Svc, &mut S) -> ResultType<()> + Send,

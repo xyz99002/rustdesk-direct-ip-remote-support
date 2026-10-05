@@ -471,6 +471,16 @@ fn create_format_msg(sample_rate: u32, channels: u16) -> Message {
 const MAX_AUDIO_ZERO_COUNT: u16 = 800;
 static mut AUDIO_ZERO_COUNT: u16 = 0;
 
+// Fork: the plain broadcast skips voice-call members that voice_conference just sent a
+// personalized frame to (they'd otherwise hear the remote's mic twice).
+fn broadcast(sp: &GenericService, msg: Message, except: &std::collections::HashSet<i32>) {
+    if except.is_empty() {
+        sp.send(msg);
+    } else {
+        sp.send_except(msg, except);
+    }
+}
+
 fn send_f32(
     data: &[f32],
     sample_rate: u32,
@@ -478,11 +488,11 @@ fn send_f32(
     encoder: &mut Encoder,
     sp: &GenericService,
 ) {
-    // Fork: feed the remote's own mic PCM to voice_conference, which mixes it into any other
-    // in-call connections' personalized audio. No-op unless a conference is actually in
-    // progress. Deliberately before the zero-gate logic below, so the mixer sees true silence
-    // rather than the gate's "last loud frame repeated" behavior.
-    super::voice_conference::on_remote_mic_frame(data, sample_rate, channels);
+    // Fork: hand every capture frame to voice_conference, which (only while some connection is
+    // in a voice call) plays all callers on the remote's speaker and sends each caller a
+    // personalized mix - see src/server/voice_conference.rs. Deliberately before the zero gate
+    // below: callers must keep hearing each other while the remote's own mic is silent.
+    let served = super::voice_conference::on_capture_frame(data, sample_rate, channels, sp);
     if data.iter().filter(|x| **x != 0.).next().is_some() {
         unsafe {
             AUDIO_ZERO_COUNT = 0;
@@ -518,7 +528,7 @@ fn send_f32(
                             data: data.into(),
                             ..Default::default()
                         });
-                        sp.send(msg_out);
+                        broadcast(sp, msg_out, &served);
                     }
                     Err(_) => {}
                 }
@@ -537,7 +547,7 @@ fn send_f32(
                 data: data.into(),
                 ..Default::default()
             });
-            sp.send(msg_out);
+            broadcast(sp, msg_out, &served);
         }
         Err(_) => {}
     }

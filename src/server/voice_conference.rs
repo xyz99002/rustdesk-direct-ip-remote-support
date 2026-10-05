@@ -1,81 +1,67 @@
 //! Audio conferencing for concurrent voice calls to the same remote (fork-only, phase 2).
 //!
-//! When only one connection has an active voice call, this module does nothing (fast path) -
-//! audio behaves exactly as upstream: the remote's own mic broadcasts via `audio_service`'s
-//! singleton `GenericService` to that one subscriber, and that connection's mic plays on the
-//! remote's speaker via its own independent decode/output pipeline in `src/client.rs`'s
-//! `start_audio_thread`, completely untouched by this module.
+//! Every connection with an accepted voice call is a *member*. For each frame the remote's own
+//! mic capture produces (`audio_service::send_f32`), this module:
 //!
-//! Once a *second* different connection also has an active voice call, every in-call connection
-//! is unsubscribed from `audio_service`'s plain broadcast (see [`set_broadcast_subscription`]) and
-//! instead gets a *personalized* mix built here: the remote's own mic plus every *other* in-call
-//! connection's mic, excluding its own - so nobody hears themselves echoed back, and multiple
-//! callers can hear each other. The mix is re-encoded as an ordinary `AudioFrame` on that
-//! recipient's existing connection, indistinguishable from today's message format - no client-side
-//! (Flutter) changes are needed at all.
+//! 1. takes exactly one frame's worth of each member's decoded mic audio out of that member's
+//!    ring buffer (zero-padded if it hasn't arrived yet),
+//! 2. plays the sum of every member's mic on the remote's speaker, through ONE playback - the
+//!    same proven `start_audio_thread` path upstream uses per connection, just a single shared
+//!    instance - so this never depends on N concurrent output streams coexisting on the device,
+//! 3. sends each member a personalized stream: the remote's mic plus every *other* member's mic,
+//!    never its own, so nobody hears themselves echoed back - delivered with the service's own
+//!    `send_to`, while the plain broadcast to non-members (ordinary PC-audio listeners) is left
+//!    untouched.
 //!
-//! Mixing happens at a fixed internal format ([`MIX_SAMPLE_RATE`]/[`MIX_CHANNELS`]) regardless of
-//! what rate each local negotiated for its own mic upload, using the existing
-//! `crate::common::audio_resample`/`audio_rechannel` helpers already used elsewhere in the audio
-//! pipeline. The final per-recipient encode step resamples back down to whatever format
-//! `audio_service`'s own broadcast last announced (tracked via [`on_remote_mic_frame`]), so a
-//! recipient's client never needs to know anything changed.
+//! Everything is driven by the real capture clock and mixed/encoded in the capture's exact
+//! format, so frame sizes are always ones the encoder accepts (the capture encoder already
+//! accepts them), there is no separate timer thread, no output resampling, and nobody is ever
+//! unsubscribed/resubscribed. A caller's mic audio is decoded (`on_local_frame`), converted to
+//! the capture format once, and queued in a bounded ring buffer that absorbs network jitter -
+//! the same idea as `client.rs`'s `AudioBuffer`.
+//!
+//! With no members, nothing here runs: `audio_service`'s broadcast behaves exactly as upstream.
 
 use super::*;
-use magnum_opus::{Channels, Decoder as AudioDecoder, Encoder as AudioEncoder};
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use crate::client::{start_audio_thread, MediaData, MediaSender};
+use magnum_opus::{
+    Application::LowDelay, Channels, Decoder as AudioDecoder, Encoder as AudioEncoder,
+};
+use std::collections::{HashMap, HashSet, VecDeque};
 
-const MIX_SAMPLE_RATE: u32 = 48000;
-const MIX_CHANNELS: u16 = 2;
-const FRAME_MS: u64 = 10;
-// A source (remote mic, or a given local's mic) whose last update is older than this is treated
-// as silence in the mix rather than repeating stale audio - handles a caller going quiet/a
-// connection lagging without any new jitter-buffer logic beyond this staleness check.
-const STALE_AFTER: Duration = Duration::from_millis(100);
+/// Upper bound on how much of a caller's mic audio may wait for the next capture frame. Bounds
+/// added latency; the oldest samples are dropped past this.
+const MAX_BUFFERED_MS: usize = 200;
 
-#[derive(Default, Clone)]
-struct MixSource {
-    /// Already normalized to MIX_SAMPLE_RATE/MIX_CHANNELS.
-    pcm: Vec<f32>,
-    updated: Option<Instant>,
-}
-
-impl MixSource {
-    fn fresh_pcm(&self, now: Instant) -> Option<&[f32]> {
-        match self.updated {
-            Some(t) if now.duration_since(t) < STALE_AFTER && !self.pcm.is_empty() => {
-                Some(&self.pcm)
-            }
-            _ => None,
-        }
-    }
-}
-
-struct ConferenceMember {
-    inner: ConnInner,
-    server: super::ServerPtrWeak,
-    /// Whether this connection had audio enabled at the moment it joined the conference -
-    /// restored (not force-enabled) when the conference ends.
-    audio_enabled: bool,
+struct Member {
     decoder: Option<AudioDecoder>,
+    decoder_rate: u32,
     decoder_channels: u16,
     decode_scratch: Vec<f32>,
+    /// Decoded mic PCM, already in the remote's capture format, waiting to be mixed.
+    ring: VecDeque<f32>,
+    /// Encoder for this member's personalized stream, at the capture format.
     encoder: Option<AudioEncoder>,
-    encoder_format: (u32, u16),
-    mix_source: MixSource,
+}
+
+struct Speaker {
+    sender: MediaSender,
+    encoder: AudioEncoder,
+}
+
+#[derive(Default)]
+struct State {
+    members: HashMap<i32, Member>,
+    /// (sample_rate, channels) of the remote's own capture, as last seen in `on_capture_frame` -
+    /// the one format everything is mixed and encoded in.
+    capture_format: Option<(u32, u16)>,
+    /// Single playback on the remote's speaker for the sum of every member's mic.
+    speaker: Option<Speaker>,
 }
 
 lazy_static::lazy_static! {
-    static ref MEMBERS: Mutex<HashMap<i32, ConferenceMember>> = Default::default();
-    static ref REMOTE_MIC: Mutex<MixSource> = Default::default();
-    // What audio_service's own broadcast last announced - the format every recipient's client
-    // already expects, so the per-recipient re-encode targets this rather than a fixed rate.
-    static ref BROADCAST_FORMAT: Mutex<(u32, u16)> = Mutex::new((MIX_SAMPLE_RATE, MIX_CHANNELS));
+    static ref STATE: Mutex<State> = Default::default();
 }
-
-static TICKER_STARTED: AtomicBool = AtomicBool::new(false);
 
 fn opus_channels(channels: u16) -> Channels {
     if channels > 1 {
@@ -85,239 +71,218 @@ fn opus_channels(channels: u16) -> Channels {
     }
 }
 
-fn ensure_ticker_started() {
-    if TICKER_STARTED.swap(true, Ordering::SeqCst) {
-        return;
+fn add_into(dst: &mut [f32], src: &[f32]) {
+    for (d, s) in dst.iter_mut().zip(src) {
+        *d += *s;
     }
-    std::thread::spawn(|| loop {
-        std::thread::sleep(Duration::from_millis(FRAME_MS));
-        tick();
+}
+
+fn clamp(v: &mut [f32]) {
+    for s in v.iter_mut() {
+        *s = s.clamp(-1.0, 1.0);
+    }
+}
+
+fn new_speaker(sample_rate: u32, channels: u16) -> Option<Speaker> {
+    let encoder = match AudioEncoder::new(sample_rate, opus_channels(channels), LowDelay) {
+        Ok(e) => e,
+        Err(e) => {
+            log::error!("voice_conference: failed to create speaker encoder: {e}");
+            return None;
+        }
+    };
+    let sender = start_audio_thread();
+    let format = AudioFormat {
+        sample_rate,
+        channels: channels as _,
+        ..Default::default()
+    };
+    allow_err!(sender.send(MediaData::AudioFormat(format)));
+    Some(Speaker { sender, encoder })
+}
+
+/// Called once a connection's voice call is accepted, whatever its connection type.
+pub fn register(conn_id: i32) {
+    let mut st = STATE.lock().unwrap();
+    st.members.entry(conn_id).or_insert_with(|| Member {
+        decoder: None,
+        decoder_rate: 0,
+        decoder_channels: 0,
+        decode_scratch: Vec::new(),
+        ring: VecDeque::new(),
+        encoder: None,
     });
 }
 
-fn set_broadcast_subscription(m: &ConferenceMember, enabled: bool) {
-    if let Some(s) = m.server.upgrade() {
-        s.write()
-            .unwrap()
-            .subscribe(super::audio_service::NAME, m.inner.clone(), enabled);
-    }
-}
-
-/// Called once a connection's voice call is accepted. Starts the background mixing ticker (if
-/// not already running) and registers this connection as a conference member. If this is the
-/// second concurrently in-call connection, every member (including this one) is unsubscribed from
-/// `audio_service`'s plain broadcast - from this point on they only receive this module's
-/// personalized mixes, never both (which would double up the remote's own mic audio).
-pub fn register(conn_id: i32, inner: ConnInner, server: super::ServerPtrWeak, audio_enabled: bool) {
-    ensure_ticker_started();
-    let mut members = MEMBERS.lock().unwrap();
-    members.insert(
-        conn_id,
-        ConferenceMember {
-            inner,
-            server,
-            audio_enabled,
-            decoder: None,
-            decoder_channels: MIX_CHANNELS,
-            decode_scratch: Vec::new(),
-            encoder: None,
-            encoder_format: *BROADCAST_FORMAT.lock().unwrap(),
-            mix_source: MixSource::default(),
-        },
-    );
-    if members.len() == 2 {
-        for m in members.values() {
-            set_broadcast_subscription(m, false);
-        }
-    }
-}
-
-/// Called when a connection's voice call closes (or the connection itself tears down). Returns
-/// `true` if no connection is in a voice call anymore (the caller uses this to decide whether
-/// it's safe to reset the remote's mic-capture device back to normal PC audio - resetting it
-/// while another connection is still mid-call would kill that connection's audio too). If this
-/// was the conference's second-to-last member, every remaining member is resubscribed to
-/// `audio_service`'s plain broadcast, restoring normal single-call behavior.
+/// Called when a connection's voice call closes or the connection tears down. Returns `true` if
+/// no connection is in a voice call anymore - the caller uses this to decide whether it's safe to
+/// reset the remote's mic-capture device back to normal PC audio. A no-op if never registered.
 pub fn unregister(conn_id: i32) -> bool {
-    let mut members = MEMBERS.lock().unwrap();
-    let was_conferencing = members.len() >= 2;
-    members.remove(&conn_id);
-    if was_conferencing && members.len() < 2 {
-        for m in members.values() {
-            set_broadcast_subscription(m, m.audio_enabled);
-        }
+    let mut st = STATE.lock().unwrap();
+    st.members.remove(&conn_id);
+    let empty = st.members.is_empty();
+    if empty {
+        // Dropping the sender ends the playback thread and releases the output device.
+        st.speaker = None;
     }
-    members.is_empty()
+    empty
 }
 
-/// Called whenever a connection's negotiated mic-upload `AudioFormat` arrives (same moment
-/// upstream's own `start_audio_thread` is (re)created). (Re)creates this member's decoder (native
-/// format) and encoder (targeting whatever `audio_service`'s broadcast currently uses).
-pub fn on_local_format(conn_id: i32, sample_rate: u32, channels: u16) {
-    let mut members = MEMBERS.lock().unwrap();
-    let Some(m) = members.get_mut(&conn_id) else {
-        return;
+/// Called whenever a connection's negotiated mic-upload `AudioFormat` arrives. Returns `true`
+/// if the connection is a member - the caller must then NOT open its own per-connection
+/// playback for it (the conference's shared playback covers it, and an idle extra output
+/// stream is exactly the concurrent-stream dependence this design avoids).
+pub fn on_local_format(conn_id: i32, sample_rate: u32, channels: u16) -> bool {
+    let mut st = STATE.lock().unwrap();
+    let Some(m) = st.members.get_mut(&conn_id) else {
+        return false;
     };
     match AudioDecoder::new(sample_rate, opus_channels(channels)) {
         Ok(d) => {
             m.decoder = Some(d);
+            m.decoder_rate = sample_rate;
             m.decoder_channels = channels;
             m.decode_scratch = vec![0.; sample_rate as usize * channels as usize];
+            m.ring.clear();
         }
         Err(e) => {
             log::error!("voice_conference: failed to create decoder for conn {conn_id}: {e}");
         }
     }
-    let (out_rate, out_channels) = *BROADCAST_FORMAT.lock().unwrap();
-    match AudioEncoder::new(out_rate, opus_channels(out_channels), magnum_opus::Application::LowDelay) {
-        Ok(e) => {
-            m.encoder = Some(e);
-            m.encoder_format = (out_rate, out_channels);
-        }
-        Err(e) => {
-            log::error!("voice_conference: failed to create encoder for conn {conn_id}: {e}");
-        }
-    }
+    true
 }
 
-/// Called on every inbound `AudioFrame` from a connection's mic upload. No-ops unless a
-/// conference is actually in progress (fast path - avoids the decode/resample cost entirely for
-/// an ordinary single-caller session).
-pub fn on_local_frame(conn_id: i32, frame: &AudioFrame) {
-    let mut members = MEMBERS.lock().unwrap();
-    if members.len() < 2 {
-        return;
-    }
-    let Some(m) = members.get_mut(&conn_id) else {
-        return;
+/// Called on every inbound `AudioFrame` from a connection's mic upload. Returns `true` if the
+/// frame was taken by the conference (the connection is a member) - the caller must then NOT
+/// also play it through its own per-connection playback, or it would be heard twice on the
+/// remote's speaker. Returns `false` for non-members, leaving upstream behavior untouched.
+pub fn on_local_frame(conn_id: i32, frame: &AudioFrame) -> bool {
+    let mut st = STATE.lock().unwrap();
+    let capture = st.capture_format;
+    let Some(m) = st.members.get_mut(&conn_id) else {
+        return false;
     };
     let Some(d) = m.decoder.as_mut() else {
-        return;
+        return true;
     };
     let Ok(n) = d.decode_float(&frame.data, &mut m.decode_scratch, false) else {
-        return;
+        return true;
     };
     let samples = n * m.decoder_channels as usize;
     let mut pcm = m.decode_scratch[..samples].to_vec();
-    if let Some(rate) = decoder_sample_rate(m) {
-        if rate != MIX_SAMPLE_RATE {
-            pcm = crate::common::audio_resample(&pcm, rate, MIX_SAMPLE_RATE, m.decoder_channels);
+    let (rate, channels) = capture.unwrap_or((m.decoder_rate, m.decoder_channels));
+    if m.decoder_rate != rate {
+        pcm = crate::common::audio_resample(&pcm, m.decoder_rate, rate, m.decoder_channels);
+    }
+    if m.decoder_channels != channels {
+        pcm = crate::common::audio_rechannel(pcm, rate, rate, m.decoder_channels, channels);
+    }
+    m.ring.extend(pcm);
+    let max = rate as usize * channels as usize * MAX_BUFFERED_MS / 1000;
+    if m.ring.len() > max {
+        let excess = m.ring.len() - max;
+        m.ring.drain(..excess);
+    }
+    true
+}
+
+/// Called from `audio_service::send_f32` with every frame of the remote's own capture, before
+/// its zero gate (callers must keep hearing each other while the remote's mic is silent).
+/// `data` is already in (`sample_rate`, `channels`), the capture encoder's format; it may hold
+/// several 10ms frames (Android batches). Returns the ids of every member that was sent a
+/// personalized frame - the caller must exclude those from its plain broadcast.
+pub fn on_capture_frame(
+    data: &[f32],
+    sample_rate: u32,
+    channels: u16,
+    sp: &GenericService,
+) -> HashSet<i32> {
+    let mut served = HashSet::new();
+    let mut st = STATE.lock().unwrap();
+    if st.capture_format != Some((sample_rate, channels)) {
+        // Capture (re)started in a new format: everything queued/encoded so far is in the old one.
+        st.capture_format = Some((sample_rate, channels));
+        for m in st.members.values_mut() {
+            m.ring.clear();
+            m.encoder = None;
         }
+        st.speaker = None;
     }
-    if m.decoder_channels != MIX_CHANNELS {
-        pcm = crate::common::audio_rechannel(
-            pcm,
-            MIX_SAMPLE_RATE,
-            MIX_SAMPLE_RATE,
-            m.decoder_channels,
-            MIX_CHANNELS,
-        );
+    if st.members.is_empty() {
+        return served;
     }
-    m.mix_source.pcm = pcm;
-    m.mix_source.updated = Some(Instant::now());
-}
-
-// The decoder itself doesn't expose its construction sample rate, so it's recovered from the
-// scratch buffer sizing convention used in `on_local_format` (`sample_rate * channels`).
-fn decoder_sample_rate(m: &ConferenceMember) -> Option<u32> {
-    if m.decoder_channels == 0 {
-        return None;
+    let frame_len = (sample_rate as usize / 100) * channels as usize; // 10ms
+    if frame_len == 0 {
+        return served;
     }
-    Some(m.decode_scratch.len() as u32 / m.decoder_channels as u32)
-}
-
-/// Called from `audio_service`'s capture path with the remote's own latest mic PCM, already at
-/// `sample_rate`/`channels` (whatever `audio_service` is currently encoding at). Always updates
-/// the tracked broadcast format (used to pick new members' encoder format), but only bothers
-/// normalizing/storing the PCM itself when a conference is actually in progress.
-pub fn on_remote_mic_frame(pcm: &[f32], sample_rate: u32, channels: u16) {
-    *BROADCAST_FORMAT.lock().unwrap() = (sample_rate, channels);
-    if MEMBERS.lock().unwrap().len() < 2 {
-        return;
-    }
-    let mut data = pcm.to_vec();
-    if sample_rate != MIX_SAMPLE_RATE {
-        data = crate::common::audio_resample(&data, sample_rate, MIX_SAMPLE_RATE, channels);
-    }
-    if channels != MIX_CHANNELS {
-        data = crate::common::audio_rechannel(
-            data,
-            MIX_SAMPLE_RATE,
-            MIX_SAMPLE_RATE,
-            channels,
-            MIX_CHANNELS,
-        );
-    }
-    let mut remote_mic = REMOTE_MIC.lock().unwrap();
-    remote_mic.pcm = data;
-    remote_mic.updated = Some(Instant::now());
-}
-
-fn add_into(dst: &mut [f32], src: &[f32]) {
-    let n = dst.len().min(src.len());
-    for i in 0..n {
-        dst[i] += src[i];
-    }
-}
-
-fn tick() {
-    let mut members = MEMBERS.lock().unwrap();
-    if members.len() < 2 {
-        return;
-    }
-    let now = Instant::now();
-    let remote_mic = REMOTE_MIC.lock().unwrap();
-    let remote_pcm = remote_mic.fresh_pcm(now).map(|p| p.to_vec());
-    drop(remote_mic);
-
-    let contributions: Vec<(i32, Option<Vec<f32>>)> = members
-        .iter()
-        .map(|(id, m)| (*id, m.mix_source.fresh_pcm(now).map(|p| p.to_vec())))
-        .collect();
-
-    let frame_len = (MIX_SAMPLE_RATE as usize / (1000 / FRAME_MS as usize)) * MIX_CHANNELS as usize;
-
-    for (id, member) in members.iter_mut() {
-        let mut mix = vec![0.0f32; frame_len];
-        if let Some(pcm) = &remote_pcm {
-            add_into(&mut mix, pcm);
+    let st = &mut *st;
+    for frame in data.chunks_exact(frame_len) {
+        // 1. Exactly one frame's worth from every member, zero-padded if it hasn't arrived yet.
+        let mut chunks: Vec<(i32, Vec<f32>)> = Vec::with_capacity(st.members.len());
+        for (id, m) in st.members.iter_mut() {
+            let take = frame_len.min(m.ring.len());
+            let mut chunk: Vec<f32> = m.ring.drain(..take).collect();
+            chunk.resize(frame_len, 0.0);
+            chunks.push((*id, chunk));
         }
-        for (other_id, pcm) in &contributions {
-            if other_id != id {
-                if let Some(pcm) = pcm {
-                    add_into(&mut mix, pcm);
+
+        // 2. Remote's speaker: every member summed, through one shared playback.
+        let mut sum = vec![0.0f32; frame_len];
+        for (_, chunk) in &chunks {
+            add_into(&mut sum, chunk);
+        }
+        clamp(&mut sum);
+        if st.speaker.is_none() {
+            st.speaker = new_speaker(sample_rate, channels);
+        }
+        if let Some(speaker) = st.speaker.as_mut() {
+            match speaker.encoder.encode_vec_float(&sum, sum.len() * 6) {
+                Ok(encoded) => {
+                    let af = AudioFrame {
+                        data: encoded.into(),
+                        ..Default::default()
+                    };
+                    allow_err!(speaker.sender.send(MediaData::AudioFrame(Box::new(af))));
                 }
+                Err(e) => log::warn!("voice_conference: speaker encode failed: {e}"),
             }
         }
-        for s in mix.iter_mut() {
-            *s = s.clamp(-1.0, 1.0);
-        }
 
-        let (out_rate, out_channels) = member.encoder_format;
-        let mut out_pcm = mix;
-        if out_rate != MIX_SAMPLE_RATE {
-            out_pcm = crate::common::audio_resample(&out_pcm, MIX_SAMPLE_RATE, out_rate, MIX_CHANNELS);
-        }
-        if out_channels != MIX_CHANNELS {
-            out_pcm = crate::common::audio_rechannel(
-                out_pcm,
-                out_rate,
-                out_rate,
-                MIX_CHANNELS,
-                out_channels,
-            );
-        }
-
-        let Some(encoder) = member.encoder.as_mut() else {
-            continue;
-        };
-        if let Ok(encoded) = encoder.encode_vec_float(&out_pcm, out_pcm.len() * 6) {
-            let mut msg_out = Message::new();
-            msg_out.set_audio_frame(AudioFrame {
-                data: encoded.into(),
-                ..Default::default()
-            });
-            member.inner.send(Arc::new(msg_out));
+        // 3. Each member: remote's mic plus every OTHER member, never its own.
+        for (id, m) in st.members.iter_mut() {
+            let mut mix = frame.to_vec();
+            for (other, chunk) in &chunks {
+                if other != id {
+                    add_into(&mut mix, chunk);
+                }
+            }
+            clamp(&mut mix);
+            if m.encoder.is_none() {
+                m.encoder = match AudioEncoder::new(sample_rate, opus_channels(channels), LowDelay)
+                {
+                    Ok(e) => Some(e),
+                    Err(e) => {
+                        log::error!("voice_conference: failed to create encoder for conn {id}: {e}");
+                        None
+                    }
+                };
+            }
+            let Some(encoder) = m.encoder.as_mut() else {
+                continue;
+            };
+            match encoder.encode_vec_float(&mix, mix.len() * 6) {
+                Ok(encoded) => {
+                    let mut msg = Message::new();
+                    msg.set_audio_frame(AudioFrame {
+                        data: encoded.into(),
+                        ..Default::default()
+                    });
+                    sp.send_to(msg, *id);
+                    served.insert(*id);
+                }
+                Err(e) => log::warn!("voice_conference: encode for conn {id} failed: {e}"),
+            }
         }
     }
+    served
 }

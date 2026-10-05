@@ -3584,21 +3584,26 @@ impl Connection {
                     },
                     Some(misc::Union::AudioFormat(format)) => {
                         if !self.disable_audio {
-                            // Fork: tell voice_conference about this connection's negotiated
-                            // mic-upload format before `format` is moved below, so it can build
-                            // a matching decoder if/when a conference starts. No-op unless this
-                            // connection is actually registered (i.e. has an active voice call).
-                            super::voice_conference::on_local_format(
+                            // Fork: a voice-conference member's mic is decoded by the
+                            // conference and played through its single shared playback, so
+                            // no per-connection playback stream is opened for it at all
+                            // (even an idle one would be a second concurrent output stream on
+                            // the device). Non-members keep upstream's per-connection playback.
+                            // Must run before `format` is moved below.
+                            if super::voice_conference::on_local_format(
                                 self.inner.id(),
                                 format.sample_rate,
                                 format.channels as u16,
-                            );
-                            // Drop the audio sender previously.
-                            drop(std::mem::replace(&mut self.audio_sender, None));
-                            self.audio_sender = Some(start_audio_thread());
-                            self.audio_sender
-                                .as_ref()
-                                .map(|a| allow_err!(a.send(MediaData::AudioFormat(format))));
+                            ) {
+                                drop(std::mem::replace(&mut self.audio_sender, None));
+                            } else {
+                                // Drop the audio sender previously.
+                                drop(std::mem::replace(&mut self.audio_sender, None));
+                                self.audio_sender = Some(start_audio_thread());
+                                self.audio_sender
+                                    .as_ref()
+                                    .map(|a| allow_err!(a.send(MediaData::AudioFormat(format))));
+                            }
                         }
                     }
                     #[cfg(feature = "flutter")]
@@ -3689,17 +3694,19 @@ impl Connection {
                 },
                 Some(message::Union::AudioFrame(frame)) => {
                     if !self.disable_audio {
-                        // Fork: feed this connection's mic audio to voice_conference before the
-                        // move below, so a 2+-connection conference can mix it into the other
-                        // members' personalized streams. No-op unless a conference is actually
-                        // in progress.
-                        super::voice_conference::on_local_frame(self.inner.id(), &frame);
-                        if let Some(sender) = &self.audio_sender {
-                            allow_err!(sender.send(MediaData::AudioFrame(Box::new(frame))));
-                        } else {
-                            log::warn!(
-                                "Processing audio frame without the voice call audio sender."
-                            );
+                        // Fork: a voice-conference member's mic is played on the remote's
+                        // speaker by the conference's single shared playback (summed with every
+                        // other caller) and mixed into the other callers' streams - so it must
+                        // NOT also go through this connection's own playback below, or it'd be
+                        // heard twice. Non-members (returns false) keep upstream behavior.
+                        if !super::voice_conference::on_local_frame(self.inner.id(), &frame) {
+                            if let Some(sender) = &self.audio_sender {
+                                allow_err!(sender.send(MediaData::AudioFrame(Box::new(frame))));
+                            } else {
+                                log::warn!(
+                                    "Processing audio frame without the voice call audio sender."
+                                );
+                            }
                         }
                     }
                 }
@@ -3720,6 +3727,26 @@ impl Connection {
                             let ts = NonZeroI64::new(request.req_timestamp)
                                 .unwrap_or(NonZeroI64::new(get_time()).unwrap());
                             self.send(new_voice_call_response(ts.get(), false)).await;
+                            // Fork: VoiceCallResponse has no text field to explain *why* it was
+                            // rejected (accepted=false also covers a plain operator decline, and
+                            // the client showed no feedback for either - found via real testing:
+                            // the caller saw the call UI just quietly reset, with nothing telling
+                            // them it was refused because another window already has a call
+                            // running). MessageBox is the existing, generic, free-form
+                            // mid-session notice mechanism (no hbb_common/schema change) already
+                            // used elsewhere in this file for very similar purposes - reused here
+                            // purely for user-facing explanation, no protocol/behavior meaning.
+                            let mut notice = Message::new();
+                            notice.set_message_box(MessageBox {
+                                msgtype: "error".to_owned(),
+                                title: "Voice Call".to_owned(),
+                                text: "This computer already has an active or pending voice call \
+                                       to this remote open in another window."
+                                    .to_owned(),
+                                link: "".to_owned(),
+                                ..Default::default()
+                            });
+                            self.send(notice).await;
                             return true;
                         }
                         self.voice_call_request_timestamp = Some(
@@ -4476,18 +4503,15 @@ impl Connection {
                         self.audio_enabled() && accepted,
                     );
                 }
-                if accepted {
-                    // Fork: track this connection so a second, different connection also
-                    // calling this same remote gets a personalized audio mix instead of
-                    // resource contention on the remote's one mic-capture stream. See
-                    // src/server/voice_conference.rs.
-                    super::voice_conference::register(
-                        self.inner.id(),
-                        self.inner.clone(),
-                        self.server.clone(),
-                        self.audio_enabled(),
-                    );
-                }
+            }
+            if accepted {
+                // Fork: make this connection a voice-conference member - whatever its
+                // connection type (a Desktop session is already an audio_service subscriber;
+                // a Support/VIEW_CAMERA one was just subscribed above). From now on its mic is
+                // played on the remote's speaker through the conference's single shared
+                // playback, and it receives a personalized mix (remote mic + every other
+                // caller) instead of the plain broadcast. See src/server/voice_conference.rs.
+                super::voice_conference::register(self.inner.id());
             }
         } else {
             log::warn!("Possible a voice call attack.");
