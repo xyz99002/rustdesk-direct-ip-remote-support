@@ -856,7 +856,11 @@ Verify, on any upstream merge that touches `VoiceCallRequest`/`handle_voice_call
   `msgtype = "voice-call-duplicate"`. The remote cannot tell a manual "Voice call" click from the
   Support button's automatic call attempt (identical requests), and a popup is only wanted for
   the former — so the *client* decides: `handleMsgBox` (`flutter/lib/models/model.dart`) shows
-  it only if `ChatModel.voiceCallAutoDialed` is false. That per-session flag is set `true` by
+  it only if `ChatModel.voiceCallAutoDialed` is false — and shows it as a `custom-nocancel-info`
+  `msgBox`. The `custom` part is load-bearing: `msgBox()`'s OK button calls `closeConnection()`
+  for every type that doesn't contain "custom" (that's the connection-error dialog), so showing
+  this as `error` dismissed the popup by killing the whole session it appeared in (found via
+  real testing, 2026-10-05). That per-session flag is set `true` by
   the one automatic site (`desktop/pages/view_camera_page.dart`'s first-image auto-dial) and
   `false` by every manual site (`remote_toolbar.dart`'s `_ChatMenu.voiceCall()`, the two mobile
   `onPressVoiceCall`s) immediately before each request. Any new request site must set it.

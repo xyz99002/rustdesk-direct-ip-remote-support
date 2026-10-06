@@ -978,7 +978,12 @@ class FfiModel with ChangeNotifier {
       // when the Support button's automatic call attempt was simply superseded by a call
       // already running in another session (e.g. Desktop sharing).
       if (!(parent.target?.chatModel.voiceCallAutoDialed ?? false)) {
-        showMsgBox(sessionId, 'error', title, text, link, false, dialogManager);
+        // Must be a "custom" type: msgBox()'s OK button calls closeConnection() for every
+        // other type (it's the connection-error dialog). This is a notice about the voice
+        // call only - dismissing it must leave the session running (found via real testing:
+        // as 'error' it killed the whole desktop/support session it was shown in).
+        showMsgBox(sessionId, 'custom-nocancel-info', title, text, link, false,
+            dialogManager);
       }
     } else {
       var hasRetry = evt['hasRetry'] == 'true';
