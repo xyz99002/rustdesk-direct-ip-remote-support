@@ -922,15 +922,23 @@ capture/encode path in `src/server/audio_service.rs`:
     capture's exact format, delivered via `ServiceTmpl::send_to`. Frame sizes are therefore
     always ones the encoder accepts (the capture encoder already accepts them); there is no
     timer thread and no output resampling.
-  - It returns the ids it served; `send_f32`'s plain broadcast then uses the new
-    `ServiceTmpl::send_except` (`src/server/service.rs`) to skip exactly those, so non-member
-    subscribers (ordinary PC-audio listeners) are untouched and **nobody is ever
-    unsubscribed/resubscribed**.
+  - It returns how `send_f32` must route its plain capture-encoded frame: `None` (no call) →
+    broadcast to everyone, upstream's system-sound sharing; `Some(ids)` (a call is active) →
+    only to those members, via the new `ServiceTmpl::send_only` (`src/server/service.rs`), and
+    if `ids` is empty the plain frame isn't even encoded. **Nobody is ever
+    unsubscribed/resubscribed** — routing is decided per frame.
+  - **Privacy decision (2026-10-05)**: while any call is active the capture *is* the microphone,
+    and nobody outside the call receives audio at all until the last call ends. Stock RustDesk
+    keeps broadcasting the (now microphone) stream to any non-call Desktop viewer for the
+    duration of a call — verified on a stock build. Deliberately not kept: a viewer outside the
+    call must not hear the mic, and the same agent's Desktop window shouldn't play the remote
+    twice. System-sound sharing to Desktop viewers resumes when the last call ends.
   - With no members, `on_capture_frame` returns immediately and `send_f32` broadcasts exactly
     as upstream. With **one** member there is no per-member encode at all: its mix would be the
-    remote's mic alone, which is exactly what the plain broadcast already carries, so it simply
-    stays on that (one capture encode for everyone, as upstream). Personalized streams start only
-    at two members — at that moment a listener's incoming stream switches from the capture
+    remote's mic alone, which is exactly what the plain capture frame already is, so that frame
+    is sent to it (and only to it). Encode count per 10ms is therefore 0 with nobody subscribed,
+    1 for system-sound sharing with no call, 1 for a lone caller, and exactly N for N ≥ 2
+    callers. Personalized streams start only at two members — at that moment a listener's incoming stream switches from the capture
     encoder to its per-member encoder, a few-ms decoder discontinuity comparable to one lost
     packet, accepted. The remote's speaker playback of callers is fed decoded PCM directly
     (`MediaData::AudioPcm`, a fork-added variant handled by `start_audio_thread`'s loop via the

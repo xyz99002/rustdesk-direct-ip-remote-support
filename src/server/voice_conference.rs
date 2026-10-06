@@ -11,9 +11,13 @@
 //!    never depends on N concurrent output streams coexisting on the device,
 //! 3. once there are at least two members, sends each one a personalized stream: the remote's
 //!    mic plus every *other* member's mic, never its own, so nobody hears themselves echoed
-//!    back - delivered with the service's own `send_to`, while the plain broadcast to everyone
-//!    else is left untouched. A lone member just stays on that plain broadcast (one capture
-//!    encode for everyone, exactly as upstream): its mix would be the remote's mic alone.
+//!    back - delivered with the service's own `send_to`. A lone member instead gets the plain
+//!    capture-encoded frame (its mix would be the remote's mic alone), sent to it only.
+//!
+//! While any call is active the capture *is* the microphone, so nobody outside the call
+//! receives audio at all - there is no computer audio to give them, and the mic isn't theirs
+//! to hear (stock RustDesk keeps broadcasting it to non-call Desktop viewers; deliberately not
+//! kept). Ordinary system-sound sharing resumes when the last call ends.
 //!
 //! Everything is driven by the real capture clock and mixed/encoded in the capture's exact
 //! format, so frame sizes are always ones the encoder accepts (the capture encoder already
@@ -183,14 +187,23 @@ pub fn on_local_frame(conn_id: i32, frame: &AudioFrame) -> bool {
 /// Called from `audio_service::send_f32` with every frame of the remote's own capture, before
 /// its zero gate (callers must keep hearing each other while the remote's mic is silent).
 /// `data` is already in (`sample_rate`, `channels`), the capture encoder's format; it may hold
-/// several 10ms frames (Android batches). Returns the ids of every member that was sent a
-/// personalized frame - the caller must exclude those from its plain broadcast.
+/// several 10ms frames (Android batches).
+///
+/// Returns how the caller must route its plain (capture-encoded) frame:
+/// - `None`: no call is active - broadcast to every subscriber, exactly as upstream (this is
+///   ordinary system-sound sharing for Desktop viewers).
+/// - `Some(ids)`: a call is active, so the capture is the microphone and it belongs to the
+///   call. Send the plain frame **only** to `ids` (members that did not get a personalized
+///   frame - in practice a lone caller) and, if `ids` is empty, don't even encode it. Nobody
+///   outside the call receives anything until the last call ends. Stock RustDesk keeps
+///   broadcasting the microphone to non-call Desktop viewers for the duration of a call -
+///   verified on a stock build; deliberately not kept, it's a privacy breach.
 pub fn on_capture_frame(
     data: &[f32],
     sample_rate: u32,
     channels: u16,
     sp: &GenericService,
-) -> HashSet<i32> {
+) -> Option<HashSet<i32>> {
     let mut served = HashSet::new();
     let mut st = STATE.lock().unwrap();
     if st.capture_format != Some((sample_rate, channels)) {
@@ -203,11 +216,11 @@ pub fn on_capture_frame(
         st.speaker = None;
     }
     if st.members.is_empty() {
-        return served;
+        return None;
     }
     let frame_len = (sample_rate as usize / 100) * channels as usize; // 10ms
     if frame_len == 0 {
-        return served;
+        return Some(HashSet::new());
     }
     let st = &mut *st;
     for frame in data.chunks_exact(frame_len) {
@@ -276,5 +289,13 @@ pub fn on_capture_frame(
             }
         }
     }
-    served
+    // Members that got no personalized frame (a lone caller) still need the plain one; nobody
+    // outside the call gets anything while a call is active.
+    let plain: HashSet<i32> = st
+        .members
+        .keys()
+        .filter(|id| !served.contains(id))
+        .copied()
+        .collect();
+    Some(plain)
 }

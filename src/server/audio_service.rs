@@ -481,13 +481,17 @@ fn create_format_msg(sample_rate: u32, channels: u16) -> Message {
 const MAX_AUDIO_ZERO_COUNT: u16 = 800;
 static mut AUDIO_ZERO_COUNT: u16 = 0;
 
-// Fork: the plain broadcast skips voice-call members that voice_conference just sent a
-// personalized frame to (they'd otherwise hear the remote's mic twice).
-fn broadcast(sp: &GenericService, msg: Message, except: &std::collections::HashSet<i32>) {
-    if except.is_empty() {
-        sp.send(msg);
-    } else {
-        sp.send_except(msg, except);
+// Fork: where the plain capture-encoded frame goes - see voice_conference::on_capture_frame.
+// `None`: no call, everyone subscribed (upstream system-sound sharing). `Some(ids)`: a call is
+// active, so only those members (a lone caller) get it; nobody outside the call hears the mic.
+fn broadcast(
+    sp: &GenericService,
+    msg: Message,
+    routing: &Option<std::collections::HashSet<i32>>,
+) {
+    match routing {
+        None => sp.send(msg),
+        Some(ids) => sp.send_only(msg, ids),
     }
 }
 
@@ -502,7 +506,7 @@ fn send_f32(
     // in a voice call) plays all callers on the remote's speaker and sends each caller a
     // personalized mix - see src/server/voice_conference.rs. Deliberately before the zero gate
     // below: callers must keep hearing each other while the remote's own mic is silent.
-    let served = super::voice_conference::on_capture_frame(data, sample_rate, channels, sp);
+    let routing = super::voice_conference::on_capture_frame(data, sample_rate, channels, sp);
     if data.iter().filter(|x| **x != 0.).next().is_some() {
         unsafe {
             AUDIO_ZERO_COUNT = 0;
@@ -518,6 +522,11 @@ fn send_f32(
             }
             AUDIO_ZERO_COUNT += 1;
         }
+    }
+    // Fork: a call is active and every caller already got a personalized frame - the plain
+    // frame has no recipient, so don't spend an encode on it.
+    if matches!(&routing, Some(ids) if ids.is_empty()) {
+        return;
     }
     #[cfg(target_os = "android")]
     {
@@ -538,7 +547,7 @@ fn send_f32(
                             data: data.into(),
                             ..Default::default()
                         });
-                        broadcast(sp, msg_out, &served);
+                        broadcast(sp, msg_out, &routing);
                     }
                     Err(_) => {}
                 }
@@ -557,7 +566,7 @@ fn send_f32(
                 data: data.into(),
                 ..Default::default()
             });
-            broadcast(sp, msg_out, &served);
+            broadcast(sp, msg_out, &routing);
         }
         Err(_) => {}
     }
