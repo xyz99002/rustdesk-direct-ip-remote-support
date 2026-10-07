@@ -488,13 +488,23 @@ fn get_capturer_camera(current: usize) -> ResultType<CapturerInfo> {
     if ncamera <= current {
         bail!("Failed to get camera {}, cameras len: {}", current, ncamera,);
     }
+    if cameras.get(current).is_none() {
+        bail!(
+            "Camera of index {} doesn't exist or platform not supported",
+            current
+        );
+    }
+    let capturer = camera::Cameras::get_capturer(current)?;
+    // Fork: re-read the camera's entry *after* creating the capturer - opening the camera may
+    // have corrected its advertised size (a camera reopened in the driver's default format, see
+    // libs/scrap/src/common/camera.rs), and the encoder below must be sized to the real frames.
+    let cameras = camera::Cameras::get_sync_cameras();
     let Some(camera) = cameras.get(current) else {
         bail!(
             "Camera of index {} doesn't exist or platform not supported",
             current
         );
     };
-    let capturer = camera::Cameras::get_capturer(current)?;
     let (width, height) = (camera.width as usize, camera.height as usize);
     let origin = (camera.x as i32, camera.y as i32);
     let name = &camera.name;

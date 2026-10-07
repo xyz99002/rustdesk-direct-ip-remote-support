@@ -1007,6 +1007,54 @@ Verify, on any upstream merge that touches `audio_service.rs`'s `get_device()`/
 - **Upgrade check**: if upstream reworks `get_device()`, keep the invariant "voice call active ⇒
   never the loopback branch", and keep `get_audio_input("")` resolving to a real input device.
 
+### Camera Capture Must Not Kill the Remote (fixed 2026-10-07, found via real testing)
+Verify, on any upstream merge that touches `libs/scrap/src/common/camera.rs` (`create_camera`,
+`CameraCapturer::frame`) or `src/server/video_service.rs::get_capturer_camera`:
+- **Problem found**: the remote process died silently — three times in a row, no error in the
+  log — within one second of a client selecting one particular camera, a *virtual* "WiFi camera"
+  driver (phone-as-webcam app). Physical cameras on the same machine, under the same voice calls
+  and connections, streamed fine. The last log line each time was the camera service finishing
+  setup for that device and pulling its first frame. Nothing in the fork touches camera capture;
+  this is upstream behavior: the release profile has `panic = 'abort'` (`Cargo.toml`), so a panic
+  inside the capture library (`nokhwa`, RustDesk's fork on the tellingly-named
+  `fix_from_raw_parts` branch) when a driver hands back a frame that doesn't match what it
+  advertised ends the process with the panic text going to stderr — never to the log.
+- **Fixed, two halves, both in fork-owned code (no change to the `nokhwa` dependency)**:
+  - **Validate before decoding** — `CameraCapturer::frame` now checks the raw frame against the
+    format and resolution the driver *itself* declared (`validate_buffer`: non-empty; for the
+    fixed-size uncompressed formats YUYV/NV12, at least `w*h*2` / `w*h*3/2` bytes; MJPEG and
+    anything else size-checked for emptiness only) before `decode_image`. A mismatch becomes an
+    ordinary, logged capture error (the video service already handles those: it logs and restarts
+    or falls back) instead of reaching the library's unsafe decode path. Stream-open, frame and
+    decode errors are all routed through `Cameras::note_capture_failure`.
+  - **Fall back to the driver's default format** — `CAMERA_SAFE_FORMAT`/`CAMERA_UNUSABLE`
+    (per camera index, process lifetime): after `CAMERA_FAILURES_BEFORE_FALLBACK` (3)
+    *consecutive* capture failures the camera is marked so `create_camera` reopens it with
+    `RequestedFormatType::None` (the driver's own default mode — what it's most likely to deliver
+    correctly) instead of `AbsoluteHighestResolution`; 3 more consecutive failures in the default
+    format mark it unusable, and `create_camera` then refuses it with a clear error rather than
+    retrying forever. A single transient error on a healthy camera changes nothing: the counter
+    (`CAMERA_FAILURES`) is reset by the first good frame of each capturer — once per capturer, so
+    the streaming loop itself takes no lock. Every failure and both transitions are logged
+    (`camera{N}: …`), so the log now says *why* a camera stopped. Performance: per frame this adds
+    three field reads and an integer compare — nothing measurable next to decode + encode. Because a camera reopened in a different mode may have a
+    different size, `CameraCapturer::new` corrects that camera's cached `DisplayInfo`
+    (`SYNC_CAMERA_DISPLAYS`) and `get_capturer_camera` re-reads it **after** creating the capturer,
+    so the encoder is sized to the real frames (the RGBA→YUV conversion already rejects
+    oversized frames and pads undersized ones, so even a stale size can't crash — it would just
+    show the image in a corner).
+- **What this does and doesn't cover**: it fully covers a bad frame reaching the decode step,
+  and any failure the library *reports* as an error. It cannot catch a panic or native fault
+  that happens *inside* the library's stream-open or sample-read before our code sees the frame —
+  with `panic = 'abort'` nothing in-process can. If the crash persists on that camera after this
+  change, the next step is to confirm the exact site: run the remote from a console with
+  `set RUST_BACKTRACE=1` and `rustdesk.exe 2> %TEMP%\rustdesk-stderr.txt`, select the camera,
+  read the `panicked at <file:line>` line; or Event Viewer → Application → `Faulting module name`
+  (`librustdesk.dll` ⇒ a panic/our side; a Media Foundation or camera DLL ⇒ the driver).
+- **Upgrade check**: if upstream changes `nokhwa` (branch/version) or its `FrameFormat`/`Buffer`
+  API, re-check `validate_buffer`'s format arms and `buffer.buffer()`/`source_frame_format()`;
+  if upstream reworks `get_capturer_camera`, keep "create the capturer, *then* read the size".
+
 ### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
 Verify:
 - `src/rendezvous_mediator.rs::start_all()` still has both `--- BEGIN/END DIRECT-IP FORK ---` blocks: the `hbbs_http::sync::start()` call removed, and the registration loop replaced with `loop { sleep(1.).await; }`.
