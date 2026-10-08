@@ -736,7 +736,7 @@ independent — neither triggers the other. **Upgrade check**: if a future upstr
 how Support-style camera sessions are initiated, make sure this fork's `onSupport()` doesn't
 regain an implicit second connect call.
 
-### Support Voice Call Dials on Session Acceptance, Not on the First Video Frame (changed 2026-10-08)
+### Support Voice Call Dials on Session Acceptance, Not on the First Video Frame; Camera Window Usable Without Video (changed 2026-10-08)
 Verify, on any upstream merge that touches `FfiModel.handlePeerInfo()` (`flutter/lib/models/model.dart`)
 or `desktop/pages/view_camera_page.dart`'s `initState()`:
 - **Why**: Support mode's automatic voice call used to be sent from
@@ -754,11 +754,29 @@ or `desktop/pages/view_camera_page.dart`'s `initState()`:
   `sessionRequestVoiceCall` from that callback; the first-image callback keeps only the
   keyboard-layout and recording-status work it had upstream. `ChatModel.voiceCallAutoDialed`
   is still set `true` immediately before the request (see "Duplicate Voice Call Prevention").
+- **Camera window must stay usable without video** (same change): upstream's modal
+  "Connected, waiting for image..." dialog (`FfiModel.showConnectedWaitingForImage`, triggered
+  by the `success` msgbox `ui_session_interface.rs` sends right after PeerInfo) stays up until
+  the first frame and its only button closes the session. On a camera-less remote (PeerInfo
+  with zero displays — the remote accepts the camera session anyway) or when video is blocked,
+  that would block the toolbar for ever while the call is already running. `FfiModel` now has
+  `cameraVideoUnavailable` / `cameraNoVideoTimer` / `markCameraVideoUnavailable(reason)`:
+  for a live camera-session PeerInfo, no displays marks video unavailable immediately,
+  otherwise a 10 s timer (`cameraNoVideoTimeout`) does so if no frame has arrived.
+  Marking suppresses/dismisses the dialog (the `cameraVideoUnavailable` check in
+  `showConnectedWaitingForImage`, plus `clearWaitingForImage`), shows a 6 s toast ("The remote
+  has no camera" / "No video is being received from the remote" + "The voice call is not
+  affected") and leaves `waitForFirstImage` untouched so a frame arriving later still runs the
+  normal first-image initialisation in `FFI.onEvent2UIRgba` (which also cancels the timer).
+  Desktop sessions are unchanged. The toolbar never depended on the first frame — only the
+  dialog did — so nothing else in `view_camera_page.dart` changed.
 - **Upgrade check**: if upstream restructures `handlePeerInfo()` (e.g. splits the cached vs
-  live paths), keep the callback loop on the live path only, after `_pi.isSet` is set. If the
-  remote side ever starts rejecting `VoiceCallRequest` before its own subscription setup
-  completes, the dial may need a retry — today `connection.rs` accepts it as soon as the
-  connection is authorized.
+  live paths), keep the callback loop and the camera no-video arming on the live path only,
+  after `_pi.isSet` is set. If the remote side ever starts rejecting `VoiceCallRequest` before
+  its own subscription setup completes, the dial may need a retry — today `connection.rs`
+  accepts it as soon as the connection is authorized. If upstream changes when/how the
+  "waiting for image" dialog is shown, re-check the `cameraVideoUnavailable` guard still sits
+  in front of it.
 
 ### Connection Manager List View, Chat Sender Attribution, Video Sources and Camera Preview (implemented 2026-10-07)
 Verify, on any upstream merge that touches `flutter/lib/desktop/pages/server_page.dart`,
