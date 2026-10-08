@@ -470,6 +470,30 @@ impl Server {
         }
     }
 
+    // Fork: every monitor/camera video service `conn_id` is currently subscribed to, as
+    // (source, index) pairs, sorted. Used by `Connection::report_video_sources()` to tell the
+    // connection manager what each local is watching.
+    pub fn get_subbed_video_sources(&self, conn_id: i32) -> Vec<(VideoSource, usize)> {
+        let mut sources: Vec<(VideoSource, usize)> = self
+            .services
+            .iter()
+            .filter(|(name, s)| Self::is_video_service_name(name) && s.is_subed(conn_id))
+            .filter_map(|(name, _)| {
+                for source in [VideoSource::Monitor, VideoSource::Camera] {
+                    let prefix = source.service_name_prefix();
+                    if let Some(idx) = name.strip_prefix(prefix) {
+                        if let Ok(idx) = idx.parse::<usize>() {
+                            return Some((source, idx));
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+        sources.sort_by_key(|(source, idx)| (source.is_camera(), *idx));
+        sources
+    }
+
     fn get_subbed_displays_count(&self, conn_id: i32) -> usize {
         self.services
             .keys()

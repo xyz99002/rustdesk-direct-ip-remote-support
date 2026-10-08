@@ -18,6 +18,8 @@ enum WindowType {
   ViewCamera,
   PortForward,
   Terminal,
+  // Fork: connection-manager camera preview pop-up. Appended so upstream indices are unchanged.
+  CameraPreview,
   Unknown
 }
 
@@ -36,6 +38,8 @@ extension Index on int {
         return WindowType.PortForward;
       case 5:
         return WindowType.Terminal;
+      case 6:
+        return WindowType.CameraPreview;
       default:
         return WindowType.Unknown;
     }
@@ -65,6 +69,33 @@ class RustDeskMultiWindowManager {
   final List<int> _viewCameraWindows = List.empty(growable: true);
   final List<int> _portForwardWindows = List.empty(growable: true);
   final List<int> _terminalWindows = List.empty(growable: true);
+  final List<int> _cameraPreviewWindows = List.empty(growable: true);
+
+  // Fork: open a pop-up window that shows what camera `index` (named `name`) is sending. Used
+  // by the connection manager only (ServerModel.openCameraPreview). The window has a native
+  // title bar so it can be minimized/moved like any other window; frames reach it through
+  // kWindowEventCameraPreviewFrame method calls from the CM's main window.
+  Future<int> newCameraPreview(int index, String name) async {
+    final params = {
+      'type': WindowType.CameraPreview.index,
+      'camera_index': index,
+      'camera_name': name,
+    };
+    final windowController =
+        await DesktopMultiWindow.createWindow(jsonEncode(params));
+    final windowId = windowController.windowId;
+    windowController
+      ..setFrame(const Offset(0, 0) &
+          Size(640 + windowId * 20.0, 420 + windowId * 20.0))
+      ..center()
+      ..setTitle('$name - ${translate("Camera")}');
+    if (isMacOS) {
+      Future.microtask(() => windowController.show());
+    }
+    registerActiveWindow(windowId);
+    _cameraPreviewWindows.add(windowId);
+    return windowId;
+  }
 
   moveTabToNewWindow(int windowId, String peerId, String sessionId,
       WindowType windowType) async {
@@ -415,6 +446,8 @@ class RustDeskMultiWindowManager {
         return _portForwardWindows;
       case WindowType.Terminal:
         return _terminalWindows;
+      case WindowType.CameraPreview:
+        return _cameraPreviewWindows;
       case WindowType.Unknown:
         break;
     }
@@ -439,6 +472,8 @@ class RustDeskMultiWindowManager {
         break;
       case WindowType.Terminal:
         _terminalWindows.clear();
+      case WindowType.CameraPreview:
+        _cameraPreviewWindows.clear();
       case WindowType.Unknown:
         break;
     }

@@ -73,6 +73,11 @@ impl InvokeUiCM for SciterHandler {
     }
 
     fn file_transfer_log(&self, _action: &str, _log: &str) {}
+
+    // Fork: the Sciter CM has no list view or camera preview; Flutter only.
+    fn update_video_sources(&self, _client: &crate::ui_cm_interface::Client) {}
+
+    fn camera_preview_frame(&self, _index: usize, _width: usize, _height: usize, _jpeg: &str) {}
 }
 
 impl SciterHandler {

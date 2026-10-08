@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/main.dart';
+import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_hbb/mobile/pages/settings_page.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
@@ -12,7 +14,6 @@ import 'package:window_manager/window_manager.dart';
 
 import '../common.dart';
 import '../common/formatter/id_formatter.dart';
-import '../desktop/pages/server_page.dart' as desktop;
 import '../desktop/widgets/tabbar_widget.dart';
 import '../mobile/pages/server_page.dart';
 import 'model.dart';
@@ -47,6 +48,10 @@ class ServerModel with ChangeNotifier {
   final tabController = DesktopTabController(tabType: DesktopTabType.cm);
 
   final List<Client> _clients = [];
+
+  // Fork: camera index -> id of the open preview pop-up window for it (desktop CM only).
+  // See openCameraPreview() / onCameraPreviewClosed().
+  final Map<int, int> _cameraPreviewWindows = {};
 
   Timer? cmHiddenTimer;
 
@@ -581,18 +586,105 @@ class ServerModel with ChangeNotifier {
       notifyListeners();
       if (isAndroid && !client.authorized) showLoginDialog(client);
       if (isAndroid) androidUpdatekeepScreenOn();
+      _refreshCameraPreviews();
     } catch (e) {
       debugPrint("Failed to call loginRequest,error:$e");
     }
   }
 
+  // Fork: the server reported which monitors/cameras a connection now streams
+  // (`update_video_sources` event, src/flutter.rs). The list row shows them.
+  void updateVideoSources(Map<String, dynamic> evt) {
+    try {
+      final client = Client.fromJson(jsonDecode(evt["client"]));
+      final index = _clients.indexWhere((element) => element.id == client.id);
+      if (index != -1) {
+        _clients[index].sources = client.sources;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint("updateVideoSources failed: $e");
+    }
+  }
+
+  // Fork: open (or raise) the pop-up window that shows what camera `index` is sending, and
+  // ask the server to start feeding it frames. One window per camera, shared by every
+  // connection watching that camera.
+  Future<void> openCameraPreview(int index, String name) async {
+    if (desktopType != DesktopType.cm) return;
+    final existing = _cameraPreviewWindows[index];
+    if (existing != null) {
+      try {
+        final controller = WindowController.fromWindowId(existing);
+        await controller.show();
+        await controller.focus();
+      } catch (e) {
+        debugPrint("camera preview: failed to raise window $existing: $e");
+      }
+    } else {
+      try {
+        final windowId = await rustDeskWinManager.newCameraPreview(index, name);
+        _cameraPreviewWindows[index] = windowId;
+      } catch (e) {
+        debugPrint("camera preview: failed to open window: $e");
+        return;
+      }
+    }
+    await bind.cmSetCameraPreview(index: index, enable: true);
+    notifyListeners();
+  }
+
+  bool isCameraPreviewOpen(int index) =>
+      _cameraPreviewWindows.containsKey(index);
+
+  // Fork: `camera_preview_frame` event (src/flutter.rs) -> the camera's preview window.
+  void onCameraPreviewFrame(Map<String, dynamic> evt) {
+    final index = int.tryParse(evt['index']?.toString() ?? '');
+    if (index == null) return;
+    final windowId = _cameraPreviewWindows[index];
+    if (windowId == null) return;
+    DesktopMultiWindow.invokeMethod(
+        windowId,
+        kWindowEventCameraPreviewFrame,
+        jsonEncode({
+          'index': index,
+          'width': int.tryParse(evt['width']?.toString() ?? '') ?? 0,
+          'height': int.tryParse(evt['height']?.toString() ?? '') ?? 0,
+          'data': evt['data'] ?? '',
+        })).catchError((e) {
+      debugPrint("camera preview: failed to forward frame: $e");
+    });
+  }
+
+  // Fork: the preview window was closed by the user (kWindowEventCameraPreviewClosed).
+  void onCameraPreviewClosed(int index) {
+    if (_cameraPreviewWindows.remove(index) != null) {
+      bind.cmSetCameraPreview(index: index, enable: false);
+      notifyListeners();
+    }
+  }
+
+  // Fork: the server keeps a preview alive on whichever connection relayed the request
+  // last (src/ui_cm_interface.rs set_camera_preview), so re-issue every open preview when
+  // the client list changes; harmless when nothing changed.
+  void _refreshCameraPreviews() {
+    if (desktopType != DesktopType.cm) return;
+    for (final index in _cameraPreviewWindows.keys) {
+      bind.cmSetCameraPreview(index: index, enable: true);
+    }
+  }
+
   void _addTab(Client client) {
+    // Fork: the desktop CM is a list (desktop/pages/server_page.dart), not a tab bar, but
+    // the tab controller is kept as the "selected connection" state (onSelected drives the
+    // chat key, window title and file-transfer log), so a tab is still registered per client;
+    // its page is never rendered.
     tabController.add(TabInfo(
         key: client.id.toString(),
         label: client.name,
         closable: false,
         onTap: () {},
-        page: desktop.buildConnectionCard(client)));
+        page: const Offstage()));
     Future.delayed(Duration.zero, () async {
       if (!hideCm) windowOnTop(null);
     });
@@ -733,6 +825,7 @@ class ServerModel with ChangeNotifier {
       }
       if (isAndroid) androidUpdatekeepScreenOn();
       notifyListeners();
+      _refreshCameraPreviews();
     } catch (e) {
       debugPrint("onClientRemove failed,error:$e");
     }
@@ -832,8 +925,13 @@ class Client {
   bool fromSwitch = false;
   bool inVoiceCall = false;
   bool incomingVoiceCall = false;
+  // Fork: monitors/cameras this connection currently receives (server-reported).
+  List<VideoSourceInfo> sources = [];
 
   RxInt unreadChatMessageCount = 0.obs;
+
+  // Fork: "Name (id)" - how this local is identified everywhere on the CM side.
+  String get displayName => "$name ($peerId)";
 
   Client(this.id, this.authorized, this.isFileTransfer, this.isViewCamera,
       this.name, this.peerId, this.keyboard, this.clipboard, this.audio);
@@ -861,6 +959,9 @@ class Client {
     fromSwitch = json['from_switch'];
     inVoiceCall = json['in_voice_call'];
     incomingVoiceCall = json['incoming_voice_call'];
+    sources = ((json['sources'] as List<dynamic>?) ?? [])
+        .map((e) => VideoSourceInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Map<String, dynamic> toJson() {
@@ -886,6 +987,7 @@ class Client {
     data['from_switch'] = fromSwitch;
     data['in_voice_call'] = inVoiceCall;
     data['incoming_voice_call'] = incomingVoiceCall;
+    data['sources'] = sources.map((e) => e.toJson()).toList();
     return data;
   }
 
@@ -902,6 +1004,24 @@ class Client {
       return ClientType.remote;
     }
   }
+}
+
+// Fork: one monitor or camera a connection receives (ipc::VideoSourceInfo, src/ipc.rs).
+class VideoSourceInfo {
+  final String kind; // "monitor" | "camera"
+  final int index;
+  final String name;
+
+  VideoSourceInfo(this.kind, this.index, this.name);
+
+  VideoSourceInfo.fromJson(Map<String, dynamic> json)
+      : kind = json['kind'] ?? '',
+        index = json['index'] ?? 0,
+        name = json['name'] ?? '';
+
+  Map<String, dynamic> toJson() => {'kind': kind, 'index': index, 'name': name};
+
+  bool get isCamera => kind == 'camera';
 }
 
 String getLoginDialogTag(int id) {

@@ -78,12 +78,125 @@ lazy_static::lazy_static! {
     pub static ref IS_UAC_RUNNING: Arc<Mutex<bool>> = Default::default();
     pub static ref IS_FOREGROUND_WINDOW_ELEVATED: Arc<Mutex<bool>> = Default::default();
     static ref SCREENSHOTS: Mutex<HashMap<(VideoSource, usize), Screenshot>> = Default::default();
+    // Fork: camera index -> the connection-manager pipe that wants preview frames of it.
+    // See `set_camera_preview()` / `maybe_send_camera_preview()`.
+    static ref CAMERA_PREVIEWS: Mutex<HashMap<usize, CameraPreview>> = Default::default();
 }
 
 struct Screenshot {
     sid: String,
     tx: Sender,
     restore_vram: bool,
+}
+
+// Fork: an active "show me what this camera is sending" request from the connection manager.
+struct CameraPreview {
+    tx: UnboundedSender<crate::ipc::Data>,
+    last_sent: Instant,
+}
+
+/// Fork: preview frames are sent at most this often per camera. ~4 fps is plenty for an
+/// operator to see what is being streamed, and keeps the cost on the capture thread (one RGBA
+/// conversion + a nearest-neighbour downscale) and on the CM IPC pipe (~20-40 KB per frame)
+/// negligible next to the real encode running at 30 fps.
+const CAMERA_PREVIEW_INTERVAL: Duration = Duration::from_millis(250);
+/// Fork: preview frames are downscaled so their width is at most this many pixels.
+const CAMERA_PREVIEW_MAX_WIDTH: usize = 480;
+
+/// Fork: start or stop sending preview frames of camera `index` to the connection manager over
+/// `tx` (the CM pipe of whichever connection relayed the request). Enabling again simply
+/// replaces the pipe, so the CM can re-issue the request after the relaying connection closes.
+pub fn set_camera_preview(index: usize, enable: bool, tx: UnboundedSender<crate::ipc::Data>) {
+    let mut previews = CAMERA_PREVIEWS.lock().unwrap();
+    if enable {
+        log::info!("camera {} preview enabled", index);
+        previews.insert(
+            index,
+            CameraPreview {
+                tx,
+                // Send the first frame immediately.
+                last_sent: Instant::now()
+                    .checked_sub(CAMERA_PREVIEW_INTERVAL)
+                    .unwrap_or_else(Instant::now),
+            },
+        );
+    } else {
+        log::info!("camera {} preview disabled", index);
+        previews.remove(&index);
+    }
+}
+
+// Fork: called from the camera capture loop with every valid frame. Does nothing unless the CM
+// has asked for a preview of this camera and the interval has elapsed. The frame is reduced to
+// RGB and downscaled here (cheap, a few hundred microseconds), then JPEG-encoded and shipped
+// on a short-lived thread so the capture loop is never blocked by the encoder.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn maybe_send_camera_preview(index: usize, frame: &scrap::Frame) {
+    let tx = {
+        let mut previews = CAMERA_PREVIEWS.lock().unwrap();
+        let Some(preview) = previews.get_mut(&index) else {
+            return;
+        };
+        if preview.last_sent.elapsed() < CAMERA_PREVIEW_INTERVAL {
+            return;
+        }
+        preview.last_sent = Instant::now();
+        preview.tx.clone()
+    };
+    let scrap::Frame::PixelBuffer(pixbuf) = frame else {
+        // Camera capture never produces GPU textures; nothing sensible to preview otherwise.
+        return;
+    };
+    let (w, h) = (pixbuf.width(), pixbuf.height());
+    if w == 0 || h == 0 {
+        return;
+    }
+    let rgba = match get_rgba_from_pixelbuf(pixbuf) {
+        Ok(rgba) => rgba,
+        Err(e) => {
+            log::debug!("camera {} preview: cannot read pixels: {}", index, e);
+            return;
+        }
+    };
+    if rgba.len() < w * h * 4 {
+        return;
+    }
+    // Nearest-neighbour downscale straight to RGB (JPEG has no alpha).
+    let step = (w + CAMERA_PREVIEW_MAX_WIDTH - 1) / CAMERA_PREVIEW_MAX_WIDTH;
+    let step = step.max(1);
+    let (dw, dh) = ((w + step - 1) / step, (h + step - 1) / step);
+    let mut rgb = Vec::with_capacity(dw * dh * 3);
+    for y in (0..h).step_by(step) {
+        let row = y * w * 4;
+        for x in (0..w).step_by(step) {
+            let i = row + x * 4;
+            rgb.extend_from_slice(&rgba[i..i + 3]);
+        }
+    }
+    std::thread::spawn(move || {
+        let mut jpeg = Vec::new();
+        let encoded = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 60).encode(
+            &rgb,
+            dw as u32,
+            dh as u32,
+            image::ColorType::Rgb8,
+        );
+        if let Err(e) = encoded {
+            log::debug!("camera {} preview: jpeg encode failed: {}", index, e);
+            return;
+        }
+        let msg = crate::ipc::Data::CameraPreviewFrame {
+            index,
+            width: dw,
+            height: dh,
+            jpeg: crate::encode64(jpeg),
+        };
+        if tx.send(msg).is_err() {
+            // The relaying connection is gone; stop until the CM asks again.
+            CAMERA_PREVIEWS.lock().unwrap().remove(&index);
+            log::info!("camera {} preview stopped: CM pipe closed", index);
+        }
+    });
 }
 
 #[inline]
@@ -735,6 +848,11 @@ fn run(vs: VideoService) -> ResultType<()> {
             Ok(frame) => {
                 repeat_encode_counter = 0;
                 if frame.valid() {
+                    // Fork: feed the connection manager's camera preview, if one is open.
+                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                    if vs.source.is_camera() {
+                        maybe_send_camera_preview(display_idx, &frame);
+                    }
                     let screenshot_key = (vs.source, display_idx);
                     let screenshot = SCREENSHOTS.lock().unwrap().remove(&screenshot_key);
                     if let Some(mut screenshot) = screenshot {

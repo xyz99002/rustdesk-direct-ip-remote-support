@@ -435,6 +435,12 @@ class FfiModel with ChangeNotifier {
         parent.target?.chatModel.onVoiceCallIncoming();
       } else if (name == 'update_voice_call_state') {
         parent.target?.serverModel.updateVoiceCallState(evt);
+      } else if (name == 'update_video_sources') {
+        // Fork: CM list view, which monitors/cameras a local is watching.
+        parent.target?.serverModel.updateVideoSources(evt);
+      } else if (name == 'camera_preview_frame') {
+        // Fork: CM camera preview pop-up.
+        parent.target?.serverModel.onCameraPreviewFrame(evt);
       } else if (name == 'fingerprint') {
         FingerprintState.find(peerId).value = evt['fingerprint'] ?? '';
       } else if (name == 'plugin_manager') {

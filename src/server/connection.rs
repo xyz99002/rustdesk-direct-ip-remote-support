@@ -919,6 +919,12 @@ impl Connection {
                         ipc::Data::VoiceCallResponse(accepted) => {
                             conn.handle_voice_call(accepted).await;
                         }
+                        // Fork: the CM asked to see (or stop seeing) what camera `index` is
+                        // sending. Frames come back on this connection's own CM pipe.
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        ipc::Data::CameraPreview { index, enable } => {
+                            video_service::set_camera_preview(index, enable, conn.tx_to_cm.clone());
+                        }
                         ipc::Data::CloseVoiceCall(_reason) => {
                             log::debug!("Close the voice call from the ipc.");
                             conn.close_voice_call().await;
@@ -2008,6 +2014,49 @@ impl Connection {
             s.try_add_primary_camera_service();
             s.add_camera_connection(self.inner.clone());
         }
+        self.report_video_sources();
+    }
+
+    // Fork: tell the connection manager which monitors/cameras this connection currently
+    // receives, so its list view can show "Desktop · Monitor 1, Monitor 2" / "Camera · USB
+    // Camera" per local. Called after every subscription change (initial subscribe, display
+    // switch, CaptureDisplays). Names come from the same display/camera tables the peer info
+    // is built from. Cheap: one IPC message per change, nothing per frame.
+    fn report_video_sources(&mut self) {
+        let Some(server) = self.server.upgrade() else {
+            return;
+        };
+        let subbed = server
+            .read()
+            .unwrap()
+            .get_subbed_video_sources(self.inner.id());
+        let cameras = if subbed.iter().any(|(s, _)| s.is_camera()) {
+            camera::Cameras::get_sync_cameras()
+        } else {
+            Vec::new()
+        };
+        let sources = subbed
+            .into_iter()
+            .map(|(source, idx)| {
+                let name = match source {
+                    VideoSource::Monitor => super::display_service::get_display_info(idx)
+                        .map(|d| d.name)
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or_else(|| format!("Monitor {}", idx + 1)),
+                    VideoSource::Camera => cameras
+                        .get(idx)
+                        .map(|d| d.name.clone())
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or_else(|| format!("Camera {}", idx + 1)),
+                };
+                ipc::VideoSourceInfo {
+                    kind: source.service_name_prefix().to_owned(),
+                    index: idx,
+                    name,
+                }
+            })
+            .collect();
+        self.send_to_cm(ipc::Data::VideoSources(sources));
     }
 
     #[inline]
@@ -2049,6 +2098,8 @@ impl Connection {
                 self.auto_disconnect_timer = Self::get_auto_disconenct_timer();
                 s.try_add_primay_video_service();
                 s.add_connection(self.inner.clone(), &noperms);
+                drop(s);
+                self.report_video_sources();
             }
         }
     }
@@ -4318,6 +4369,8 @@ impl Connection {
         }
         lock.subscribe(&new_service_name, self.inner.clone(), true);
         self.display_idx = display_idx;
+        drop(lock);
+        self.report_video_sources();
     }
 
     #[cfg(windows)]
@@ -4374,6 +4427,7 @@ impl Connection {
                 );
             }
             drop(lock);
+            self.report_video_sources();
         }
     }
 

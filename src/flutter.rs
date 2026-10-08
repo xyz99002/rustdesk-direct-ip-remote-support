@@ -1559,6 +1559,25 @@ pub mod connection_manager {
         fn file_transfer_log(&self, action: &str, log: &str) {
             self.push_event("cm_file_transfer_log", &[(action, log)]);
         }
+
+        // Fork: see ServerModel.updateVideoSources (flutter/lib/models/server_model.dart).
+        fn update_video_sources(&self, client: &crate::ui_cm_interface::Client) {
+            let client_json = serde_json::to_string(&client).unwrap_or("".into());
+            self.push_event("update_video_sources", &[("client", &client_json)]);
+        }
+
+        // Fork: see ServerModel.onCameraPreviewFrame (flutter/lib/models/server_model.dart).
+        fn camera_preview_frame(&self, index: usize, width: usize, height: usize, jpeg: &str) {
+            self.push_event(
+                "camera_preview_frame",
+                &[
+                    ("index", &index.to_string()),
+                    ("width", &width.to_string()),
+                    ("height", &height.to_string()),
+                    ("data", &jpeg.to_owned()),
+                ],
+            );
+        }
     }
 
     impl FlutterHandler {

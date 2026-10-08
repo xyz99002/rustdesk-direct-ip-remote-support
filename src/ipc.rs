@@ -292,6 +292,20 @@ pub enum DataPortableService {
     CmShowElevation(bool),
 }
 
+// Fork: one monitor or camera a connection is currently receiving video from. Sent by the
+// server to the connection manager (CM) so its list view can show what each local is
+// watching (see `Data::VideoSources` and docs/UPSTREAM_UPGRADE_GUIDE.md "Connection Manager
+// List View"). Server <-> CM only; never crosses the wire protocol.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct VideoSourceInfo {
+    /// "monitor" or "camera" (`VideoSource::service_name_prefix()`).
+    pub kind: String,
+    /// Display index (monitor) or camera index, as used by the video service name.
+    pub index: usize,
+    /// Human-readable device name, if known.
+    pub name: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "t", content = "c")]
 pub enum Data {
@@ -385,6 +399,21 @@ pub enum Data {
     #[cfg(windows)]
     ControlledSessionCount(usize),
     CmErr(String),
+    /// Fork, server -> CM: the complete set of monitors/cameras this connection is currently
+    /// subscribed to. Re-sent whenever the set changes (login, display switch, multi-display
+    /// capture changes).
+    VideoSources(Vec<VideoSourceInfo>),
+    /// Fork, CM -> server: start (`enable`) or stop sending downscaled preview frames of camera
+    /// `index` back to the CM. The CM window shows them in a pop-up preview window.
+    CameraPreview { index: usize, enable: bool },
+    /// Fork, server -> CM: one preview frame of camera `index`, a base64-encoded JPEG of at
+    /// most ~480 px width, sent at most a few times per second while a preview is enabled.
+    CameraPreviewFrame {
+        index: usize,
+        width: usize,
+        height: usize,
+        jpeg: String,
+    },
     // CM-side file reading responses (Windows only)
     // These are sent from CM back to Connection when CM handles file reading
     /// Response to ReadFile: contains initial file list or error

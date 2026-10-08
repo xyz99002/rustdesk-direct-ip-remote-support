@@ -52,6 +52,9 @@ const String kAppTypeDesktopFileTransfer = "file transfer";
 const String kAppTypeDesktopViewCamera = "view camera";
 const String kAppTypeDesktopPortForward = "port forward";
 const String kAppTypeDesktopTerminal = "terminal";
+// Fork: the connection manager's pop-up camera preview window (see
+// desktop/screen/desktop_camera_preview_screen.dart).
+const String kAppTypeDesktopCameraPreview = "camera preview";
 
 const String kWindowMainWindowOnTop = "main_window_on_top";
 const String kWindowRefreshCurrentUser = "refresh_current_user";
@@ -81,6 +84,10 @@ const String kWindowEventSetFullscreen = "set_fullscreen";
 const String kWindowEventMoveTabToNewWindow = "move_tab_to_new_window";
 const String kWindowEventGetCachedSessionData = "get_cached_session_data";
 const String kWindowEventOpenMonitorSession = "open_monitor_session";
+// Fork: CM main window -> camera preview window, one base64 JPEG frame.
+const String kWindowEventCameraPreviewFrame = "camera_preview_frame";
+// Fork: camera preview window -> CM main window, the user closed it.
+const String kWindowEventCameraPreviewClosed = "camera_preview_closed";
 
 const String kOptionViewStyle = "view_style";
 const String kOptionScrollStyle = "scroll_style";
@@ -341,12 +348,14 @@ extension StringExtension on String {
   String get nonBreaking => replaceAll(' ', String.fromCharCode($nbsp));
 }
 
-const Size kConnectionManagerWindowSizeClosedChat = Size(300, 490);
-// Fork: despite the name, this is now only used when the file-transfer side panel is open -
-// chat moved to its own floating overlay window instead (see
-// ConnectionManagerState._blockableOverlayState's doc comment, desktop/pages/server_page.dart).
-// Kept the existing name to avoid touching every reference to it for a label-only rename.
-const Size kConnectionManagerWindowSizeOpenChat = Size(700, 490);
+// Fork: the connection manager is a list (one row per connection) instead of upstream's
+// 300 px-wide tab card, so it is wider; the height is only the initial/minimum one - the
+// window is resizable and grows with the number of rows (see ConnectionManagerState's
+// _fitWindowHeight in desktop/pages/server_page.dart). Upstream: 300x490 / 700x490.
+const Size kConnectionManagerWindowSizeClosedChat = Size(560, 360);
+const Size kConnectionManagerWindowSizeOpenChat = Size(940, 360);
+// Fork: tallest the CM window auto-grows to; beyond this the list scrolls.
+const double kConnectionManagerWindowMaxAutoHeight = 760;
 // Tabbar transition duration, now we remove the duration
 const Duration kTabTransitionDuration = Duration.zero;
 const double kEmptyMarginTop = 50;

@@ -137,11 +137,29 @@ class ChatPage extends StatelessWidget implements PageShape {
                       maxWidth: constraints.maxWidth * 0.7,
                       messageTextBuilder: (message, _, __) {
                         final isOwnMessage = message.user.id.isBlank!;
+                        // Fork: on the connection-manager side every incoming bubble carries
+                        // its sender as "Name (id)" (ChatModel.receive sets the ChatUser's
+                        // firstName to Client.displayName), so messages are attributable even
+                        // when two locals share a display name. Client-side chat is unchanged.
+                        final author = type == ChatPageType.desktopCM &&
+                                !isOwnMessage &&
+                                (message.user.firstName ?? '').isNotEmpty
+                            ? message.user.firstName!
+                            : null;
                         return Column(
                           crossAxisAlignment: isOwnMessage
                               ? CrossAxisAlignment.end
                               : CrossAxisAlignment.start,
                           children: <Widget>[
+                            if (author != null)
+                              Text(
+                                author,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ).marginOnly(bottom: 2),
                             Text(message.text,
                                 style: TextStyle(color: Colors.white)),
                             Text(

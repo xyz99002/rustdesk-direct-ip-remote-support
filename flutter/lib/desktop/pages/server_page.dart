@@ -1,14 +1,25 @@
 // original cm window in Sciter version.
+//
+// Fork (2026-10-07): the connection manager is a *list*, one row per connection, grouped by
+// the connecting local's "Name (id)", instead of upstream's one-tab-per-connection card. Every
+// row shows the connection type, the monitors/cameras it currently receives (server-reported,
+// see ServerModel.updateVideoSources), its state (pending / connected / in call / incoming
+// call / disconnected) and its actions inline. Chat and the file-transfer log use upstream's
+// side panel (toggleCMSidePage). Cameras get a pop-up preview window (ServerModel.
+// openCameraPreview). See docs/UPSTREAM_UPGRADE_GUIDE.md "Connection Manager List View".
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/widgets/audio_input.dart';
+import 'package:flutter_hbb/common/widgets/chat_page.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_hbb/models/cm_file_model.dart';
+import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_hbb/utils/platform_channel.dart';
 import 'package:get/get.dart';
 import 'package:percent_indicator/linear_percent_indicator.dart';
@@ -17,7 +28,6 @@ import 'package:window_manager/window_manager.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../common.dart';
-import '../../common/widgets/overlay.dart';
 import '../../models/file_model.dart';
 import '../../models/platform_model.dart';
 import '../../models/server_model.dart';
@@ -44,6 +54,23 @@ class _DesktopServerPageState extends State<DesktopServerPage>
   @override
   void initState() {
     windowManager.addListener(this);
+    // Fork: camera preview pop-ups report their close back to this (main) window.
+    rustDeskWinManager.setMethodHandler((call, fromWindowId) async {
+      if (call.method == kWindowEventCameraPreviewClosed) {
+        try {
+          final args = call.arguments is String
+              ? jsonDecode(call.arguments)
+              : call.arguments;
+          final index = args['index'] as int?;
+          if (index != null) {
+            gFFI.serverModel.onCameraPreviewClosed(index);
+          }
+        } catch (e) {
+          debugPrint("camera preview closed: bad args: $e");
+        }
+      }
+      return null;
+    });
     super.initState();
   }
 
@@ -114,17 +141,9 @@ class ConnectionManagerState extends State<ConnectionManager>
     with WidgetsBindingObserver {
   final RxBool _controlPageBlock = false.obs;
   final RxBool _sidePageBlock = false.obs;
-
-  // Fork: lets chat use a floating, draggable overlay window (the same mechanism a regular
-  // remote session already uses) instead of widening the CM window into a side panel. Found via
-  // real testing that the side-panel approach, on a multi-client CM window, could end up
-  // effectively hiding a still-pending accept/permission prompt when switching between client
-  // tabs while chat was open. The floating overlay renders on top instead of replacing/resizing
-  // the view, and - as a side effect of reusing this existing mechanism - already has its own
-  // visible close button (see DraggableChatWindow's app bar in common/widgets/overlay.dart),
-  // which the side-panel chat never had. File transfer's side panel (buildSidePage() below) is
-  // unaffected - this only changes chat.
-  final BlockableOverlayState _blockableOverlayState = BlockableOverlayState();
+  final ScrollController _scrollController = ScrollController();
+  double _lastFittedHeight = 0;
+  bool _startupFitScheduled = false;
 
   ConnectionManagerState() {
     gFFI.serverModel.tabController.onSelected = (client_id_str) {
@@ -163,22 +182,64 @@ class ConnectionManagerState extends State<ConnectionManager>
   void initState() {
     gFFI.serverModel.updateClientState();
     WidgetsBinding.instance.addObserver(this);
-    // Wires gFFI.chatModel (and gFFI.dialogManager) to this window's own overlay, so the
-    // floating chat window (toggleChatOverlay()) has somewhere to render into - see
-    // _blockableOverlayState's doc comment above.
-    _blockableOverlayState.applyFfi(gFFI);
     super.initState();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  // Fork: group clients by the connecting local (peer id), keeping first-seen order; groups
+  // with a pending request come first so an accept prompt is never below the fold.
+  List<List<Client>> _groupClients(List<Client> clients) {
+    final groups = <String, List<Client>>{};
+    for (final c in clients) {
+      groups.putIfAbsent(c.peerId, () => []).add(c);
+    }
+    final list = groups.values.toList();
+    list.sort((a, b) {
+      final ap = a.any((c) => !c.authorized) ? 0 : 1;
+      final bp = b.any((c) => !c.authorized) ? 0 : 1;
+      return ap - bp;
+    });
+    return list;
+  }
+
+  // Fork: grow the window with its rows (never shrink it under the user), up to a cap;
+  // past the cap the list scrolls. The window is resizable, so a manual resize is respected
+  // until the next time more rows need room.
+  void _fitWindowHeight(int groupCount, int rowCount) {
+    const titleBar = kDesktopRemoteTabBarHeight;
+    const groupHeader = 30.0;
+    const row = 78.0;
+    const padding = 24.0;
+    final desired = (titleBar + groupHeader * groupCount + row * rowCount + padding)
+        .clamp(kConnectionManagerWindowSizeClosedChat.height,
+            kConnectionManagerWindowMaxAutoHeight)
+        .toDouble();
+    if ((desired - _lastFittedHeight).abs() < 1) return;
+    _lastFittedHeight = desired;
+    () async {
+      try {
+        final size = await windowManager.getSize();
+        if (desired > size.height + 1) {
+          await windowManager.setSize(Size(size.width, desired));
+        }
+      } catch (e) {
+        debugPrint("cm: failed to fit window height: $e");
+      }
+    }();
   }
 
   @override
   Widget build(BuildContext context) {
     final serverModel = Provider.of<ServerModel>(context);
+    // Subscribe to the side-panel flag too: the LayoutBuilder below only re-runs on a
+    // window-size change, which does not happen when the window is already wide enough.
+    final chatModel = Provider.of<ChatModel>(context);
     pointerHandler(PointerEvent e) {
       if (serverModel.cmHiddenTimer != null) {
         serverModel.cmHiddenTimer!.cancel();
@@ -187,145 +248,162 @@ class ConnectionManagerState extends State<ConnectionManager>
       }
     }
 
-    // Fork: the client-list content is wrapped in its own Consumer<ServerModel> (rather than
-    // switched on serverModel.clients.isEmpty directly here) because it ends up inside
-    // BlockableOverlay's Overlay below, whose `initialEntries` is only consulted once, when the
-    // OverlayState is first created - recomputing `underlying` on every outer build() and
-    // passing it into a new Overlay widget on each rebuild is silently ignored by Flutter, since
-    // the existing OverlayState just keeps its original entries. That left this window frozen on
-    // whichever branch was true the very first time it was built - in practice the empty
-    // "Waiting" placeholder, since it's built before any client has connected - and never
-    // updating even after a client connected (found via real testing). Consumer subscribes to
-    // ServerModel directly through the ambient Provider, independent of whether this outer
-    // build() or the Overlay itself ever re-runs, so it keeps working correctly inside a
-    // one-time-built Overlay entry.
-    final underlying = Consumer<ServerModel>(
-      builder: (context, serverModel, child) {
-        return serverModel.clients.isEmpty
-            ? Column(
-                children: [
-                  buildTitleBar(),
-                  Expanded(
-                    child: Center(
-                      child: Text(translate("Waiting")),
-                    ),
+    final groups = _groupClients(serverModel.clients);
+    if (serverModel.clients.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _fitWindowHeight(groups.length, serverModel.clients.length));
+      // The startup show/resize in showCmWindow() may land after the first frame and reset
+      // the size; fit once more shortly after.
+      if (!_startupFitScheduled) {
+        _startupFitScheduled = true;
+        Future.delayed(const Duration(milliseconds: 800), () {
+          if (mounted) {
+            _lastFittedHeight = 0;
+            final m = gFFI.serverModel;
+            _fitWindowHeight(_groupClients(m.clients).length, m.clients.length);
+          }
+        });
+      }
+    }
+
+    final list = serverModel.clients.isEmpty
+        ? Center(child: Text(translate("Waiting")))
+        : ListView(
+            controller: _scrollController,
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+            children: [
+              for (final group in groups) ...[
+                _GroupHeader(client: group.first),
+                for (final client in group)
+                  _ClientRow(
+                    key: ValueKey(client.id),
+                    client: client,
+                    index: serverModel.clients.indexOf(client),
                   ),
-                ],
-              )
-            : Listener(
-                onPointerDown: pointerHandler,
-                onPointerMove: pointerHandler,
-                child: DesktopTab(
-                  showTitle: false,
-                  showMaximize: false,
-                  showMinimize: true,
-                  showClose: true,
-                  onWindowCloseButton: handleWindowCloseButton,
-                  controller: serverModel.tabController,
-                  selectedBorderColor: MyTheme.accent,
-                  maxLabelWidth: 100,
-                  tail: null, //buildScrollJumper(),
-                  tabBuilder: (key, icon, label, themeConf) {
-                    final client = serverModel.clients.firstWhereOrNull(
-                        (client) => client.id.toString() == key);
-                    return Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Tooltip(
-                            message: key,
-                            waitDuration: Duration(seconds: 1),
-                            child: label),
-                        unreadMessageCountBuilder(
-                                client?.unreadChatMessageCount)
-                            .marginOnly(left: 4),
-                      ],
-                    );
-                  },
-                  pageViewBuilder: (pageView) => LayoutBuilder(
-                    builder: (context, constrains) {
-                      var borderWidth = 0.0;
-                      if (constrains.maxWidth >
-                          kConnectionManagerWindowSizeClosedChat.width) {
-                        borderWidth =
-                            kConnectionManagerWindowSizeOpenChat.width -
-                                constrains.maxWidth;
-                      } else {
-                        borderWidth =
-                            kConnectionManagerWindowSizeClosedChat.width -
-                                constrains.maxWidth;
-                      }
-                      if (borderWidth < 0 || borderWidth > 50) {
-                        borderWidth = 0;
-                      }
-                      final realClosedWidth =
-                          kConnectionManagerWindowSizeClosedChat.width -
-                              borderWidth;
-                      final realChatPageWidth =
-                          constrains.maxWidth - realClosedWidth;
-                      final row = Row(children: [
-                        if (constrains.maxWidth >
+              ],
+            ],
+          );
+
+    return Listener(
+      onPointerDown: pointerHandler,
+      onPointerMove: pointerHandler,
+      child: Column(
+        children: [
+          buildTitleBar(serverModel),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constrains) {
+                var borderWidth = 0.0;
+                if (constrains.maxWidth >
+                    kConnectionManagerWindowSizeClosedChat.width) {
+                  borderWidth = kConnectionManagerWindowSizeOpenChat.width -
+                      constrains.maxWidth;
+                } else {
+                  borderWidth = kConnectionManagerWindowSizeClosedChat.width -
+                      constrains.maxWidth;
+                }
+                if (borderWidth < 0 || borderWidth > 50) {
+                  borderWidth = 0;
+                }
+                final sideOpen = chatModel.isShowCMSidePage &&
+                    constrains.maxWidth >
+                        kConnectionManagerWindowSizeClosedChat.width;
+                final realClosedWidth =
+                    kConnectionManagerWindowSizeClosedChat.width - borderWidth;
+                final sideWidth = sideOpen
+                    ? min(constrains.maxWidth - realClosedWidth,
+                        kConnectionManagerWindowSizeOpenChat.width -
                             kConnectionManagerWindowSizeClosedChat.width)
-                          Consumer<ChatModel>(
-                              builder: (_, model, child) => SizedBox(
-                                    width: realChatPageWidth,
-                                    child: allowRemoteCMModification()
-                                        ? buildSidePage()
-                                        : buildRemoteBlock(
-                                            child: buildSidePage(),
-                                            block: _sidePageBlock,
-                                            mask: true),
-                                  )),
-                        SizedBox(
-                            width: realClosedWidth,
-                            child: SizedBox(
-                                width: realClosedWidth,
-                                child: allowRemoteCMModification()
-                                    ? pageView
-                                    : buildRemoteBlock(
-                                        child: _buildKeyEventBlock(pageView),
-                                        block: _controlPageBlock,
-                                        mask: false,
-                                      ))),
-                      ]);
-                      return Container(
-                        color: Theme.of(context).scaffoldBackgroundColor,
-                        child: row,
+                    : 0.0;
+                final listWidget = allowRemoteCMModification()
+                    ? list
+                    : buildRemoteBlock(
+                        child: _buildKeyEventBlock(list),
+                        block: _controlPageBlock,
+                        mask: false,
                       );
-                    },
-                  ),
-                ),
-              );
-      },
+                return Container(
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                  child: Row(children: [
+                    if (sideOpen)
+                      Consumer<ChatModel>(
+                          builder: (_, model, child) => SizedBox(
+                                width: sideWidth,
+                                child: allowRemoteCMModification()
+                                    ? buildSidePage()
+                                    : buildRemoteBlock(
+                                        child: buildSidePage(),
+                                        block: _sidePageBlock,
+                                        mask: true),
+                              )),
+                    Expanded(child: listWidget),
+                  ]),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
-    return BlockableOverlay(
-        underlying: underlying, state: _blockableOverlayState);
   }
 
-  // Fork: file transfer only now - chat used to also render here, but now uses its own floating
-  // overlay window instead (see _blockableOverlayState's doc comment above). This still only
-  // triggers for ClientType.file (buildSidePage() is only ever reached via toggleCMFilePage()'s
-  // window resize now), but the clientType re-check below is kept so switching tabs away from a
-  // file-transfer client while this panel is open doesn't keep showing stale content.
+  // Upstream's side panel (chat or file-transfer log for the selected connection), with a
+  // fork-added header naming the connection as "Name (id)" plus a close button.
   Widget buildSidePage() {
     final selected = gFFI.serverModel.tabController.state.value.selected;
     if (selected < 0 || selected >= gFFI.serverModel.clients.length) {
       return Offstage();
     }
-    final clientType = gFFI.serverModel.clients[selected].type_();
-    if (clientType == ClientType.file) {
-      return _FileTransferLogPage();
-    } else {
-      // Unreachable in practice - chat no longer opens via this side panel - but kept as a
-      // harmless fallback rather than asserting, in case some other caller is added later.
-      return Offstage();
-    }
+    final client = gFFI.serverModel.clients[selected];
+    final isFile = client.type_() == ClientType.file;
+    return Column(
+      children: [
+        Container(
+          height: 36,
+          padding: const EdgeInsets.only(left: 12, right: 4),
+          decoration: BoxDecoration(
+            border: Border(
+                bottom: BorderSide(color: MyTheme.color(context).border!)),
+          ),
+          child: Row(
+            children: [
+              Icon(isFile ? Icons.folder_outlined : Icons.chat_outlined,
+                  size: 16),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  "${translate(isFile ? 'File Transfer' : 'Chat')} · ${client.displayName}",
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              IconButton(
+                tooltip: translate('Close'),
+                icon: const Icon(Icons.close, size: 16),
+                splashRadius: kDesktopIconButtonSplashRadius,
+                onPressed: () => gFFI.chatModel.toggleCMSidePage(),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: isFile
+              ? _FileTransferLogPage()
+              : ChatPage(type: ChatPageType.desktopCM),
+        ),
+      ],
+    );
   }
 
   Widget _buildKeyEventBlock(Widget child) {
     return ExcludeFocus(child: child, excluding: true);
   }
 
-  Widget buildTitleBar() {
+  Widget buildTitleBar(ServerModel serverModel) {
+    final count = serverModel.clients.length;
+    final title = count == 0
+        ? translate("Waiting")
+        : "${translate('Connections')}: $count";
     return SizedBox(
       height: kDesktopRemoteTabBarHeight,
       child: Row(
@@ -337,80 +415,54 @@ class ConnectionManagerState extends State<ConnectionManager>
               onPanStart: (d) {
                 windowManager.startDragging();
               },
+              onDoubleTap: () {},
               child: Container(
                 color: Theme.of(context).colorScheme.background,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.bold),
+                ),
               ),
             ),
           ),
-          const SizedBox(
-            width: 4.0,
-          ),
-          const _CloseButton()
+          if (!isMacOS)
+            ActionIcon(
+              message: 'Minimize',
+              icon: IconFont.min,
+              onTap: () => windowManager.minimize(),
+              isClose: false,
+            ),
+          if (!isMacOS)
+            ActionIcon(
+              message: 'Close',
+              icon: IconFont.close,
+              onTap: () async {
+                if (await handleWindowCloseButton()) {
+                  windowManager.close();
+                }
+              },
+              isClose: true,
+            ),
         ],
       ),
     );
-  }
-
-  Widget buildScrollJumper() {
-    final offstage = gFFI.serverModel.clients.length < 2;
-    final sc = gFFI.serverModel.tabController.state.value.scrollController;
-    return Offstage(
-        offstage: offstage,
-        child: Row(
-          children: [
-            ActionIcon(
-                icon: Icons.arrow_left, iconSize: 22, onTap: sc.backward),
-            ActionIcon(
-                icon: Icons.arrow_right, iconSize: 22, onTap: sc.forward),
-          ],
-        ));
   }
 
   Future<bool> handleWindowCloseButton() async {
     var tabController = gFFI.serverModel.tabController;
     final connLength = tabController.length;
     if (connLength <= 1) {
-      windowManager.close();
       return true;
     } else {
-      final bool res;
       if (!option2bool(kOptionEnableConfirmClosingTabs,
           bind.mainGetLocalOption(key: kOptionEnableConfirmClosingTabs))) {
-        res = true;
-      } else {
-        res = await closeConfirmDialog();
+        return true;
       }
-      if (res) {
-        windowManager.close();
-      }
-      return res;
+      return await closeConfirmDialog();
     }
   }
-}
-
-Widget buildConnectionCard(Client client) {
-  return Consumer<ServerModel>(
-    builder: (context, value, child) => Column(
-      mainAxisAlignment: MainAxisAlignment.start,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      key: ValueKey(client.id),
-      children: [
-        _CmHeader(client: client),
-        client.type_() == ClientType.file ||
-                client.type_() == ClientType.portForward ||
-                client.type_() == ClientType.terminal ||
-                client.disconnected
-            ? Offstage()
-            : _PrivilegeBoard(client: client),
-        Expanded(
-          child: Align(
-            alignment: Alignment.bottomCenter,
-            child: _CmControlPanel(client: client),
-          ),
-        )
-      ],
-    ).paddingSymmetric(vertical: 4.0, horizontal: 8.0),
-  );
 }
 
 class _AppIcon extends StatelessWidget {
@@ -425,36 +477,70 @@ class _AppIcon extends StatelessWidget {
   }
 }
 
-class _CloseButton extends StatelessWidget {
-  const _CloseButton({Key? key}) : super(key: key);
+// Fork: one header per connecting local: avatar, "Name (id)".
+class _GroupHeader extends StatelessWidget {
+  final Client client;
+
+  const _GroupHeader({Key? key, required this.client}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return IconButton(
-      onPressed: () {
-        windowManager.close();
-      },
-      icon: const Icon(
-        IconFont.close,
-        size: 18,
+    final avatar = buildAvatarWidget(
+          avatar: client.avatar,
+          size: 22,
+          borderRadius: 6,
+          fallback: _initialAvatar(),
+        ) ??
+        _initialAvatar();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 2, left: 2),
+      child: Row(
+        children: [
+          avatar,
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              client.displayName,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ),
+        ],
       ),
-      splashColor: Colors.transparent,
-      hoverColor: Colors.transparent,
+    );
+  }
+
+  Widget _initialAvatar() {
+    return Container(
+      width: 22,
+      height: 22,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: str2color(client.name),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        client.name.isNotEmpty ? client.name[0] : '?',
+        style: const TextStyle(
+            fontWeight: FontWeight.bold, color: Colors.white, fontSize: 13),
+      ),
     );
   }
 }
 
-class _CmHeader extends StatefulWidget {
+// Fork: one row per connection - type, sources, state and actions.
+class _ClientRow extends StatefulWidget {
   final Client client;
+  final int index;
 
-  const _CmHeader({Key? key, required this.client}) : super(key: key);
+  const _ClientRow({Key? key, required this.client, required this.index})
+      : super(key: key);
 
   @override
-  State<_CmHeader> createState() => _CmHeaderState();
+  State<_ClientRow> createState() => _ClientRowState();
 }
 
-class _CmHeaderState extends State<_CmHeader>
-    with AutomaticKeepAliveClientMixin {
+class _ClientRowState extends State<_ClientRow> {
   Client get client => widget.client;
 
   final _time = 0.obs;
@@ -463,14 +549,15 @@ class _CmHeaderState extends State<_CmHeader>
   @override
   void initState() {
     super.initState();
-    _timer = Timer.periodic(Duration(seconds: 1), (_) {
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (client.authorized && !client.disconnected) {
         _time.value = _time.value + 1;
       }
     });
-    // Call onSelected in post frame callback, since we cannot guarantee that the callback will not call setState.
+    // Like upstream's tab card: a newly listed connection becomes the selected one, which
+    // sets the chat key, window title and file-transfer log (tabController.onSelected).
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      gFFI.serverModel.tabController.onSelected?.call(client.id.toString());
+      gFFI.serverModel.tabController.jumpToByKey(client.id.toString());
     });
   }
 
@@ -480,778 +567,498 @@ class _CmHeaderState extends State<_CmHeader>
     super.dispose();
   }
 
+  String _typeLabel() {
+    switch (client.type_()) {
+      case ClientType.file:
+        return translate("File Transfer");
+      case ClientType.camera:
+        return translate("Camera");
+      case ClientType.terminal:
+        return translate("Terminal");
+      case ClientType.portForward:
+        return "${translate('Port Forward')}: ${client.portForward}";
+      case ClientType.remote:
+        return translate("Desktop");
+    }
+  }
+
+  IconData _typeIcon() {
+    switch (client.type_()) {
+      case ClientType.file:
+        return Icons.folder_outlined;
+      case ClientType.camera:
+        return Icons.videocam_outlined;
+      case ClientType.terminal:
+        return Icons.terminal;
+      case ClientType.portForward:
+        return Icons.swap_horiz;
+      case ClientType.remote:
+        return Icons.desktop_windows_outlined;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    super.build(context);
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10.0),
-        gradient: LinearGradient(
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-          colors: [
-            Color(0xff00bfe1),
-            Color(0xff0071ff),
-          ],
+    final serverModel = Provider.of<ServerModel>(context);
+    final pending = !client.authorized;
+    return Obx(() {
+      final selected =
+          serverModel.tabController.state.value.selected == widget.index;
+      final borderColor = pending
+          ? Colors.orange
+          : selected
+              ? MyTheme.accent
+              : MyTheme.color(context).border!;
+      return Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.background,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+              color: borderColor, width: pending || selected ? 1.5 : 1),
         ),
-      ),
-      margin: EdgeInsets.symmetric(horizontal: 5.0, vertical: 10.0),
-      padding: EdgeInsets.only(
-        top: 10.0,
-        bottom: 10.0,
-        left: 10.0,
-        right: 5.0,
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildClientAvatar().marginOnly(right: 10.0),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.start,
-              crossAxisAlignment: CrossAxisAlignment.start,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => serverModel.tabController.jumpTo(widget.index),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                FittedBox(
-                    child: Text(
-                  client.name,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 20,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  maxLines: 1,
-                )),
-                FittedBox(
-                  child: Text(
-                    "(${client.peerId})",
-                    style: TextStyle(color: Colors.white, fontSize: 14),
+                Icon(_typeIcon(), size: 22).marginOnly(right: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildTypeAndSources(serverModel),
+                      const SizedBox(height: 4),
+                      _buildStateLine(),
+                    ],
                   ),
                 ),
-                if (client.type_() == ClientType.terminal)
-                  FittedBox(
-                    child: Text(
-                      translate("Terminal"),
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
-                  ),
-                if (client.type_() == ClientType.file)
-                  FittedBox(
-                    child: Text(
-                      translate("File Transfer"),
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
-                  ),
-                if (client.type_() == ClientType.camera)
-                  FittedBox(
-                    child: Text(
-                      translate("View Camera"),
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
-                  ),
-                if (client.portForward.isNotEmpty)
-                  FittedBox(
-                    child: Text(
-                      "Port Forward: ${client.portForward}",
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
-                  ),
-                SizedBox(height: 10.0),
-                FittedBox(
-                    child: Row(
-                  children: [
-                    Text(
-                      client.authorized
-                          ? client.disconnected
-                              ? translate("Disconnected")
-                              : translate("Connected")
-                          : "${translate("Request access to your device")}...",
-                      style: TextStyle(color: Colors.white),
-                    ).marginOnly(right: 8.0),
-                    if (client.authorized)
-                      Obx(
-                        () => Text(
-                          formatDurationToTime(
-                            Duration(seconds: _time.value),
-                          ),
-                          style: TextStyle(color: Colors.white),
-                        ),
-                      )
-                  ],
-                ))
+                const SizedBox(width: 6),
+                _buildActions(context, serverModel),
               ],
             ),
           ),
-          Offstage(
-            offstage: !client.authorized ||
-                (client.type_() != ClientType.remote &&
-                    client.type_() != ClientType.file &&
-                    client.type_() != ClientType.camera),
-            child: IconButton(
-              onPressed: () => checkClickTime(client.id, () {
-                if (client.type_() == ClientType.file) {
-                  gFFI.chatModel.toggleCMFilePage();
-                } else {
-                  gFFI.chatModel
-                      .toggleCMChatPage(MessageKey(client.peerId, client.id));
-                }
-              }),
-              icon: SvgPicture.asset(client.type_() == ClientType.file
-                  ? 'assets/file_transfer.svg'
-                  : 'assets/chat2.svg'),
-              splashRadius: kDesktopIconButtonSplashRadius,
+        ),
+      );
+    });
+  }
+
+  // "Desktop · Monitor 1, Monitor 2" / "Camera · [USB Camera 👁]".
+  Widget _buildTypeAndSources(ServerModel serverModel) {
+    final children = <Widget>[
+      Text(_typeLabel(),
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+    ];
+    for (final source in client.sources) {
+      children.add(Text(" · ", style: TextStyle(color: MyTheme.darkGray)));
+      children.add(Flexible(
+        child: Text(
+          source.name,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13),
+        ),
+      ));
+      if (source.isCamera) {
+        final open = serverModel.isCameraPreviewOpen(source.index);
+        children.add(Tooltip(
+          message: translate("Show the camera feed being sent"),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => serverModel.openCameraPreview(source.index, source.name),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Icon(
+                open ? Icons.visibility : Icons.visibility_outlined,
+                size: 16,
+                color: open ? MyTheme.accent : null,
+              ),
             ),
-          )
+          ),
+        ));
+      }
+    }
+    return Row(mainAxisSize: MainAxisSize.min, children: children);
+  }
+
+  Widget _chip(String text, Color color, {IconData? icon}) {
+    return Container(
+      margin: const EdgeInsets.only(right: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) Icon(icon, size: 12, color: color).marginOnly(right: 3),
+          Text(text, style: TextStyle(fontSize: 11, color: color)),
         ],
       ),
     );
   }
 
-  @override
-  bool get wantKeepAlive => true;
-
-  Widget _buildClientAvatar() {
-    return buildAvatarWidget(
-          avatar: client.avatar,
-          size: 70,
-          borderRadius: 15,
-          fallback: _buildInitialAvatar(),
-        ) ??
-        _buildInitialAvatar();
+  Widget _buildStateLine() {
+    final chips = <Widget>[];
+    if (!client.authorized) {
+      chips.add(_chip(translate("Request access to your device"), Colors.orange,
+          icon: Icons.hourglass_top));
+    } else if (client.disconnected) {
+      chips.add(_chip(translate("Disconnected"), Colors.grey,
+          icon: Icons.link_off));
+    } else {
+      chips.add(Obx(() => _chip(
+          "${translate('Connected')} ${formatDurationToTime(Duration(seconds: _time.value))}",
+          Colors.green,
+          icon: Icons.link)));
+      if (client.inVoiceCall) {
+        chips.add(_chip(translate("Voice call"), MyTheme.accent,
+            icon: Icons.call));
+      } else if (client.incomingVoiceCall) {
+        chips.add(_chip(translate("Incoming voice call"), Colors.orange,
+            icon: Icons.ring_volume));
+      }
+      if (client.privacyMode) {
+        chips.add(_chip(translate("Privacy mode"), Colors.purple,
+            icon: Icons.visibility_off));
+      }
+    }
+    return Wrap(runSpacing: 2, children: chips);
   }
 
-  Widget _buildInitialAvatar() {
-    return Container(
-      width: 70,
-      height: 70,
-      alignment: Alignment.center,
+  Widget _smallButton(
+    BuildContext context, {
+    required String text,
+    required Color color,
+    IconData? icon,
+    GestureTapCallback? onTap,
+    GestureTapDownCallback? onTapDown,
+    String? tooltip,
+  }) {
+    final btn = Container(
+      height: 26,
+      margin: const EdgeInsets.only(left: 4),
       decoration: BoxDecoration(
-        color: str2color(client.name),
-        borderRadius: BorderRadius.circular(15.0),
-      ),
-      child: Text(
-        client.name.isNotEmpty ? client.name[0] : '?',
-        style: TextStyle(
-          fontWeight: FontWeight.bold,
-          color: Colors.white,
-          fontSize: 55,
-        ),
-      ),
-    );
-  }
-}
-
-class _PrivilegeBoard extends StatefulWidget {
-  final Client client;
-
-  const _PrivilegeBoard({Key? key, required this.client}) : super(key: key);
-
-  @override
-  State<StatefulWidget> createState() => _PrivilegeBoardState();
-}
-
-class _PrivilegeBoardState extends State<_PrivilegeBoard> {
-  late final client = widget.client;
-  Widget buildPermissionIcon(bool enabled, IconData iconData,
-      Function(bool)? onTap, String tooltipText,
-      {required bool canModify}) {
-    return Tooltip(
-      message: "$tooltipText: ${enabled ? "ON" : "OFF"}",
-      waitDuration: Duration.zero,
-      child: Container(
-        decoration: BoxDecoration(
-          color: enabled
-              ? (canModify ? MyTheme.accent : MyTheme.accent.withOpacity(0.6))
-              : Colors.grey[700],
-          borderRadius: BorderRadius.circular(10.0),
-        ),
-        padding: EdgeInsets.all(8.0),
-        child: InkWell(
-          onTap: canModify
-              ? () =>
-                  checkClickTime(widget.client.id, () => onTap?.call(!enabled))
-              : null,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
+          color: color, borderRadius: BorderRadius.circular(6)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: onTap == null ? null : () => checkClickTime(client.id, onTap),
+        onTapDown: onTapDown == null
+            ? null
+            : (d) => checkClickTime(client.id, () => onTapDown(d)),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
-                child: Icon(
-                  iconData,
-                  color: Colors.white,
-                ),
-              ),
+              if (icon != null)
+                Icon(icon, size: 14, color: Colors.white).marginOnly(right: 4),
+              Text(translate(text),
+                  style: const TextStyle(color: Colors.white, fontSize: 12)),
             ],
           ),
         ),
       ),
     );
+    return tooltip == null
+        ? btn
+        : Tooltip(message: translate(tooltip), child: btn);
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final crossAxisCount = 4;
-    final spacing = 10.0;
-    final canModifyPermission =
+  Widget _iconButton(IconData icon, String tooltip, VoidCallback onTap,
+      {Color? color, Widget? badge}) {
+    Widget btn = IconButton(
+      tooltip: translate(tooltip),
+      icon: Icon(icon, size: 18, color: color),
+      splashRadius: kDesktopIconButtonSplashRadius,
+      constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+      padding: EdgeInsets.zero,
+      onPressed: () => checkClickTime(client.id, onTap),
+    );
+    if (badge != null) {
+      btn = Stack(clipBehavior: Clip.none, children: [
+        btn,
+        Positioned(right: 0, top: 0, child: badge),
+      ]);
+    }
+    return btn;
+  }
+
+  Widget _buildActions(BuildContext context, ServerModel model) {
+    final canElevate = bind.cmCanElevate();
+    final showElevation = canElevate &&
+        model.showElevation &&
+        client.type_() == ClientType.remote;
+    final buttons = <Widget>[];
+
+    if (!client.authorized) {
+      final showAccept = model.approveMode != 'password';
+      if (showAccept && showElevation) {
+        buttons.add(_smallButton(context,
+            text: 'Accept and Elevate',
+            color: Colors.green[700]!,
+            icon: Icons.security_rounded,
+            tooltip: 'accept_and_elevate_btn_tooltip', onTap: () {
+          _accept(model);
+          _elevate(model);
+          windowManager.minimize();
+        }));
+      }
+      if (showAccept) {
+        buttons.add(_smallButton(context,
+            text: 'Accept', color: MyTheme.accent, icon: Icons.check,
+            onTap: () {
+          _accept(model);
+          windowManager.minimize();
+        }));
+      }
+      buttons.add(_smallButton(context,
+          text: 'Reject',
+          color: Colors.redAccent,
+          icon: Icons.close,
+          onTap: _disconnect));
+      return Row(mainAxisSize: MainAxisSize.min, children: buttons);
+    }
+
+    if (client.disconnected) {
+      buttons.add(_smallButton(context,
+          text: 'Close', color: MyTheme.accent, onTap: _close));
+      return Row(mainAxisSize: MainAxisSize.min, children: buttons);
+    }
+
+    if (client.incomingVoiceCall) {
+      buttons.add(_smallButton(context,
+          text: 'Accept',
+          color: MyTheme.accent,
+          icon: Icons.call_rounded,
+          onTap: () => _handleVoiceCall(true)));
+      buttons.add(_smallButton(context,
+          text: 'Dismiss',
+          color: Colors.red,
+          icon: Icons.phone_disabled_rounded,
+          onTap: () => _handleVoiceCall(false)));
+    } else if (client.inVoiceCall) {
+      // The audio-input chooser needs the tap position for its menu (upstream's "Audio
+      // input" button), hence a GestureDetector rather than _iconButton.
+      buttons.add(GestureDetector(
+        onTapDown: (details) => checkClickTime(
+            client.id, () => _showAudioInputMenu(context, details)),
+        child: Tooltip(
+          message: translate('Audio input'),
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: Icon(Icons.mic, size: 18, color: MyTheme.accent),
+          ),
+        ),
+      ));
+      buttons.add(_smallButton(context,
+          text: 'Stop voice call',
+          color: Colors.red,
+          icon: Icons.call_end_rounded,
+          onTap: _closeVoiceCall));
+    }
+    if (client.fromSwitch) {
+      buttons.add(_smallButton(context,
+          text: 'Switch Sides',
+          color: Colors.purple,
+          icon: Icons.reply,
+          onTap: _switchBack));
+    }
+    if (showElevation) {
+      buttons.add(_smallButton(context,
+          text: 'Elevate',
+          color: MyTheme.accent,
+          icon: Icons.security_rounded, onTap: () {
+        _elevate(model);
+        windowManager.minimize();
+      }));
+    }
+    final type = client.type_();
+    if (type == ClientType.remote ||
+        type == ClientType.camera ||
+        type == ClientType.file) {
+      final isFile = type == ClientType.file;
+      buttons.add(_iconButton(
+        isFile ? Icons.folder_outlined : Icons.chat_outlined,
+        isFile ? 'File Transfer' : 'Chat',
+        () {
+          model.tabController.jumpTo(widget.index);
+          if (isFile) {
+            gFFI.chatModel.toggleCMFilePage();
+          } else {
+            gFFI.chatModel
+                .toggleCMChatPage(MessageKey(client.peerId, client.id));
+          }
+        },
+        badge: isFile
+            ? null
+            : unreadMessageCountBuilder(client.unreadChatMessageCount,
+                size: 12, fontSize: 8),
+      ));
+    }
+    if (type == ClientType.remote || type == ClientType.camera) {
+      buttons.add(_buildPermissionsMenu());
+    }
+    buttons.add(_iconButton(Icons.link_off_rounded, 'Disconnect', _disconnect,
+        color: Colors.redAccent));
+    return Row(mainAxisSize: MainAxisSize.min, children: buttons);
+  }
+
+  // Upstream's permission board, folded into a "⋯" menu per row.
+  Widget _buildPermissionsMenu() {
+    final canModify =
         bind.mainGetBuildinOption(key: kOptionEnablePermChangeInAcceptWindow) !=
             'N';
-    return Container(
-      width: double.infinity,
-      height: 160.0,
-      margin: EdgeInsets.all(5.0),
-      padding: EdgeInsets.all(5.0),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10.0),
-        color: Theme.of(context).colorScheme.background,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.2),
-            spreadRadius: 1,
-            blurRadius: 1,
-            offset: Offset(0, 1.5),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Text(
-            translate("Permissions"),
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center,
-          ).marginOnly(left: 4.0, bottom: 8.0),
-          Expanded(
-            child: GridView.count(
-              crossAxisCount: crossAxisCount,
-              padding: EdgeInsets.symmetric(horizontal: spacing),
-              mainAxisSpacing: spacing,
-              crossAxisSpacing: spacing,
-              children: client.type_() == ClientType.camera
-                  ? [
-                      buildPermissionIcon(
-                        client.audio,
-                        Icons.volume_up_rounded,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "audio",
-                              enabled: enabled);
-                          setState(() {
-                            client.audio = enabled;
-                          });
-                        },
-                        translate('Enable audio'),
-                        canModify: canModifyPermission,
-                      ),
-                      buildPermissionIcon(
-                        client.recording,
-                        Icons.videocam_rounded,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "recording",
-                              enabled: enabled);
-                          setState(() {
-                            client.recording = enabled;
-                          });
-                        },
-                        translate('Enable recording session'),
-                        canModify: canModifyPermission,
-                      ),
-                    ]
-                  : [
-                      buildPermissionIcon(
-                        client.keyboard,
-                        Icons.keyboard,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "keyboard",
-                              enabled: enabled);
-                          setState(() {
-                            client.keyboard = enabled;
-                          });
-                        },
-                        translate('Enable keyboard/mouse'),
-                        canModify: canModifyPermission,
-                      ),
-                      buildPermissionIcon(
-                        client.clipboard,
-                        Icons.assignment_rounded,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "clipboard",
-                              enabled: enabled);
-                          setState(() {
-                            client.clipboard = enabled;
-                          });
-                        },
-                        translate('Enable clipboard'),
-                        canModify: canModifyPermission,
-                      ),
-                      buildPermissionIcon(
-                        client.audio,
-                        Icons.volume_up_rounded,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "audio",
-                              enabled: enabled);
-                          setState(() {
-                            client.audio = enabled;
-                          });
-                        },
-                        translate('Enable audio'),
-                        canModify: canModifyPermission,
-                      ),
-                      buildPermissionIcon(
-                        client.file,
-                        Icons.upload_file_rounded,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "file",
-                              enabled: enabled);
-                          setState(() {
-                            client.file = enabled;
-                          });
-                        },
-                        translate('Enable file copy and paste'),
-                        canModify: canModifyPermission,
-                      ),
-                      buildPermissionIcon(
-                        client.restart,
-                        Icons.restart_alt_rounded,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "restart",
-                              enabled: enabled);
-                          setState(() {
-                            client.restart = enabled;
-                          });
-                        },
-                        translate('Enable remote restart'),
-                        canModify: canModifyPermission,
-                      ),
-                      buildPermissionIcon(
-                        client.recording,
-                        Icons.videocam_rounded,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "recording",
-                              enabled: enabled);
-                          setState(() {
-                            client.recording = enabled;
-                          });
-                        },
-                        translate('Enable recording session'),
-                        canModify: canModifyPermission,
-                      ),
-                      // only windows support block input
-                      if (isWindows)
-                        buildPermissionIcon(
-                          client.blockInput,
-                          Icons.block,
-                          (enabled) {
-                            bind.cmSwitchPermission(
-                                connId: client.id,
-                                name: "block_input",
-                                enabled: enabled);
-                            setState(() {
-                              client.blockInput = enabled;
-                            });
-                          },
-                          translate('Enable blocking user input'),
-                          canModify: canModifyPermission,
-                        ),
-                      if (bind.mainSupportedPrivacyModeImpls() != '[]')
-                        buildPermissionIcon(
-                          client.privacyMode,
-                          Icons.visibility_off,
-                          (enabled) {
-                            bind.cmSwitchPermission(
-                                connId: client.id,
-                                name: "privacy_mode",
-                                enabled: enabled);
-                            setState(() {
-                              client.privacyMode = enabled;
-                            });
-                          },
-                          translate('Enable privacy mode'),
-                          canModify: canModifyPermission,
-                        )
-                    ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-const double buttonBottomMargin = 8;
-
-class _CmControlPanel extends StatelessWidget {
-  final Client client;
-
-  const _CmControlPanel({Key? key, required this.client}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return client.authorized
-        ? client.disconnected
-            ? buildDisconnected(context)
-            : buildAuthorized(context)
-        : buildUnAuthorized(context);
-  }
-
-  buildAuthorized(BuildContext context) {
-    final bool canElevate = bind.cmCanElevate();
-    final model = Provider.of<ServerModel>(context);
-    final showElevation = canElevate &&
-        model.showElevation &&
-        client.type_() == ClientType.remote;
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        Offstage(
-          offstage: !client.inVoiceCall,
-          child: Row(
-            children: [
-              Expanded(
-                child: buildButton(context,
-                    color: MyTheme.accent,
-                    onClick: null, onTapDown: (details) async {
-                  final devicesInfo =
-                      await AudioInput.getDevicesInfo(true, true);
-                  List<String> devices = devicesInfo['devices'] as List<String>;
-                  if (devices.isEmpty) {
-                    msgBox(
-                      gFFI.sessionId,
-                      'custom-nocancel-info',
-                      'Prompt',
-                      'no_audio_input_device_tip',
-                      '',
-                      gFFI.dialogManager,
-                    );
-                    return;
-                  }
-
-                  String currentDevice = devicesInfo['current'] as String;
-                  final x = details.globalPosition.dx;
-                  final y = details.globalPosition.dy;
-                  final position = RelativeRect.fromLTRB(x, y, x, y);
-                  showMenu(
-                    context: context,
-                    position: position,
-                    items: devices
-                        .map((d) => PopupMenuItem<String>(
-                              value: d,
-                              height: 18,
-                              padding: EdgeInsets.zero,
-                              onTap: () => AudioInput.setDevice(d, true, true),
-                              child: IgnorePointer(
-                                  child: RadioMenuButton(
-                                value: d,
-                                groupValue: currentDevice,
-                                onChanged: (v) {
-                                  if (v != null)
-                                    AudioInput.setDevice(v, true, true);
-                                },
-                                child: Container(
-                                  child: Text(
-                                    d,
-                                    overflow: TextOverflow.ellipsis,
-                                    maxLines: 1,
-                                  ),
-                                  constraints: BoxConstraints(
-                                      maxWidth:
-                                          kConnectionManagerWindowSizeClosedChat
-                                                  .width -
-                                              80),
-                                ),
-                              )),
-                            ))
-                        .toList(),
-                  );
-                },
-                    icon: Icon(
-                      Icons.call_rounded,
-                      color: Colors.white,
-                      size: 14,
-                    ),
-                    text: "Audio input",
-                    textColor: Colors.white),
-              ),
-              Expanded(
-                child: buildButton(
-                  context,
-                  color: Colors.red,
-                  onClick: () => closeVoiceCall(),
-                  icon: Icon(
-                    Icons.call_end_rounded,
-                    color: Colors.white,
-                    size: 14,
-                  ),
-                  text: "Stop voice call",
-                  textColor: Colors.white,
-                ),
-              )
-            ],
-          ),
-        ),
-        Offstage(
-          offstage: !client.incomingVoiceCall,
-          child: Row(
-            children: [
-              Expanded(
-                child: buildButton(context,
-                    color: MyTheme.accent,
-                    onClick: () => handleVoiceCall(true),
-                    icon: Icon(
-                      Icons.call_rounded,
-                      color: Colors.white,
-                      size: 14,
-                    ),
-                    text: "Accept",
-                    textColor: Colors.white),
-              ),
-              Expanded(
-                child: buildButton(
-                  context,
-                  color: Colors.red,
-                  onClick: () => handleVoiceCall(false),
-                  icon: Icon(
-                    Icons.phone_disabled_rounded,
-                    color: Colors.white,
-                    size: 14,
-                  ),
-                  text: "Dismiss",
-                  textColor: Colors.white,
-                ),
-              )
-            ],
-          ),
-        ),
-        Offstage(
-          offstage: !client.fromSwitch,
-          child: buildButton(context,
-              color: Colors.purple,
-              onClick: () => handleSwitchBack(context),
-              icon: Icon(Icons.reply, color: Colors.white),
-              text: "Switch Sides",
-              textColor: Colors.white),
-        ),
-        Offstage(
-          offstage: !showElevation,
-          child: buildButton(
-            context,
-            color: MyTheme.accent,
-            onClick: () {
-              handleElevate(context);
-              windowManager.minimize();
-            },
-            icon: Icon(
-              Icons.security_rounded,
-              color: Colors.white,
-              size: 14,
-            ),
-            text: 'Elevate',
-            textColor: Colors.white,
-          ),
-        ),
-        Row(
-          children: [
-            Expanded(
-              child: buildButton(context,
-                  color: Colors.redAccent,
-                  onClick: handleDisconnect,
-                  text: 'Disconnect',
-                  icon: Icon(
-                    Icons.link_off_rounded,
-                    color: Colors.white,
-                    size: 14,
-                  ),
-                  textColor: Colors.white),
-            ),
-          ],
-        )
-      ],
-    ).marginOnly(bottom: buttonBottomMargin);
-  }
-
-  buildDisconnected(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Expanded(
-            child: buildButton(context,
-                color: MyTheme.accent,
-                onClick: handleClose,
-                text: 'Close',
-                textColor: Colors.white)),
-      ],
-    ).marginOnly(bottom: buttonBottomMargin);
-  }
-
-  buildUnAuthorized(BuildContext context) {
-    final bool canElevate = bind.cmCanElevate();
-    final model = Provider.of<ServerModel>(context);
-    final showElevation = canElevate &&
-        model.showElevation &&
-        client.type_() == ClientType.remote;
-    final showAccept = model.approveMode != 'password';
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        Offstage(
-          offstage: !showElevation || !showAccept,
-          child: buildButton(context, color: Colors.green[700], onClick: () {
-            handleAccept(context);
-            handleElevate(context);
-            windowManager.minimize();
-          },
-              text: 'Accept and Elevate',
-              icon: Icon(
-                Icons.security_rounded,
-                color: Colors.white,
-                size: 14,
-              ),
-              textColor: Colors.white,
-              tooltip: 'accept_and_elevate_btn_tooltip'),
-        ),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (showAccept)
-              Expanded(
-                child: Column(
-                  children: [
-                    buildButton(
-                      context,
-                      color: MyTheme.accent,
-                      onClick: () {
-                        handleAccept(context);
-                        windowManager.minimize();
-                      },
-                      text: 'Accept',
-                      textColor: Colors.white,
-                    ),
-                  ],
-                ),
-              ),
-            Expanded(
-              child: buildButton(
-                context,
-                color: Colors.transparent,
-                border: Border.all(color: Colors.grey),
-                onClick: handleDisconnect,
-                text: 'Cancel',
-                textColor: null,
-              ),
-            ),
-          ],
-        ),
-      ],
-    ).marginOnly(bottom: buttonBottomMargin);
-  }
-
-  Widget buildButton(BuildContext context,
-      {required Color? color,
-      GestureTapCallback? onClick,
-      Widget? icon,
-      BoxBorder? border,
-      required String text,
-      required Color? textColor,
-      String? tooltip,
-      GestureTapDownCallback? onTapDown}) {
-    assert(!(onClick == null && onTapDown == null));
-    Widget textWidget;
-    if (icon != null) {
-      textWidget = Text(
-        translate(text),
-        style: TextStyle(color: textColor),
-        textAlign: TextAlign.center,
-      );
+    final items = <_PermItem>[];
+    if (client.type_() == ClientType.camera) {
+      items.add(_PermItem('audio', 'Enable audio', Icons.volume_up_rounded,
+          () => client.audio, (v) => client.audio = v));
+      items.add(_PermItem('recording', 'Enable recording session',
+          Icons.videocam_rounded, () => client.recording, (v) => client.recording = v));
     } else {
-      textWidget = Expanded(
-        child: Text(
-          translate(text),
-          style: TextStyle(color: textColor),
-          textAlign: TextAlign.center,
-        ),
-      );
+      items.add(_PermItem('keyboard', 'Enable keyboard/mouse', Icons.keyboard,
+          () => client.keyboard, (v) => client.keyboard = v));
+      items.add(_PermItem('clipboard', 'Enable clipboard',
+          Icons.assignment_rounded, () => client.clipboard, (v) => client.clipboard = v));
+      items.add(_PermItem('audio', 'Enable audio', Icons.volume_up_rounded,
+          () => client.audio, (v) => client.audio = v));
+      items.add(_PermItem('file', 'Enable file copy and paste',
+          Icons.upload_file_rounded, () => client.file, (v) => client.file = v));
+      items.add(_PermItem('restart', 'Enable remote restart',
+          Icons.restart_alt_rounded, () => client.restart, (v) => client.restart = v));
+      items.add(_PermItem('recording', 'Enable recording session',
+          Icons.videocam_rounded, () => client.recording, (v) => client.recording = v));
+      if (isWindows) {
+        items.add(_PermItem('block_input', 'Enable blocking user input',
+            Icons.block, () => client.blockInput, (v) => client.blockInput = v));
+      }
+      if (bind.mainSupportedPrivacyModeImpls() != '[]') {
+        items.add(_PermItem('privacy_mode', 'Enable privacy mode',
+            Icons.visibility_off, () => client.privacyMode, (v) => client.privacyMode = v));
+      }
     }
-    final borderRadius = BorderRadius.circular(10.0);
-    final btn = Container(
-      height: 28,
-      decoration: BoxDecoration(
-          color: color, borderRadius: borderRadius, border: border),
-      child: InkWell(
-        borderRadius: borderRadius,
-        onTap: () {
-          if (onClick == null) return;
-          checkClickTime(client.id, onClick);
-        },
-        onTapDown: (details) {
-          if (onTapDown == null) return;
-          checkClickTime(client.id, () {
-            onTapDown.call(details);
-          });
-        },
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Offstage(offstage: icon == null, child: icon).marginOnly(right: 5),
-            textWidget,
-          ],
-        ),
-      ),
+    return PopupMenuButton<_PermItem>(
+      tooltip: translate('Permissions'),
+      icon: const Icon(Icons.more_horiz, size: 18),
+      splashRadius: kDesktopIconButtonSplashRadius,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+      enabled: canModify,
+      itemBuilder: (context) => items
+          .map((item) => CheckedPopupMenuItem<_PermItem>(
+                value: item,
+                checked: item.get(),
+                child: Row(children: [
+                  Icon(item.icon, size: 16).marginOnly(right: 8),
+                  Text(translate(item.label)),
+                ]),
+              ))
+          .toList(),
+      onSelected: (item) => checkClickTime(client.id, () {
+        final enabled = !item.get();
+        bind.cmSwitchPermission(
+            connId: client.id, name: item.name, enabled: enabled);
+        setState(() => item.set(enabled));
+      }),
     );
-    return (tooltip != null
-            ? Tooltip(
-                message: translate(tooltip),
-                child: btn,
-              )
-            : btn)
-        .marginAll(4);
   }
 
-  void handleDisconnect() {
+  void _showAudioInputMenu(BuildContext context, TapDownDetails details) async {
+    final devicesInfo = await AudioInput.getDevicesInfo(true, true);
+    List<String> devices = devicesInfo['devices'] as List<String>;
+    if (devices.isEmpty) {
+      msgBox(
+        gFFI.sessionId,
+        'custom-nocancel-info',
+        'Prompt',
+        'no_audio_input_device_tip',
+        '',
+        gFFI.dialogManager,
+      );
+      return;
+    }
+    String currentDevice = devicesInfo['current'] as String;
+    final x = details.globalPosition.dx;
+    final y = details.globalPosition.dy;
+    final position = RelativeRect.fromLTRB(x, y, x, y);
+    if (!context.mounted) return;
+    showMenu(
+      context: context,
+      position: position,
+      items: devices
+          .map((d) => PopupMenuItem<String>(
+                value: d,
+                height: 18,
+                padding: EdgeInsets.zero,
+                onTap: () => AudioInput.setDevice(d, true, true),
+                child: IgnorePointer(
+                    child: RadioMenuButton(
+                  value: d,
+                  groupValue: currentDevice,
+                  onChanged: (v) {
+                    if (v != null) AudioInput.setDevice(v, true, true);
+                  },
+                  child: Container(
+                    child: Text(
+                      d,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                    constraints: BoxConstraints(
+                        maxWidth:
+                            kConnectionManagerWindowSizeClosedChat.width - 80),
+                  ),
+                )),
+              ))
+          .toList(),
+    );
+  }
+
+  void _disconnect() {
     bind.cmCloseConnection(connId: client.id);
   }
 
-  void handleAccept(BuildContext context) {
-    final model = Provider.of<ServerModel>(context, listen: false);
+  void _accept(ServerModel model) {
     model.sendLoginResponse(client, true);
   }
 
-  void handleElevate(BuildContext context) {
-    final model = Provider.of<ServerModel>(context, listen: false);
+  void _elevate(ServerModel model) {
     model.setShowElevation(false);
     bind.cmElevatePortable(connId: client.id);
   }
 
-  void handleClose() async {
+  void _close() async {
     await bind.cmRemoveDisconnectedConnection(connId: client.id);
     if (await bind.cmGetClientsLength() == 0) {
       windowManager.close();
     }
   }
 
-  void handleSwitchBack(BuildContext context) {
+  void _switchBack() {
     bind.cmSwitchBack(connId: client.id);
   }
 
-  void handleVoiceCall(bool accept) {
+  void _handleVoiceCall(bool accept) {
     bind.cmHandleIncomingVoiceCall(id: client.id, accept: accept);
   }
 
-  void closeVoiceCall() {
+  void _closeVoiceCall() {
     bind.cmCloseVoiceCall(id: client.id);
   }
+}
+
+class _PermItem {
+  final String name;
+  final String label;
+  final IconData icon;
+  final bool Function() get;
+  final void Function(bool) set;
+
+  _PermItem(this.name, this.label, this.icon, this.get, this.set);
 }
 
 void checkClickTime(int id, Function() callback) async {

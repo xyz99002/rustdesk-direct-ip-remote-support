@@ -147,6 +147,9 @@ pub struct Client {
     pub from_switch: bool,
     pub in_voice_call: bool,
     pub incoming_voice_call: bool,
+    /// Fork: monitors/cameras this connection currently receives (`Data::VideoSources`).
+    #[cfg(not(any(target_os = "ios")))]
+    pub sources: Vec<ipc::VideoSourceInfo>,
     #[serde(skip)]
     #[cfg(not(any(target_os = "ios")))]
     tx: UnboundedSender<Data>,
@@ -196,6 +199,12 @@ pub trait InvokeUiCM: Send + Clone + 'static + Sized {
     fn update_voice_call_state(&self, client: &Client);
 
     fn file_transfer_log(&self, action: &str, log: &str);
+
+    /// Fork: `client.sources` changed (what this local is watching).
+    fn update_video_sources(&self, client: &Client);
+
+    /// Fork: one base64 JPEG preview frame of camera `index` for the CM's preview window.
+    fn camera_preview_frame(&self, index: usize, width: usize, height: usize, jpeg: &str);
 }
 
 impl<T: InvokeUiCM> Deref for ConnectionManager<T> {
@@ -259,6 +268,8 @@ impl<T: InvokeUiCM> ConnectionManager<T> {
             tx,
             in_voice_call: false,
             incoming_voice_call: false,
+            #[cfg(not(any(target_os = "ios")))]
+            sources: Vec::new(),
         };
         CLIENTS
             .write()
@@ -344,6 +355,31 @@ impl<T: InvokeUiCM> ConnectionManager<T> {
             client.in_voice_call = false;
             self.ui_handler.update_voice_call_state(client);
         }
+    }
+
+    // Fork: the connection reported a new set of monitors/cameras it is streaming.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    fn video_sources_changed(&self, id: i32, sources: Vec<ipc::VideoSourceInfo>) {
+        if let Some(client) = CLIENTS.write().unwrap().get_mut(&id) {
+            if client.sources != sources {
+                client.sources = sources;
+                self.ui_handler.update_video_sources(client);
+            }
+        }
+    }
+}
+
+/// Fork: ask the server to start/stop camera preview frames for camera `index`. The request is
+/// relayed over every live connection's pipe; the server keeps whichever arrived last, and the
+/// CM re-issues the request whenever its client list changes, so a preview survives the
+/// relaying connection going away as long as any connection is still up.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn set_camera_preview(index: usize, enable: bool) {
+    for client in CLIENTS.read().unwrap().values() {
+        if client.disconnected {
+            continue;
+        }
+        allow_err!(client.tx.send(Data::CameraPreview { index, enable }));
     }
 }
 
@@ -661,6 +697,12 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                                 }
                                 Data::CloseVoiceCall(reason) => {
                                     self.cm.voice_call_closed(self.conn_id, reason.as_str());
+                                }
+                                Data::VideoSources(sources) => {
+                                    self.cm.video_sources_changed(self.conn_id, sources);
+                                }
+                                Data::CameraPreviewFrame { index, width, height, jpeg } => {
+                                    self.cm.ui_handler.camera_preview_frame(index, width, height, &jpeg);
                                 }
                                 #[cfg(target_os = "windows")]
                                 Data::ClipboardNonFile(_) => {

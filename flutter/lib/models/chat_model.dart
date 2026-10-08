@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:dash_chat_2/dash_chat_2.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -270,11 +271,11 @@ class ChatModel with ChangeNotifier {
   showChatPage(MessageKey key) async {
     if (isDesktop) {
       if (isConnManager) {
-        if (gFFI.chatModel.currentKey != key) {
-          gFFI.chatModel.changeCurrentKey(key);
-        }
-        if (_isChatOverlayHide()) {
-          await toggleChatOverlay(type: ChatPageType.desktopCM);
+        // Upstream behavior restored (2026-10-07): CM chat is the side panel again, now that
+        // the CM is a list with one row per connection and nothing is hidden behind tabs
+        // (see docs/UPSTREAM_UPGRADE_GUIDE.md "Connection Manager List View").
+        if (!_isShowCMSidePage) {
+          await toggleCMChatPage(key);
         }
       } else {
         if (_isChatOverlayHide()) {
@@ -290,25 +291,16 @@ class ChatModel with ChangeNotifier {
     }
   }
 
-  // Fork: on the connection-manager side, chat now opens as a floating overlay window (see
-  // ConnectionManagerState._blockableOverlayState's doc comment, desktop/pages/server_page.dart)
-  // instead of widening the CM window into a side panel via toggleCMSidePage() - found via real
-  // testing that the side-panel approach could end up effectively hiding a still-pending accept
-  // prompt when switching client tabs while chat was open. The method name/call sites are
-  // unchanged; only what it actually does changed.
+  // Upstream behavior (side panel). The fork briefly routed CM chat through the floating
+  // overlay (2026-10-01) because the old tab layout could hide a pending accept prompt behind
+  // the chat; the list-form CM (2026-10-07) removed that problem, so this is upstream's code
+  // again. The side panel always shows the chat of the *selected* row; the row's name (id) is
+  // shown in the panel header (server_page.dart buildSidePage).
   toggleCMChatPage(MessageKey key) async {
     if (gFFI.chatModel.currentKey != key) {
       gFFI.chatModel.changeCurrentKey(key);
     }
-    // changeCurrentKey()'s own unread-clear (mobileClearClientUnread) is a no-op on desktop -
-    // the old toggleCMSidePage()-based path used to clear this itself when opening; do the same
-    // here so the chat icon's unread badge still clears when you actually open the chat.
-    final client = parent.target?.serverModel.clients
-        .firstWhereOrNull((c) => c.id == key.connId);
-    if (client != null) {
-      client.unreadChatMessageCount.value = 0;
-    }
-    await toggleChatOverlay(type: ChatPageType.desktopCM);
+    await toggleCMSidePage();
   }
 
   toggleCMFilePage() async {
@@ -319,12 +311,19 @@ class ChatModel with ChangeNotifier {
   toggleCMSidePage() async {
     if (_togglingCMSidePage) return false;
     _togglingCMSidePage = true;
+    // Fork: the CM window is resizable and auto-grows with its rows, so only the width
+    // changes when the side panel opens/closes; the current height is kept. Upstream resets
+    // to the fixed kConnectionManagerWindowSize{Closed,Open}Chat sizes here.
+    final currentSize = await windowManager.getSize();
     if (_isShowCMSidePage) {
       _isShowCMSidePage = !_isShowCMSidePage;
       notifyListeners();
       await windowManager.show();
       await windowManager.setSizeAlignment(
-          kConnectionManagerWindowSizeClosedChat, Alignment.topRight);
+          Size(kConnectionManagerWindowSizeClosedChat.width,
+              max(currentSize.height,
+                  kConnectionManagerWindowSizeClosedChat.height)),
+          Alignment.topRight);
     } else {
       final currentSelectedTab =
           gFFI.serverModel.tabController.state.value.selectedTabInfo;
@@ -336,7 +335,10 @@ class ChatModel with ChangeNotifier {
       requestChatInputFocus();
       await windowManager.show();
       await windowManager.setSizeAlignment(
-          kConnectionManagerWindowSizeOpenChat, Alignment.topRight);
+          Size(kConnectionManagerWindowSizeOpenChat.width,
+              max(currentSize.height,
+                  kConnectionManagerWindowSizeOpenChat.height)),
+          Alignment.topRight);
       _isShowCMSidePage = !_isShowCMSidePage;
       notifyListeners();
     }
@@ -349,9 +351,11 @@ class ChatModel with ChangeNotifier {
     if (key.connId == clientModeID) {
       peerName = parent.target?.ffiModel.pi.username;
     } else {
+      // Fork: CM side - identify the sender as "Name (id)" so two locals with the same
+      // display name are still told apart in the chat (see ChatPage's author line).
       peerName = parent.target?.serverModel.clients
           .firstWhereOrNull((client) => client.peerId == key.peerId)
-          ?.name;
+          ?.displayName;
     }
     if (!_messages.containsKey(key)) {
       final chatUser = ChatUser(
@@ -453,7 +457,8 @@ class ChatModel with ChangeNotifier {
           mobileUpdateUnreadSum();
         }
       }
-      chatUser = ChatUser(id: client.peerId, firstName: client.name);
+      // Fork: "Name (id)" author on every incoming CM message (see changeCurrentKey).
+      chatUser = ChatUser(id: client.peerId, firstName: client.displayName);
     }
     insertMessage(messagekey,
         ChatMessage(text: text, user: chatUser, createdAt: DateTime.now()));

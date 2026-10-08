@@ -1751,6 +1751,15 @@ pub fn cm_close_voice_call(id: i32) {
     crate::ui_cm_interface::close_voice_call(id);
 }
 
+// Fork: open/close the connection manager's live preview of camera `index` (see
+// ServerModel.openCameraPreview in flutter/lib/models/server_model.dart).
+pub fn cm_set_camera_preview(index: i32, enable: bool) {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if index >= 0 {
+        crate::ui_cm_interface::set_camera_preview(index as usize, enable);
+    }
+}
+
 pub fn set_voice_call_input_device(_is_cm: bool, _device: String) {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if _is_cm {

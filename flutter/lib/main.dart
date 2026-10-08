@@ -10,6 +10,7 @@ import 'package:flutter_hbb/common/widgets/overlay.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/pages/install_page.dart';
 import 'package:flutter_hbb/desktop/pages/server_page.dart';
+import 'package:flutter_hbb/desktop/screen/desktop_camera_preview_screen.dart';
 import 'package:flutter_hbb/desktop/screen/desktop_file_transfer_screen.dart';
 import 'package:flutter_hbb/desktop/screen/desktop_view_camera_screen.dart';
 import 'package:flutter_hbb/desktop/screen/desktop_port_forward_screen.dart';
@@ -99,6 +100,15 @@ Future<void> main(List<String> args) async {
           argument,
           kAppTypeDesktopTerminal,
         );
+        break;
+      case WindowType.CameraPreview:
+        // Fork: opened by the connection manager (same process as the CM main window).
+        desktopType = DesktopType.cameraPreview;
+        runMultiWindow(
+          argument,
+          kAppTypeDesktopCameraPreview,
+        );
+        break;
       default:
         break;
     }
@@ -230,6 +240,16 @@ void runMultiWindow(
         params: argument,
       );
       break;
+    case kAppTypeDesktopCameraPreview:
+      // Fork: a plain, natively framed window (no custom tab bar), so it can be minimized,
+      // moved and resized like any other window while the CM stays where it is.
+      if (!isMacOS) {
+        WindowController.fromWindowId(kWindowId!).showTitleBar(true);
+      }
+      widget = DesktopCameraPreviewScreen(
+        params: argument,
+      );
+      break;
     default:
       // no such appType
       exit(0);
@@ -279,6 +299,9 @@ void runMultiWindow(
     case kAppTypeDesktopTerminal:
       await restoreWindowPosition(WindowType.Terminal, windowId: kWindowId!);
       break;
+    case kAppTypeDesktopCameraPreview:
+      // Fork: no saved position; newCameraPreview() already sized and centered it.
+      break;
     default:
       // no such appType
       exit(0);
@@ -301,7 +324,8 @@ void runConnectionManagerScreen() async {
   } else {
     await showCmWindow(isStartup: true);
   }
-  setResizable(false);
+  // Fork: resizable (see showCmWindow); upstream calls setResizable(false) here.
+  setResizable(true);
   // Start the uni links handler and redirect links to Native, not for Flutter.
   listenUniLinks(handleByFlutter: false);
 }
@@ -322,6 +346,10 @@ showCmWindow({bool isStartup = false}) async {
     // ensure initial window size to be changed
     await windowManager.setSizeAlignment(
         kConnectionManagerWindowSizeClosedChat, Alignment.topRight);
+    // Fork: the list-form CM grows with its rows and the user may resize it (see
+    // ConnectionManagerState._fitWindowHeight in desktop/pages/server_page.dart); upstream
+    // keeps it fixed at `setResizable(false)` in runConnectionManagerScreen().
+    setResizable(true);
     _isCmReadyToShow = true;
   } else if (_isCmReadyToShow) {
     if (await windowManager.getOpacity() != 1) {

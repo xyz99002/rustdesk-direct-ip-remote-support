@@ -736,7 +736,132 @@ independent — neither triggers the other. **Upgrade check**: if a future upstr
 how Support-style camera sessions are initiated, make sure this fork's `onSupport()` doesn't
 regain an implicit second connect call.
 
-### Connection Manager Chat: Floating Window Instead of Side Panel (fixed 2026-10-01, found via real testing)
+### Connection Manager List View, Chat Sender Attribution, Video Sources and Camera Preview (implemented 2026-10-07)
+Verify, on any upstream merge that touches `flutter/lib/desktop/pages/server_page.dart`,
+`flutter/lib/models/server_model.dart`, `flutter/lib/models/chat_model.dart`,
+`flutter/lib/common/widgets/chat_page.dart`, `flutter/lib/main.dart`,
+`flutter/lib/utils/multi_window_manager.dart`, `src/ipc.rs` (`Data`), `src/ui_cm_interface.rs`
+(`Client`, `InvokeUiCM`), `src/server/connection.rs` (subscription paths), `src/server.rs`
+(`is_video_service_name`/`get_subbed_displays_count`) or `src/server/video_service.rs`'s capture
+loop:
+- **Why**: with several locals connected to one remote, upstream's CM (one tab per connection,
+  a 300 px card with a permission grid) hid everything but the selected connection, gave no way
+  to tell two locals with the same display name apart in chat, never said which monitor/camera
+  a local was watching, and offered no way to see what a camera was sending (monitors are
+  visible on the remote's own screen; a camera feed is not). This change addresses all four
+  (product decisions: pop-up preview for cameras only; no fixed CM height; desktop only).
+- **CM list view** (`server_page.dart`, rewritten): `ConnectionManagerState.build()` renders a
+  `ListView` of `_GroupHeader` (avatar + `Client.displayName` = `"Name (id)"`, one per peer id,
+  groups with a pending request sorted first) and `_ClientRow` (one per connection: type icon
+  and label — "Desktop"/"Camera"/"File Transfer"/"Terminal"/"Port Forward" — followed by
+  ` · <source names>`, a state line of chips — pending / Connected hh:mm:ss / Voice call /
+  Incoming voice call / Privacy mode / Disconnected — and inline actions: Accept[+Elevate] /
+  Reject when pending; Accept/Dismiss call, Audio input + Stop voice call, Switch Sides,
+  Elevate, Chat (with unread badge) or File Transfer, a "⋯" permissions menu
+  (`_buildPermissionsMenu`, upstream's `_PrivilegeBoard` as `CheckedPopupMenuItem`s), and
+  Disconnect; Close when disconnected). Every action calls the same `bind.cm*` function the
+  upstream card called — no backend behavior changed. Upstream's `_CmHeader`, `_PrivilegeBoard`,
+  `_CmControlPanel` and `buildConnectionCard()` are gone.
+  - **`DesktopTabController` is still the selection state**: `ServerModel._addTab()` still
+    registers a (never rendered, `page: Offstage()`) tab per client so `tabController.onSelected`
+    keeps driving the chat key, window title and `cmFileModel.updateCurrentClientId`; rows call
+    `tabController.jumpTo(index)` on tap and `jumpToByKey` once after they are first built (what
+    upstream's `_CmHeader.initState` did). `ServerModel` is otherwise unchanged in how it adds/
+    removes clients and tabs; `chat_model.dart`'s unread/`selectedTabInfo` logic is untouched.
+  - **Window size**: `kConnectionManagerWindowSizeClosedChat`/`OpenChat` (`consts.dart`) are now
+    560×360 / 940×360 (were 300×490 / 700×490) and are only the initial/minimum size; the window
+    is resizable (`setResizable(true)` in `runConnectionManagerScreen()` and `showCmWindow()`,
+    where upstream calls `setResizable(false)`) and `_fitWindowHeight()` grows it with the row
+    count up to `kConnectionManagerWindowMaxAutoHeight` (760), after which the list scrolls. It
+    never shrinks the window on its own. `toggleCMSidePage()` now keeps the current height and
+    changes only the width (upstream resets both to the fixed sizes).
+  - **Chat/file side panel = upstream's `toggleCMSidePage()` again.** The fork's 2026-10-01
+    floating-overlay chat (see the superseded section below) existed only because the tab layout
+    could hide a pending accept prompt; the list cannot, so `showChatPage()`/`toggleCMChatPage()`
+    are upstream's code again, `BlockableOverlay`/`applyFfi` were removed from the CM, and
+    `buildSidePage()` gained a header ("Chat · Name (id)" or "File Transfer · Name (id)") with a
+    close button. `DraggableChatWindow`/`toggleChatOverlay()`'s optional `type:` parameter from
+    that change is kept (harmless).
+- **Chat sender attribution**: `ChatModel.receive()` and `changeCurrentKey()` (CM branch) set the
+  incoming `ChatUser.firstName` to `Client.displayName` ("Name (id)") instead of `client.name`,
+  and `ChatPage`'s `messageTextBuilder` prints that author line above every incoming bubble when
+  `type == ChatPageType.desktopCM`. Client-side (local) chat is unchanged. No protocol change —
+  `ChatMessage` still carries only text; the identity comes from the connection's `LoginRequest`
+  (`my_id`/`my_name`) the CM already has.
+- **Video sources per connection** (what each local is watching):
+  - `src/ipc.rs`: new `VideoSourceInfo { kind: "monitor"|"camera", index, name }` and
+    `Data::VideoSources(Vec<VideoSourceInfo>)` (server → CM, full set, re-sent on change).
+  - `src/server.rs`: `Server::get_subbed_video_sources(conn_id)` lists the `monitor{N}`/
+    `camera{N}` services a connection is subscribed to (same name scheme as
+    `get_subbed_displays_count`).
+  - `src/server/connection.rs`: `report_video_sources()` maps those to names
+    (`display_service::get_display_info(idx).name` / `camera::Cameras::get_sync_cameras()[idx].name`,
+    falling back to "Monitor N"/"Camera N") and sends them; called after every subscription
+    change: `try_sub_monitor_services()`, `try_sub_camera_displays()`, `switch_display_to()` and
+    `capture_displays()` (each after dropping the server write lock — `report_video_sources`
+    takes a read lock). **If upstream adds another path that subscribes/unsubscribes a video
+    service, add the call there too**, otherwise the row goes stale.
+  - `src/ui_cm_interface.rs`: `Client.sources` (serialized in `get_clients_state()` too, so the
+    CM's periodic resync picks it up), `video_sources_changed()`, new `InvokeUiCM` methods
+    `update_video_sources`/`camera_preview_frame` (Flutter: `push_event("update_video_sources")`;
+    Sciter `src/ui/cm.rs`: no-ops). Flutter: `ServerModel.updateVideoSources()` via
+    `model.dart`'s `update_video_sources` event; `Client.sources: List<VideoSourceInfo>`.
+- **Camera preview pop-up** (cameras only — the operator can already see their monitors):
+  - `src/ipc.rs`: `Data::CameraPreview { index, enable }` (CM → server) and
+    `Data::CameraPreviewFrame { index, width, height, jpeg: base64 }` (server → CM).
+  - `src/server/video_service.rs`: `CAMERA_PREVIEWS` (camera index → CM pipe + last-sent time),
+    `set_camera_preview()`, and `maybe_send_camera_preview()` called from the capture loop's
+    `frame.valid()` branch **only for `VideoSource::Camera`**. It taps the frame the service is
+    already encoding — **no second camera open** (many drivers refuse shared access, and the
+    virtual VF-WiFi-Camera already crashed once; see the camera-capture section). Throttled to
+    one frame per `CAMERA_PREVIEW_INTERVAL` (250 ms), nearest-neighbour downscaled to
+    ≤ `CAMERA_PREVIEW_MAX_WIDTH` (480 px) RGB on the capture thread (sub-millisecond), JPEG-
+    encoded (`image` crate, quality 60) and base64'd on a spawned thread, sent over the CM pipe
+    of whichever connection relayed the request; a failed send removes the entry. Costs nothing
+    while no preview is open. Requires `image` — a desktop-only dependency in `Cargo.toml`, hence
+    the `#[cfg(not(any(android, ios)))]` on the tap.
+  - `src/server/connection.rs`: handles `Data::CameraPreview` from the CM pipe by calling
+    `video_service::set_camera_preview(index, enable, conn.tx_to_cm.clone())`.
+  - `src/ui_cm_interface.rs` `set_camera_preview(index, enable)` relays to **every** live
+    connection (the server keeps the last pipe); `src/flutter_ffi.rs` `cm_set_camera_preview`
+    (new bridge function — regenerated by CI's `flutter_rust_bridge_codegen`, the generated Dart
+    is not committed).
+  - Flutter: `WindowType.CameraPreview` (appended, index 6) and `DesktopType.cameraPreview`;
+    `rustDeskWinManager.newCameraPreview(index, name)` creates the window; `main.dart` routes it
+    to `DesktopCameraPreviewScreen` (`flutter/lib/desktop/screen/desktop_camera_preview_screen.dart`)
+    with `showTitleBar(true)` on non-macOS so it has a native, minimizable frame; no custom tab
+    bar, no `restoreWindowPosition`. `ServerModel.openCameraPreview()` (eye icon next to a camera
+    source in the row; one window per camera index, shared by all viewers of it), `onCameraPreviewFrame()`
+    forwards each `camera_preview_frame` event to the window as a
+    `kWindowEventCameraPreviewFrame` method call (`DesktopMultiWindow.invokeMethod`), the window
+    renders it with `Image.memory(gaplessPlayback: true)` and flags "No frames received recently"
+    after 3 s; closing the window sends `kWindowEventCameraPreviewClosed` to window 0 (the CM
+    main window, handled in `_DesktopServerPageState.initState`'s method handler) which calls
+    `onCameraPreviewClosed()` → `cm_set_camera_preview(enable: false)`. `_refreshCameraPreviews()`
+    re-issues `enable` for every open preview whenever a client is added/removed, so a preview
+    survives the relaying connection closing. Multi-window from the CM process works because
+    `desktop_multi_window` is registered for every engine in a process; the preview window runs
+    `initEnv(kAppTypeDesktopCameraPreview)` like any sub-window.
+- **Deliberately not done**: monitor previews (visible on the remote already); a single
+  CM+main window; chat conferencing/relay between locals (noted as a later item); mobile CM
+  changes (`flutter/lib/mobile/pages/server_page.dart` untouched; `Client.fromJson` tolerates a
+  missing `sources`).
+- **Upgrade checks**: (1) if upstream reshapes `Client` JSON or `InvokeUiCM`, keep `sources`
+  and the two new methods; (2) if upstream changes how the CM selects a connection (replacing
+  `DesktopTabController`), rewire `_ClientRow`'s `jumpTo`/`jumpToByKey` and `onSelected`; (3) if
+  upstream's capture loop in `video_service.rs::run` is restructured, re-add the
+  `maybe_send_camera_preview` tap before the screenshot block; (4) `WindowType` is positional
+  (`Index` extension) — keep `CameraPreview` last before `Unknown`; (5) a Flutter upgrade may
+  change `PopupMenuButton`/`CheckedPopupMenuItem` or `WindowController.showTitleBar` semantics —
+  re-verify the "⋯" menu and the preview window's native frame.
+
+### Connection Manager Chat: Floating Window Instead of Side Panel (fixed 2026-10-01; SUPERSEDED 2026-10-07 — kept for history)
+**Superseded** by the list-view section above: CM chat is upstream's side panel again, and the
+`BlockableOverlay` wrapping (and its `Consumer<ServerModel>` follow-up fix) no longer exists in
+`server_page.dart`. Only the optional `type: ChatPageType?` parameter on
+`DraggableChatWindow`/`showChatWindowOverlay()`/`toggleChatOverlay()` remains. The text below
+describes the state between 2026-10-01 and 2026-10-07.
+
 Verify, on any upstream merge that touches `flutter/lib/models/chat_model.dart`'s
 `toggleCMSidePage()`/`toggleCMChatPage()`/`showChatPage()`, or
 `flutter/lib/desktop/pages/server_page.dart`'s `ConnectionManagerState`/`buildSidePage()`:
