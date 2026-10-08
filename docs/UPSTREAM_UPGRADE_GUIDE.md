@@ -779,8 +779,7 @@ or `desktop/pages/view_camera_page.dart`'s `initState()`:
   local → remote mic path (`AudioFormat`/`AudioFrame` are gated only by the local's own
   `disable_audio` mute). With the permission off a call still connects and the remote hears
   the caller; the caller just hears nothing. It is therefore not a voice-call on/off control;
-  a real one would be a fork config key rejecting `VoiceCallRequest` server-side (not
-  implemented, pending product decision).
+  that is the `voice-call-enabled` key in the next section.
 - **Upgrade check**: if upstream restructures `handlePeerInfo()` (e.g. splits the cached vs
   live paths), keep the callback loop and the camera no-video arming on the live path only,
   after `_pi.isSet` is set. If the remote side ever starts rejecting `VoiceCallRequest` before
@@ -788,6 +787,40 @@ or `desktop/pages/view_camera_page.dart`'s `initState()`:
   accepts it as soon as the connection is authorized. If upstream changes when/how the
   "waiting for image" dialog is shown, re-check the `videoUnavailable` guard still sits
   in front of it.
+
+### Voice Call On/Off Control (implemented 2026-10-08)
+Verify, on any upstream merge that touches `src/fork_config.rs`, the `VoiceCallRequest` arm
+in `src/server/connection.rs`, `handleMsgBox` in `flutter/lib/models/model.dart`, the chat
+menu in `flutter/lib/desktop/widgets/remote_toolbar.dart` or the mobile `showChatOptions`
+menus:
+- **Why**: product decision — voice calls must be switchable off per machine, on both ends,
+  and the upstream `enable-audio` permission does not do that (previous section).
+- **Config**: one optional key, `voice-call-enabled` (`"Y"`/`"N"`, absent = `"Y"`), parsed by
+  `fork_config.rs` (`keys::VOICE_CALL_ENABLED`, `ForkConfig::voice_call_enabled`, listed in
+  `OWN_KEYS`) and applied as `Config::set_option("voice-call-enabled", ...)`. Same key name on
+  both roles; documented in `configs/local.toml`, `configs/remote.toml`,
+  `configs/all-options-reference.toml` and `docs/CONFIG_REFERENCE.md` §4.13. Unit tests:
+  `voice_call_enabled_defaults_to_true_when_absent`, `apply_maps_voice_call_enabled_to_option`
+  (the test `GlobalStateGuard` snapshots/restores the option).
+- **Remote enforcement** (`connection.rs`, `VoiceCallRequest` with `is_connect`): checked
+  first, before the duplicate-call reservation and before `Data::VoiceCallIncoming` reaches the
+  CM. Rejection = `new_voice_call_response(ts, false)` plus a `MessageBox{msgtype:
+  "voice-call-disabled", title: "Voice Call", text: "Voice calls are disabled on the remote
+  computer."}`, then `return true` (same shape as the duplicate-call refusal). No protocol
+  change.
+- **Local gating** (courtesy only; the remote enforces regardless): `isVoiceCallEnabledLocally()`
+  in `common.dart` reads the option via `mainGetOptionSync`. Used by the desktop
+  `_ChatMenu` (`remote_toolbar.dart`, the "Voice call" entry is omitted), both mobile
+  `showChatOptions` menus (`mobile/pages/remote_page.dart`, `mobile/pages/view_camera_page.dart`;
+  "End voice call" still shows while a call is active), and the Support auto-dial in
+  `desktop/pages/view_camera_page.dart` (returns before `sessionRequestVoiceCall`).
+- **Caller feedback**: `handleMsgBox` shows msgtype `voice-call-disabled` as a
+  `custom-nocancel-info` box unconditionally (also for the automatic Support call — unlike
+  `voice-call-duplicate`, which is suppressed for auto-dials), because otherwise the call UI
+  would just silently reset. Must stay a `custom` type (see Duplicate Voice Call Prevention).
+- **Upgrade check**: if upstream adds its own voice-call permission, decide whether to map
+  this key onto it (as `support-enabled` → `enable-camera` does) and drop the fork-side
+  rejection; until then keep the `connection.rs` check in front of upstream's handling.
 
 ### Connection Manager List View, Chat Sender Attribution, Video Sources and Camera Preview (implemented 2026-10-07)
 Verify, on any upstream merge that touches `flutter/lib/desktop/pages/server_page.dart`,

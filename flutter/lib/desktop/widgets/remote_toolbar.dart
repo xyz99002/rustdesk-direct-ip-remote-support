@@ -2608,7 +2608,10 @@ class _ChatMenuState extends State<_ChatMenu> {
           ffi: widget.ffi,
           color: _ToolbarTheme.blueColor,
           hoverColor: _ToolbarTheme.hoverBlueColor,
-          menuChildrenGetter: (_) => [textChat(), voiceCall()]);
+          // Fork: no "Voice call" entry when voice calls are switched off on this machine
+          // (config.toml voice-call-enabled = "N", see isVoiceCallEnabledLocally).
+          menuChildrenGetter: (_) =>
+              [textChat(), if (isVoiceCallEnabledLocally()) voiceCall()]);
     }
   }
 

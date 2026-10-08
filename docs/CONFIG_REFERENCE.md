@@ -129,6 +129,18 @@ missing required key is `ConfigError::MissingField`.
 | **Consumed by** | `DesktopSettingPage.switch2page()` ([desktop_setting_page.dart](../flutter/lib/desktop/pages/desktop_setting_page.dart)) — the single chokepoint both gear-icon entry points in `desktop_home_page.dart` call. `!mainGetBoolOptionSync("show-setup-ui")` short-circuits before the Settings page ever opens. |
 | **Status** | ✅ **Working** (implemented 2026-09-02, per `docs/GUI_CONFIGURATION_CONTROL.md`) — desktop only; mobile has a separate settings entry point not yet gated (flagged as a gap in the original design doc) |
 
+### 4.13 `voice-call-enabled` — NEW (2026-10-08)
+
+| | |
+|---|---|
+| **Type** | boolean (`"Y"`/`"N"`) |
+| **Required** | No. Defaults to `true` (enabled) if absent, so existing `config.toml` files keep working. |
+| **Source** | [src/fork_config.rs](../src/fork_config.rs) `apply()`, `validate()`'s `raw.voice_call_enabled.unwrap_or(true)` |
+| **Applied to** | `Config::set_option("voice-call-enabled", "Y"/"N")` — fork-specific key, no upstream meaning |
+| **Consumed by** | Remote role: `src/server/connection.rs`'s `VoiceCallRequest` handler rejects the request (`VoiceCallResponse(accepted=false)` + a `MessageBox` with msgtype `voice-call-disabled`, shown by the caller as a non-fatal notice) before the connection manager is prompted. Local role: `isVoiceCallEnabledLocally()` ([common.dart](../flutter/lib/common.dart)) hides the "Voice call" entry in the desktop toolbar (`remote_toolbar.dart`) and the mobile chat menus, and skips the Support button's automatic call (`desktop/pages/view_camera_page.dart`). |
+| **Not the same as** | upstream's `enable-audio` permission, which only gates the remote → local audio stream; with it off a call still connects and the remote still hears the caller. |
+| **Status** | ✅ **Working** (2026-10-08). Fully enforced remotely; the local-side gating is a courtesy. |
+
 ### 4.8–4.12 `direct-ip-listen-address`, `direct-ip-listen-port`, `direct-ip-video-quality`, `direct-ip-audio-quality`, `direct-ip-log-level`
 
 All required, all parsed and validated exactly as before the consolidation.
@@ -177,6 +189,7 @@ upstream behavior.
 | `direct-ip-support-enabled` | ✅ Working |
 | `direct-ip-desktop-share-enabled` | ⚠️ Partially working (local-only, no remote enforcement) |
 | `direct-ip-show-setup-ui` | ✅ Working (new, optional, defaults to shown) |
+| `voice-call-enabled` | ✅ Working (2026-10-08, optional, defaults to enabled; enforced remotely) |
 | `direct-ip-listen-port` | ✅ Working (2026-09-30 — forced into `direct-access-port`) |
 | `direct-ip-listen-address` / `-video-quality` / `-audio-quality` / `-log-level` | ❌ Not wired |
 | *(unconditional)* disable-account / hide-network-settings / enable-lan-discovery / direct-server / direct-access-port | ✅ Working |

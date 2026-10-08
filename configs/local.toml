@@ -45,6 +45,13 @@ desktop-share-enabled = "Y"
 # entirely (e.g. for an unattended kiosk-style operator machine).
 show-setup-ui = "Y"
 
+# voice-call-enabled: Optional — defaults to "Y" if omitted. "N" removes the "Voice call"
+#   entry from the Desktop/Support toolbars and stops the Support button's automatic call on
+#   THIS machine. The remote decides for itself with its own copy of this key (it rejects the
+#   request outright and tells the caller why). Note: upstream's "enable-audio" permission is
+#   NOT a voice-call switch - it only controls whether this side hears the remote's audio.
+voice-call-enabled = "Y"
+
 # auth-mode: how an INBOUND session on THIS machine would be approved, and whether the
 #   local temporary password is shown at all. (For a pure "local" role this mostly matters if you
 #   ever flip role to "remote" later using the same file as a starting point.)

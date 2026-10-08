@@ -523,23 +523,25 @@ class _ViewCameraPageState extends State<ViewCameraPage>
     final menus = [
       makeTextMenu('Text chat', Icon(Icons.message, color: MyTheme.accent),
           () => onPressedTextChat(widget.id)),
-      isInVoice
-          ? makeTextMenu(
-              'End voice call',
-              SvgPicture.asset(
-                'assets/call_wait.svg',
-                colorFilter:
-                    ColorFilter.mode(Colors.redAccent, BlendMode.srcIn),
-              ),
-              onPressEndVoiceCall,
-              labelStyle: TextStyle(color: Colors.redAccent))
-          : makeTextMenu(
-              'Voice call',
-              SvgPicture.asset(
-                'assets/call_wait.svg',
-                colorFilter: ColorFilter.mode(MyTheme.accent, BlendMode.srcIn),
-              ),
-              onPressVoiceCall),
+      // Fork: no "Voice call" entry when voice calls are switched off on this machine
+      // (config.toml voice-call-enabled = "N", see isVoiceCallEnabledLocally).
+      if (isInVoice)
+        makeTextMenu(
+            'End voice call',
+            SvgPicture.asset(
+              'assets/call_wait.svg',
+              colorFilter: ColorFilter.mode(Colors.redAccent, BlendMode.srcIn),
+            ),
+            onPressEndVoiceCall,
+            labelStyle: TextStyle(color: Colors.redAccent))
+      else if (isVoiceCallEnabledLocally())
+        makeTextMenu(
+            'Voice call',
+            SvgPicture.asset(
+              'assets/call_wait.svg',
+              colorFilter: ColorFilter.mode(MyTheme.accent, BlendMode.srcIn),
+            ),
+            onPressVoiceCall),
     ];
 
     final menuItems = menus

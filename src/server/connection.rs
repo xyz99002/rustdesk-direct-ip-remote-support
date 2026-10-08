@@ -3763,6 +3763,33 @@ impl Connection {
                 }
                 Some(message::Union::VoiceCallRequest(request)) => {
                     if request.is_connect {
+                        // Fork: voice calls switched off on this machine (config.toml
+                        // `voice-call-enabled = "N"`, see src/fork_config.rs). Rejected here,
+                        // server-side, before the CM operator is ever prompted - the connecting
+                        // client's own button/auto-dial gating is only a courtesy. The caller is
+                        // told why through the same MessageBox mechanism as the duplicate-call
+                        // refusal below; its msgtype is a fork-specific tag the client shows as
+                        // a non-fatal notice (flutter/lib/models/model.dart handleMsgBox).
+                        if Config::get_option("voice-call-enabled") == "N" {
+                            log::info!(
+                                "Rejecting voice call request from {}: voice calls are disabled",
+                                self.lr.my_id
+                            );
+                            let ts = NonZeroI64::new(request.req_timestamp)
+                                .unwrap_or(NonZeroI64::new(get_time()).unwrap());
+                            self.send(new_voice_call_response(ts.get(), false)).await;
+                            let mut notice = Message::new();
+                            notice.set_message_box(MessageBox {
+                                msgtype: "voice-call-disabled".to_owned(),
+                                title: "Voice Call".to_owned(),
+                                text: "Voice calls are disabled on the remote computer."
+                                    .to_owned(),
+                                link: "".to_owned(),
+                                ..Default::default()
+                            });
+                            self.send(notice).await;
+                            return true;
+                        }
                         // Fork: reject outright, before ever notifying the CM operator, if this
                         // same connecting peer (my_id) already has a pending-or-active voice
                         // call on a *different* connection - e.g. a Desktop session and a

@@ -40,6 +40,14 @@ desktop-share-enabled = "Y"
 # Optional — set to "N" to hide the Settings entry point entirely on a locked-down remote host.
 show-setup-ui = "Y"
 
+# voice-call-enabled: Optional — defaults to "Y" if omitted. "N" makes THIS host reject every
+#   voice-call request at the protocol level, before the connection-manager operator is even
+#   prompted; the caller is told "Voice calls are disabled on the remote computer". Enforced
+#   here regardless of what the connecting side's own config allows. Note: "enable-audio" below
+#   is NOT a voice-call switch - it only controls whether this host's audio is sent to the
+#   connecting side; a call would still connect and this host would still hear the caller.
+voice-call-enabled = "Y"
+
 # auth-mode: how an inbound session on THIS machine is approved, and whether the
 #   temporary password is generated/shown (Settings > temporary password, and the system tray).
 #   "ask"              -> Approval is a manual click in the connection-manager popup; no password

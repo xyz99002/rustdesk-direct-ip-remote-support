@@ -67,6 +67,14 @@ desktop-share-enabled = "Y"
 # STATUS: working (2026-09-02).
 show-setup-ui = "Y"
 
+# voice-call-enabled (boolean "Y"/"N", OPTIONAL — defaults to "Y" if absent)
+# Voice calls on this machine. Maps to Config::set_option("voice-call-enabled", ...), a
+# fork-specific key. Remote role: src/server/connection.rs rejects every VoiceCallRequest
+# server-side and tells the caller why. Local role: hides the "Voice call" toolbar entry and
+# disables the Support button's automatic call. Independent of enable-audio (which only gates
+# the remote -> local audio stream, never the call). STATUS: working (2026-10-08).
+voice-call-enabled = "Y"
+
 # auth-mode (string enum, REQUIRED)
 #   "ask"              -> approve-mode = "click"
 #   "password"         -> approve-mode = "password"

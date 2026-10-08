@@ -1010,6 +1010,12 @@ class FfiModel with ChangeNotifier {
       final hasRetry = evt['hasRetry'] == 'true';
       showPrivacyFailedDialog(
           sessionId, type, title, text, link, hasRetry, dialogManager);
+    } else if (type == 'voice-call-disabled') {
+      // Fork: the remote has voice calls switched off (config.toml voice-call-enabled = "N").
+      // Always worth telling the user - also for the Support button's automatic call, since
+      // otherwise the call UI just silently resets. Non-fatal "custom" type, see below.
+      showMsgBox(
+          sessionId, 'custom-nocancel-info', title, text, link, false, dialogManager);
     } else if (type == 'voice-call-duplicate') {
       // Fork: the remote refused this session's voice call because this machine already has
       // one open to it in another window. The remote can't tell *why* the request was sent;

@@ -1670,6 +1670,14 @@ bool mainGetBoolOptionSync(String key) {
   return option2bool(key, bind.mainGetOptionSync(key: key));
 }
 
+/// Fork: voice calls allowed on this machine (config.toml `voice-call-enabled`, applied by
+/// src/fork_config.rs; absent = enabled). On a local this hides the "Voice call" button and
+/// stops the Support button's automatic call. The remote enforces its own copy of the key
+/// server-side regardless of what this side shows.
+bool isVoiceCallEnabledLocally() {
+  return bind.mainGetOptionSync(key: 'voice-call-enabled') != 'N';
+}
+
 mainSetLocalBoolOption(String key, bool value) async {
   String v = bool2option(key, value);
   await bind.mainSetLocalOption(key: key, value: v);

@@ -124,7 +124,10 @@ class _ViewCameraPageState extends State<ViewCameraPage>
     // Marked as automatic so that, if the remote refuses it because this machine already
     // has a call open to it in another window (e.g. Desktop sharing), no popup is shown -
     // see handleMsgBox in models/model.dart.
+    // Skipped entirely when voice calls are switched off on this machine (config.toml
+    // voice-call-enabled = "N"); the remote enforces its own setting server-side.
     _ffi.ffiModel.addCallbackOnPeerInfo((String peerId) {
+      if (!isVoiceCallEnabledLocally()) return;
       _ffi.chatModel.voiceCallAutoDialed = true;
       bind.sessionRequestVoiceCall(sessionId: _ffi.sessionId);
     });
