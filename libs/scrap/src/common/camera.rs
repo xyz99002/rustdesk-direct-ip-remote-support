@@ -14,6 +14,9 @@ use nokhwa::{
 use std::collections::{HashMap, HashSet};
 
 use hbb_common::message_proto::{DisplayInfo, Resolution};
+// Fork: `log` is not a direct dependency of scrap on desktop; re-exported by hbb_common.
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+use hbb_common::log;
 
 #[cfg(feature = "vram")]
 use crate::AdapterDevice;
@@ -314,6 +317,33 @@ impl CameraCapturer {
     fn new(_current: usize) -> ResultType<Self> {
         bail!(CAMERA_NOT_SUPPORTED);
     }
+
+    // Fork: sanity-check a raw frame against the format and resolution the driver declared for
+    // it. Only uncompressed formats have a fixed size; compressed ones (MJPEG) are checked for
+    // emptiness only. Returns a human-readable reason on mismatch. (Inherent, not part of
+    // `TraitCapturer`.)
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn validate_buffer(w: usize, h: usize, fmt: FrameFormat, len: usize) -> Result<(), String> {
+        if w == 0 || h == 0 {
+            return Err(format!("camera reported an empty resolution {w}x{h}"));
+        }
+        if len == 0 {
+            return Err(format!("camera delivered an empty {fmt:?} frame for {w}x{h}"));
+        }
+        let expected = match fmt {
+            FrameFormat::YUYV => Some(w * h * 2),
+            FrameFormat::NV12 => Some(w * h * 3 / 2),
+            _ => None, // MJPEG and anything else: variable or unknown size, can't be checked
+        };
+        if let Some(expected) = expected {
+            if len < expected {
+                return Err(format!(
+                    "camera delivered a {fmt:?} frame of {len} bytes for {w}x{h}, expected {expected}"
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl TraitCapturer for CameraCapturer {
@@ -383,31 +413,6 @@ impl TraitCapturer for CameraCapturer {
                 Err(io::Error::new(io::ErrorKind::Other, reason))
             }
         }
-    }
-
-    // Fork: sanity-check a raw frame against the format and resolution the driver declared for
-    // it. Only uncompressed formats have a fixed size; compressed ones (MJPEG) are checked for
-    // emptiness only. Returns a human-readable reason on mismatch.
-    fn validate_buffer(w: usize, h: usize, fmt: FrameFormat, len: usize) -> Result<(), String> {
-        if w == 0 || h == 0 {
-            return Err(format!("camera reported an empty resolution {w}x{h}"));
-        }
-        if len == 0 {
-            return Err(format!("camera delivered an empty {fmt:?} frame for {w}x{h}"));
-        }
-        let expected = match fmt {
-            FrameFormat::YUYV => Some(w * h * 2),
-            FrameFormat::NV12 => Some(w * h * 3 / 2),
-            _ => None, // MJPEG and anything else: variable or unknown size, can't be checked
-        };
-        if let Some(expected) = expected {
-            if len < expected {
-                return Err(format!(
-                    "camera delivered a {fmt:?} frame of {len} bytes for {w}x{h}, expected {expected}"
-                ));
-            }
-        }
-        Ok(())
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
