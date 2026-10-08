@@ -138,24 +138,24 @@ class FfiModel with ChangeNotifier {
   final List<Function(String)> callbacksOnPeerInfo = [];
   addCallbackOnPeerInfo(Function(String) cb) => callbacksOnPeerInfo.add(cb);
 
-  // Fork: camera sessions only. Upstream's modal "Connected, waiting for image..." dialog
-  // (showConnectedWaitingForImage) stays up until the first frame and its only button ends
-  // the session - fine for a desktop, fatal for Support mode when the remote has no camera
-  // or video is blocked while audio is allowed: the voice call is up but the operator can't
-  // reach the toolbar. markCameraVideoUnavailable() drops the dialog, leaves the blank canvas
-  // with its toolbar usable and says why in a toast. Armed from handlePeerInfo().
+  // Fork: camera and desktop sessions. Upstream's modal "Connected, waiting for image..."
+  // dialog (showConnectedWaitingForImage) stays up until the first frame and its only button
+  // ends the session - fatal when the remote has no camera, or video is blocked while audio
+  // is allowed: the voice call is up (or could be started) but the operator can't reach the
+  // toolbar. markVideoUnavailable() drops the dialog, leaves the blank canvas with its
+  // toolbar usable and says why in a toast. Armed from handlePeerInfo().
   // `waitForFirstImage` is deliberately left alone so that a frame arriving later still
   // goes through the normal first-image initialisation (onEvent2UIRgba); the toolbar does
   // not depend on it, only the dialog did.
-  Timer? cameraNoVideoTimer;
-  bool cameraVideoUnavailable = false;
-  static const cameraNoVideoTimeout = Duration(seconds: 10);
+  Timer? noVideoTimer;
+  bool videoUnavailable = false;
+  static const noVideoTimeout = Duration(seconds: 10);
 
-  void markCameraVideoUnavailable(String reason) {
-    cameraNoVideoTimer?.cancel();
-    cameraNoVideoTimer = null;
-    if (cameraVideoUnavailable) return;
-    cameraVideoUnavailable = true;
+  void markVideoUnavailable(String reason) {
+    noVideoTimer?.cancel();
+    noVideoTimer = null;
+    if (videoUnavailable) return;
+    videoUnavailable = true;
     waitForImageDialogShow.value = false;
     waitForImageTimer?.cancel();
     waitForImageTimer = null;
@@ -1229,8 +1229,8 @@ class FfiModel with ChangeNotifier {
 
     if (waitForFirstImage.isFalse) return;
     // Fork: a camera session already known to have no video keeps its blank canvas and
-    // toolbar instead of this modal dialog (see markCameraVideoUnavailable).
-    if (cameraVideoUnavailable) return;
+    // toolbar instead of this modal dialog (see markVideoUnavailable).
+    if (videoUnavailable) return;
     dialogManager.show(
       (setState, close, context) => CustomAlertDialog(
           title: null,
@@ -1508,18 +1508,20 @@ class FfiModel with ChangeNotifier {
       }
       parent.target?.elevationModel.onPeerInfo(_pi);
     }
-    // Fork: a camera session must stay usable (toolbar, voice call) without video - see
-    // cameraNoVideoTimer. No camera on the remote is known right here; video that is merely
-    // blocked or broken shows up as no frame within cameraNoVideoTimeout.
-    if (connType == ConnType.viewCamera && !isCache) {
-      cameraNoVideoTimer?.cancel();
-      cameraVideoUnavailable = false;
-      if (_pi.displays.isEmpty) {
-        markCameraVideoUnavailable('The remote has no camera');
+    // Fork: a camera or desktop session must stay usable (toolbar, voice call) without
+    // video - see noVideoTimer. No camera on the remote is known right here; video that is
+    // merely blocked or broken shows up as no frame within noVideoTimeout. (A desktop with
+    // no displays is upstream's "No Displays" case and is left to upstream.)
+    if ((connType == ConnType.viewCamera || connType == ConnType.defaultConn) &&
+        !isCache) {
+      noVideoTimer?.cancel();
+      videoUnavailable = false;
+      if (connType == ConnType.viewCamera && _pi.displays.isEmpty) {
+        markVideoUnavailable('The remote has no camera');
       } else {
-        cameraNoVideoTimer = Timer(cameraNoVideoTimeout, () {
+        noVideoTimer = Timer(noVideoTimeout, () {
           if (waitForFirstImage.isTrue && parent.target != null) {
-            markCameraVideoUnavailable('No video is being received from the remote');
+            markVideoUnavailable('No video is being received from the remote');
           }
         });
       }
@@ -3818,8 +3820,8 @@ class FFI {
     ffiModel.waitForImageDialogShow.value = true;
     ffiModel.waitForImageTimer?.cancel();
     ffiModel.waitForImageTimer = null;
-    ffiModel.cameraNoVideoTimer?.cancel();
-    ffiModel.cameraNoVideoTimer = null;
+    ffiModel.noVideoTimer?.cancel();
+    ffiModel.noVideoTimer = null;
   }
 
   /// Start with the given [id]. Only transfer file if [isFileTransfer], only view camera if [isViewCamera], only port forward if [isPortForward].
@@ -4029,8 +4031,8 @@ class FFI {
     if (ffiModel.waitForFirstImage.value == true) {
       ffiModel.waitForFirstImage.value = false;
       // Fork: video did arrive after all (camera sessions), no "no video" notice needed.
-      ffiModel.cameraNoVideoTimer?.cancel();
-      ffiModel.cameraNoVideoTimer = null;
+      ffiModel.noVideoTimer?.cancel();
+      ffiModel.noVideoTimer = null;
       ffiModel.cancelPendingRestoreTimer();
       ffiModel.resetRestartReconnectState();
       dialogManager.dismissAll();
