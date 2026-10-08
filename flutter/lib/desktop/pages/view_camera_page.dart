@@ -107,16 +107,24 @@ class _ViewCameraPageState extends State<ViewCameraPage>
           _ffi.ffiModel.pi.platform, _ffi.dialogManager);
       _ffi.recordingModel
           .updateStatus(bind.sessionGetIsRecording(sessionId: _ffi.sessionId));
-      // Fork: Support mode always pairs VIEW_CAMERA with a Voice Call, using the existing
-      // session_request_voice_call() mechanism (docs/session-orchestration-analysis.md
-      // Section 9-10 confirmed this works standalone on VIEW_CAMERA, no DEFAULT_CONN needed).
-      // Safe to do unconditionally here because this fork's UI has no peer list, so this page
-      // is only ever reached via the Support button (connection_page.dart's onSupport()).
-      // The call still goes through the existing upstream accept/reject workflow on the
-      // remote side - this only sends the request, it doesn't bypass that.
-      // Marked as automatic so that, if the remote refuses it because this machine already
-      // has a call open to it in another window (e.g. Desktop sharing), no popup is shown -
-      // see handleMsgBox in models/model.dart.
+    });
+    // Fork: Support mode always pairs VIEW_CAMERA with a Voice Call, using the existing
+    // session_request_voice_call() mechanism (docs/session-orchestration-analysis.md
+    // Section 9-10 confirmed this works standalone on VIEW_CAMERA, no DEFAULT_CONN needed).
+    // Safe to do unconditionally here because this fork's UI has no peer list, so this page
+    // is only ever reached via the Support button (connection_page.dart's onSupport()).
+    // The call still goes through the existing upstream accept/reject workflow on the
+    // remote side - this only sends the request, it doesn't bypass that.
+    // Dialed from the PeerInfo callback (session accepted, transport up), NOT from the
+    // first-image callback it used to hang off: the call must come up even if the camera
+    // (or any video) never delivers a frame - e.g. a failing camera, or a deployment where
+    // video is blocked but audio is allowed. A blank camera window with a working call is
+    // the intended result in that case. Re-fires after a reconnect (new PeerInfo), which is
+    // wanted: the old call died with the old connection.
+    // Marked as automatic so that, if the remote refuses it because this machine already
+    // has a call open to it in another window (e.g. Desktop sharing), no popup is shown -
+    // see handleMsgBox in models/model.dart.
+    _ffi.ffiModel.addCallbackOnPeerInfo((String peerId) {
       _ffi.chatModel.voiceCallAutoDialed = true;
       bind.sessionRequestVoiceCall(sessionId: _ffi.sessionId);
     });

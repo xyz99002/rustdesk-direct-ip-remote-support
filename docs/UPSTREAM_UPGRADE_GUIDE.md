@@ -736,6 +736,30 @@ independent — neither triggers the other. **Upgrade check**: if a future upstr
 how Support-style camera sessions are initiated, make sure this fork's `onSupport()` doesn't
 regain an implicit second connect call.
 
+### Support Voice Call Dials on Session Acceptance, Not on the First Video Frame (changed 2026-10-08)
+Verify, on any upstream merge that touches `FfiModel.handlePeerInfo()` (`flutter/lib/models/model.dart`)
+or `desktop/pages/view_camera_page.dart`'s `initState()`:
+- **Why**: Support mode's automatic voice call used to be sent from
+  `ImageModel.addCallbackOnFirstImage`, i.e. only once the camera had delivered a frame. A voice
+  call needs only the accepted session (it is a message on the same connection); it never
+  depended on video. Hanging it off the first frame meant **no call at all** whenever video
+  never arrives — a failing/refused camera (see "Camera Capture Must Not Kill the Remote"), or a
+  deployment where a proxy/policy blocks desktop or camera video but allows audio. Product
+  decision: the call must come up regardless; a blank camera window (still needed for the
+  toolbar) with a working call is the intended outcome.
+- **Change**: `FfiModel` gained `callbacksOnPeerInfo` / `addCallbackOnPeerInfo()`, invoked at
+  the end of `handlePeerInfo()` for every **non-cached** PeerInfo (the point where the remote
+  has accepted the session and the transport is up — also after a reconnect, which is wanted
+  since the previous call died with the previous connection). `view_camera_page.dart` dials
+  `sessionRequestVoiceCall` from that callback; the first-image callback keeps only the
+  keyboard-layout and recording-status work it had upstream. `ChatModel.voiceCallAutoDialed`
+  is still set `true` immediately before the request (see "Duplicate Voice Call Prevention").
+- **Upgrade check**: if upstream restructures `handlePeerInfo()` (e.g. splits the cached vs
+  live paths), keep the callback loop on the live path only, after `_pi.isSet` is set. If the
+  remote side ever starts rejecting `VoiceCallRequest` before its own subscription setup
+  completes, the dial may need a retry — today `connection.rs` accepts it as soon as the
+  connection is authorized.
+
 ### Connection Manager List View, Chat Sender Attribution, Video Sources and Camera Preview (implemented 2026-10-07)
 Verify, on any upstream merge that touches `flutter/lib/desktop/pages/server_page.dart`,
 `flutter/lib/models/server_model.dart`, `flutter/lib/models/chat_model.dart`,
@@ -986,7 +1010,8 @@ Verify, on any upstream merge that touches `VoiceCallRequest`/`handle_voice_call
   for every type that doesn't contain "custom" (that's the connection-error dialog), so showing
   this as `error` dismissed the popup by killing the whole session it appeared in (found via
   real testing, 2026-10-05). That per-session flag is set `true` by
-  the one automatic site (`desktop/pages/view_camera_page.dart`'s first-image auto-dial) and
+  the one automatic site (`desktop/pages/view_camera_page.dart`'s PeerInfo auto-dial, see
+  "Support Voice Call Dials on Session Acceptance" below) and
   `false` by every manual site (`remote_toolbar.dart`'s `_ChatMenu.voiceCall()`, the two mobile
   `onPressVoiceCall`s) immediately before each request. Any new request site must set it.
 - **Phase 2 (implemented 2026-10-02): audio conferencing.** See the next section. Unaffected by

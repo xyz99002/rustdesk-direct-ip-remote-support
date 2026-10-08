@@ -132,6 +132,12 @@ class FfiModel with ChangeNotifier {
   WeakReference<FFI> parent;
   late final SessionID sessionId;
 
+  // Fork: run once per accepted session - on every non-cached PeerInfo, i.e. also after a
+  // reconnect - before any video frame arrives. Support mode dials its voice call from here
+  // (desktop/pages/view_camera_page.dart). See handlePeerInfo().
+  final List<Function(String)> callbacksOnPeerInfo = [];
+  addCallbackOnPeerInfo(Function(String) cb) => callbacksOnPeerInfo.add(cb);
+
   RxBool waitForImageDialogShow = true.obs;
   Timer? waitForImageTimer;
   RxBool waitForFirstImage = true.obs;
@@ -1506,6 +1512,12 @@ class FfiModel with ChangeNotifier {
 
     if (!isCache) {
       tryUseAllMyDisplaysForTheRemoteSession(peerId);
+      // Fork: the session is accepted and its transport is up - before any video frame.
+      // Support mode dials its voice call from here (see addCallbackOnPeerInfo), so audio
+      // comes up even when the camera/desktop video never does.
+      for (final cb in callbacksOnPeerInfo) {
+        cb(peerId);
+      }
     }
   }
 
