@@ -746,18 +746,27 @@ is deliberately no local config gate (upstream has none either); the remote's ow
 button can't overflow the 320 px panel. Terminal/port-forward are still not offered — not
 requested.
 
-**Second session to the same host / one window per monitor (checked 2026-10-09, no change)**:
-the fork's connect flow is upstream's (`connect()` → `connectMainDesktop()` → the
-`rustDeskWinManager.new*()` functions, all unchanged). Upstream itself never opens a second
-Desktop (or camera) session to the *same* peer id from the connect panel — a second click
-resolves to the existing tab (`DesktopTabController.add` with an existing key, and
-`kWindowEventActiveSession`). Viewing each monitor in its own window is upstream's per-session
-toolbar option **"Show displays as individual windows"** (`kKeyShowDisplaysAsIndividualWindows`,
-toolbar → Display menu; default in Settings → Display, which this fork gates behind Advance
-Setup), after which picking a monitor in the toolbar's monitor menu calls
-`openMonitorInNewTabOrWindow()` → `kWindowEventOpenMonitorSession` → `openMonitorSession()`
-(`multi_window_manager.dart`) and opens a new window for that display. All of that is intact in
-the fork (`remote_toolbar.dart`, `setting_widgets.dart`, `desktop_home_page.dart`'s handler).
+**One click = one new session window (changed 2026-10-09)**: upstream's connect panel never
+opens a second Desktop/camera/file session to the *same* peer id — a second click resolves to
+the existing tab or window (`DesktopTabController.add` with an existing key, or the
+`kWindowEventActiveSession` probe in `RustDeskMultiWindowManager.newSession`). Product
+decision for this fork: every click on Support, Desktop or Transfer file starts a brand-new
+session in its own window, also for a host that is already open (e.g. one Desktop window per
+monitor). Implemented as a `forceNewWindow` flag threaded `connection_page.onConnect()` →
+`connect()` → `connectMainDesktop()` (and the `kWindowConnect` relay in
+`desktop_home_page.dart`) → `newRemoteDesktop()/newViewCamera()/newFileTransfer()` →
+`newSession()`, which then goes straight to upstream's own `_newSession(openInTabs: false)`:
+reuse a hidden inactive window of that type, else `newSessionWindow()`. A fresh window has its
+own isolate and an empty tab list, so the duplicate peer id is no conflict — this is exactly
+the path upstream's "open monitor in new window" (`openMonitorSession`) already uses, and the
+Rust side keeps one session per `SessionID`, several per peer. Consequences: the "Open new
+connections in tabs" setting no longer applies to these buttons (nothing else in the fork
+calls them with `forceNewWindow`), and a second Support session's automatic voice call is
+refused silently by the remote's duplicate-call guard (expected; see that section). The
+per-monitor toolbar option ("Show displays as individual windows") still works as in upstream.
+**Upgrade check**: if upstream changes `_newSession()`'s inactive-window reuse or how a sub
+window receives its first session (`runMultiWindow` params), re-test two Desktop windows to
+the same host.
 
 ### Support Voice Call Dials on Session Acceptance, Not on the First Video Frame; Camera/Desktop Window Usable Without Video (changed 2026-10-08)
 Verify, on any upstream merge that touches `FfiModel.handlePeerInfo()` (`flutter/lib/models/model.dart`)

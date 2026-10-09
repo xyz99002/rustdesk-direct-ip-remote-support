@@ -115,8 +115,16 @@ class _ConnectionPageState extends State<ConnectionPage>
     );
   }
 
-  /// Callback shared by the Support and Desktop buttons. Connects to the
-  /// host/IP entered above. Unchanged from the Connection Workflow phase.
+  /// Callback shared by the Support, Desktop and Transfer file buttons. Connects to the
+  /// host/IP entered above.
+  ///
+  /// Fork (2026-10-09): every click starts a brand-new session in its own window, also when
+  /// a session to the same host is already open (`forceNewWindow`). Upstream's connect panel
+  /// would instead focus the existing tab/window for that id, so a second Desktop session
+  /// to the same host (e.g. to put a second monitor in a separate window) was impossible
+  /// from here; product decision is one click = one new session, like opening a monitor in
+  /// a new window. The "Open new connections in tabs" setting therefore no longer applies to
+  /// these buttons.
   void onConnect(
       {bool isFileTransfer = false,
       bool isViewCamera = false,
@@ -125,7 +133,8 @@ class _ConnectionPageState extends State<ConnectionPage>
     connect(context, id,
         isFileTransfer: isFileTransfer,
         isViewCamera: isViewCamera,
-        isTerminal: isTerminal);
+        isTerminal: isTerminal,
+        forceNewWindow: true);
   }
 
   /// Fork config: shows/hides the Support button. Also gates VIEW_CAMERA/Voice Call

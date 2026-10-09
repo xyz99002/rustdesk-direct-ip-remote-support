@@ -261,6 +261,13 @@ class RustDeskMultiWindowManager {
     bool? isRDP,
     bool? isSharedPassword,
     String? connToken,
+    // Fork: true = always start a brand-new session in its own window, even if a session to
+    // `remoteId` is already open (upstream would focus that one instead). Used by the
+    // connect panel's Support/Desktop/Transfer file buttons. See _newSession(openInTabs:
+    // false): a hidden, inactive window of the type is reused, otherwise a new one is
+    // created; a fresh window has an empty tab list, so the same peer id is no conflict -
+    // the same mechanism upstream's "open monitor in new window" relies on.
+    bool forceNewWindow = false,
   }) async {
     var params = {
       "type": type.index,
@@ -281,6 +288,10 @@ class RustDeskMultiWindowManager {
       params['connToken'] = connToken;
     }
     final msg = jsonEncode(params);
+
+    if (forceNewWindow) {
+      return _newSession(false, type, methodName, remoteId, windows, msg);
+    }
 
     // separate window for file transfer is not supported
     bool openInTabs = type != WindowType.RemoteDesktop ||
@@ -304,6 +315,7 @@ class RustDeskMultiWindowManager {
     bool? isSharedPassword,
     String? switchUuid,
     bool? forceRelay,
+    bool forceNewWindow = false,
   }) async {
     return await newSession(
       WindowType.RemoteDesktop,
@@ -314,6 +326,7 @@ class RustDeskMultiWindowManager {
       forceRelay: forceRelay,
       switchUuid: switchUuid,
       isSharedPassword: isSharedPassword,
+      forceNewWindow: forceNewWindow,
     );
   }
 
@@ -323,6 +336,7 @@ class RustDeskMultiWindowManager {
     bool? isSharedPassword,
     bool? forceRelay,
     String? connToken,
+    bool forceNewWindow = false,
   }) async {
     return await newSession(
       WindowType.FileTransfer,
@@ -333,6 +347,7 @@ class RustDeskMultiWindowManager {
       forceRelay: forceRelay,
       isSharedPassword: isSharedPassword,
       connToken: connToken,
+      forceNewWindow: forceNewWindow,
     );
   }
 
@@ -343,6 +358,7 @@ class RustDeskMultiWindowManager {
     String? switchUuid,
     bool? forceRelay,
     String? connToken,
+    bool forceNewWindow = false,
   }) async {
     return await newSession(
       WindowType.ViewCamera,
@@ -354,6 +370,7 @@ class RustDeskMultiWindowManager {
       switchUuid: switchUuid,
       isSharedPassword: isSharedPassword,
       connToken: connToken,
+      forceNewWindow: forceNewWindow,
     );
   }
 

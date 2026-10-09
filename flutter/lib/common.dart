@@ -2549,19 +2549,23 @@ connectMainDesktop(String id,
     bool? forceRelay,
     String? password,
     String? connToken,
-    bool? isSharedPassword}) async {
+    bool? isSharedPassword,
+    // Fork: see RustDeskMultiWindowManager.newSession(forceNewWindow:).
+    bool forceNewWindow = false}) async {
   if (isFileTransfer) {
     await rustDeskWinManager.newFileTransfer(id,
         password: password,
         isSharedPassword: isSharedPassword,
         connToken: connToken,
-        forceRelay: forceRelay);
+        forceRelay: forceRelay,
+        forceNewWindow: forceNewWindow);
   } else if (isViewCamera) {
     await rustDeskWinManager.newViewCamera(id,
         password: password,
         isSharedPassword: isSharedPassword,
         connToken: connToken,
-        forceRelay: forceRelay);
+        forceRelay: forceRelay,
+        forceNewWindow: forceNewWindow);
   } else if (isTcpTunneling || isRDP) {
     await rustDeskWinManager.newPortForward(id, isRDP,
         password: password,
@@ -2578,7 +2582,8 @@ connectMainDesktop(String id,
     await rustDeskWinManager.newRemoteDesktop(id,
         password: password,
         isSharedPassword: isSharedPassword,
-        forceRelay: forceRelay);
+        forceRelay: forceRelay,
+        forceNewWindow: forceNewWindow);
   }
 }
 
@@ -2596,7 +2601,9 @@ connect(BuildContext context, String id,
     bool forceRelay = false,
     String? password,
     String? connToken,
-    bool? isSharedPassword}) async {
+    bool? isSharedPassword,
+    // Fork: see RustDeskMultiWindowManager.newSession(forceNewWindow:). Desktop only.
+    bool forceNewWindow = false}) async {
   if (id == '') return;
   if (!isDesktop || desktopType == DesktopType.main) {
     try {
@@ -2629,6 +2636,7 @@ connect(BuildContext context, String id,
         password: password,
         isSharedPassword: isSharedPassword,
         forceRelay: forceRelay,
+        forceNewWindow: forceNewWindow,
       );
     } else {
       await rustDeskWinManager.call(WindowType.Main, kWindowConnect, {
@@ -2642,6 +2650,7 @@ connect(BuildContext context, String id,
         'isSharedPassword': isSharedPassword,
         'forceRelay': forceRelay,
         'connToken': connToken,
+        'forceNewWindow': forceNewWindow,
       });
     }
   } else {
