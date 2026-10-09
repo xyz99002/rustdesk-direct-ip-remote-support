@@ -1328,10 +1328,31 @@ Verify, on any upstream merge that touches `libs/scrap/src/common/camera.rs` (`c
     driver again. `get_camera_resolution` reads the listing instead of opening the camera a
     second time; `exists()` uses the de-duplicated list once it exists; `CameraCapturer::new`
     refreshes the cache and sets `online` when the camera really opens.
-  - **Still outstanding**: the crash site itself. If the remote dies again, its log now
-    contains the `PANIC` line (our side) — or nothing, which means a native fault in the
-    driver/Media Foundation; then Event Viewer's "Faulting module name" is the next step, and
-    the only full protection would be capturing cameras in a separate process.
+  - **Still outstanding at that point**: the crash site itself — resolved in round 3 below.
+- **Round 3 (2026-10-09, the actual kill, found from this machine's own remote-role logs)**:
+  every kill ends the log right after a camera service (re)starts ("new video service:
+  cameraN … gdi: true") with **no error and no panic** — a native crash — and every one happens
+  while **several camera services start/stop concurrently** (a local viewing all cameras, each
+  new viewer making the others restart with "SWITCH", the login listing opening/dropping every
+  camera). Reading nokhwa's Windows backend (`nokhwa-bindings-windows/src/lib.rs`): it keeps a
+  (non-atomic) count of open camera objects and, when it drops to zero,
+  `MediaFoundationDevice::drop` calls `de_initialize_mf()` = `MFShutdown()` +
+  `CoUninitialize()` from whichever thread dropped the last camera — while another thread may
+  be inside `ReadSample()`/`ActivateObject()`. Shutting the platform down under a live reader
+  is an access violation inside Media Foundation, hence no log line and nothing for the panic
+  hook. The pre-fix restart storm ("Hardware MFT failed to start streaming (0xC00D3704)" every
+  second, 255 restarts in five minutes, a new camera + hardware encoder each time) made the
+  race near-certain; round 1's six-attempt cap made it rarer — the "less frequent" observed.
+  - **Fix** (`camera.rs` `mf_pin`, Windows only, fork-owned, no library change): call
+    `MFStartup` once ourselves (`#[link(name = "mfplat")] extern "system"`, `MF_VERSION`
+    0x00020070, `MFSTARTUP_NOSOCKET`) before every camera use (`all_info`, `exists`,
+    `open_camera`) and never match it with `MFShutdown`. Windows reference-counts the platform
+    startup, so the library's shutdown only decrements and Media Foundation stays alive for
+    the process lifetime. Logged once ("Media Foundation pinned …"); a failed MFStartup is
+    logged as a warning and changes nothing else.
+  - **Upgrade check**: if upstream moves to a nokhwa version whose drop no longer calls
+    `MFShutdown`, the pin becomes redundant but harmless; if the camera backend changes to
+    something other than Media Foundation, remove it.
 
 ### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
 Verify:

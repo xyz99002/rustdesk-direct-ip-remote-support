@@ -71,6 +71,53 @@ lazy_static::lazy_static! {
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 const CAMERA_NOT_SUPPORTED: &str = "This platform doesn't support camera yet";
 
+// Fork: keep Media Foundation started for the whole process (Windows).
+//
+// nokhwa (the camera library) counts its open camera objects and, when the count drops to
+// zero, calls MFShutdown()/CoUninitialize() from whichever thread dropped the last camera
+// (`MediaFoundationDevice::drop` -> `de_initialize_mf`). With several camera services
+// starting and stopping concurrently - a local viewing all cameras, each new viewer making
+// the others restart ("SWITCH"), a login listing opening and dropping every camera - one
+// thread shuts the platform down while another is inside ReadSample()/ActivateObject(). That
+// is an access violation inside Media Foundation: the remote process dies with no log line
+// (found via real testing on 2026-10-08, every kill right after a concurrent camera service
+// restart; the count is also not updated atomically). Windows reference-counts MFStartup/
+// MFShutdown, so one extra MFStartup that is never matched keeps the platform alive no
+// matter how often the library shuts "its" reference down. Called before every camera use.
+#[cfg(target_os = "windows")]
+mod mf_pin {
+    #[link(name = "mfplat")]
+    extern "system" {
+        fn MFStartup(version: u32, flags: u32) -> i32;
+    }
+    // mfapi.h: MF_VERSION = (MF_SDK_VERSION 0x0002 << 16) | MF_API_VERSION 0x0070
+    const MF_VERSION: u32 = 0x0002_0070;
+    const MFSTARTUP_NOSOCKET: u32 = 0x1;
+
+    pub fn pin() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let hr = unsafe { MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET) };
+            if hr < 0 {
+                hbb_common::log::warn!(
+                    "Media Foundation could not be pinned (MFStartup HRESULT {hr:#010x}); \
+                     concurrent camera restarts may still shut it down"
+                );
+            } else {
+                hbb_common::log::info!("Media Foundation pinned for the process lifetime");
+            }
+        });
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn pin_media_foundation() {
+    mf_pin::pin();
+}
+
+#[cfg(not(target_os = "windows"))]
+fn pin_media_foundation() {}
+
 pub struct Cameras;
 
 // pre-condition
@@ -81,6 +128,7 @@ pub fn primary_camera_exists() -> bool {
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 impl Cameras {
     pub fn all_info() -> ResultType<Vec<DisplayInfo>> {
+        pin_media_foundation();
         match query(ApiBackend::Auto) {
             Ok(cameras) => {
                 let mut camera_displays = SYNC_CAMERA_DISPLAYS.lock().unwrap();
@@ -194,6 +242,7 @@ impl Cameras {
         if known > 0 {
             return index < known;
         }
+        pin_media_foundation();
         match query(ApiBackend::Auto) {
             Ok(cameras) => index < cameras.len(),
             _ => return false,
@@ -256,6 +305,7 @@ impl Cameras {
     // Fork: the actual open, keyed by our display index for the failure bookkeeping
     // (CAMERA_UNUSABLE / CAMERA_SAFE_FORMAT). `index` is whatever nokhwa should open.
     fn open_camera(idx: u32, index: CameraIndex) -> ResultType<Camera> {
+        pin_media_foundation();
         if CAMERA_UNUSABLE.lock().unwrap().contains(&idx) {
             bail!(
                 "camera{} refused: it produced unusable frames in both its highest-resolution \
