@@ -239,7 +239,15 @@ osx_minimum_system_version = "10.14"
 [profile.release]
 lto = true
 codegen-units = 1
-panic = 'abort'
+# Fork (2026-10-09): upstream uses 'abort', which ends the whole process on any Rust panic -
+# on an unattended remote that means every session, call and the listener die at once. With
+# 'unwind' a panic ends only the thread it happens on; the capture service loops in
+# src/server/service.rs additionally catch it and restart the service like after any other
+# error, and the panic hook in src/core_main.rs logs it. Known cost: a thread that panics
+# while holding a lock leaves it poisoned (RustDesk uses .lock().unwrap() throughout), so a
+# survived panic can degrade the process rather than kill it. See
+# docs/UPSTREAM_UPGRADE_GUIDE.md "Release Profile Unwinds on Panic".
+panic = 'unwind'
 strip = true
 #opt-level = 'z' # only have smaller size after strip
 rpath = true

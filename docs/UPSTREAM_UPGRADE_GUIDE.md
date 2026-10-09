@@ -1354,6 +1354,29 @@ Verify, on any upstream merge that touches `libs/scrap/src/common/camera.rs` (`c
     `MFShutdown`, the pin becomes redundant but harmless; if the camera backend changes to
     something other than Media Foundation, remove it.
 
+### Release Profile Unwinds on Panic; Service Loops Survive a Panic (implemented 2026-10-09)
+Verify, on any upstream merge that touches `[profile.release]` in `Cargo.toml` or the
+`repeat()`/`run()` loops in `src/server/service.rs`:
+- **Why**: upstream's `panic = 'abort'` ends the whole remote process on any Rust panic; for
+  an unattended remote that means every session, call and the listener die together. Product
+  decision (after the camera kills above, which were native crashes this does *not* address):
+  insurance against the next Rust panic in capture code.
+- **Change**: `panic = 'unwind'` in `[profile.release]` (one line, commented). Both service
+  loops wrap their callback in `std::panic::catch_unwind(AssertUnwindSafe(..))` and turn a
+  panic into an ordinary service error ("service callback panicked (see the PANIC entry
+  above)") — same log line, same back-off and restart as any capture error — instead of the
+  thread silently ending with the service dead for the rest of the process lifetime. The panic
+  hook (`core_main.rs`) still logs message, location and backtrace first.
+- **Known cost, deliberately accepted**: a thread that panics while holding a `Mutex` leaves it
+  poisoned, and RustDesk takes locks with `.lock().unwrap()` throughout, so the next thread to
+  take that lock panics too; a survived panic can therefore degrade the process rather than
+  kill it. Panics that cross C callbacks (audio device callbacks, hardware codec callbacks)
+  still abort regardless of the profile. Binary a few percent larger; no runtime cost.
+- **Upgrade check**: keep the `panic = 'unwind'` line through profile merges (upstream will
+  keep sending `'abort'`), and keep the two `catch_unwind` wrappers if the loops are
+  restructured. If a poisoned-lock cascade is ever observed in the field, the decision to
+  revert to `'abort'` is a one-line change.
+
 ### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
 Verify:
 - `src/rendezvous_mediator.rs::start_all()` still has both `--- BEGIN/END DIRECT-IP FORK ---` blocks: the `hbbs_http::sync::start()` call removed, and the registration loop replaced with `loop { sleep(1.).await; }`.
