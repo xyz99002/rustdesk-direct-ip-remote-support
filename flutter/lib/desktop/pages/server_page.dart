@@ -728,7 +728,9 @@ class _ClientRowState extends State<_ClientRow> {
         chips.add(_chip(translate("Voice call"), MyTheme.accent,
             icon: Icons.call));
       } else if (client.incomingVoiceCall) {
-        chips.add(_chip(translate("Incoming voice call"), Colors.orange,
+        chips.add(_chip(
+            "${translate('Requesting')}: ${translate('Voice call')}",
+            Colors.orange,
             icon: Icons.ring_volume));
       }
       if (client.privacyMode) {
@@ -840,13 +842,15 @@ class _ClientRowState extends State<_ClientRow> {
     }
 
     if (client.incomingVoiceCall) {
+      // "Accept call" / "Decline call", not the bare "Accept" / "Dismiss" a session request
+      // uses - the operator must not confuse the two.
       buttons.add(_smallButton(context,
-          text: 'Accept',
-          color: MyTheme.accent,
+          text: 'Accept call',
+          color: Colors.green[700]!,
           icon: Icons.call_rounded,
           onTap: () => _handleVoiceCall(true)));
       buttons.add(_smallButton(context,
-          text: 'Dismiss',
+          text: 'Decline call',
           color: Colors.red,
           icon: Icons.phone_disabled_rounded,
           onTap: () => _handleVoiceCall(false)));
