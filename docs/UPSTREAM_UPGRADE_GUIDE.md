@@ -1302,6 +1302,36 @@ Verify, on any upstream merge that touches `libs/scrap/src/common/camera.rs` (`c
 - **Upgrade check**: if upstream changes `nokhwa` (branch/version) or its `FrameFormat`/`Buffer`
   API, re-check `validate_buffer`'s format arms and `buffer.buffer()`/`source_frame_format()`;
   if upstream reworks `get_capturer_camera`, keep "create the capturer, *then* read the size".
+- **Round 2 (2026-10-09, found via real testing of round 1)**: kills still happened, less
+  often, and once the camera list showed the *same physical camera twice*, standing in for the
+  broken one. Three further changes, all fork-owned:
+  - **Panic hook** (`src/core_main.rs`, right after `init_log`): `std::panic::set_hook` logs
+    `PANIC (process will abort): <message @ file:line>` plus a backtrace and flushes the
+    logger (WriteMode::Direct) before the abort. The hook runs even with `panic = 'abort'`;
+    recovery still isn't possible, but the next kill will name its exact site in the log —
+    previously it left nothing. **This is what to look for first in the remote's log.**
+  - **Open cameras by stable id, not enumeration index** (`camera.rs` `CAMERA_IDS`,
+    `create_camera(idx)` → `open_camera(idx, CameraIndex)`): nokhwa opens
+    `CameraIndex::Index(i)` by re-enumerating the devices and taking the i-th; a flaky virtual
+    camera driver that drops out of / re-enters the enumeration between the login listing and
+    the open shifts the indices, so index i can open a *different* camera — the "same camera
+    twice" symptom. `all_info()` now records each device's Media Foundation symbolic link
+    (`CameraInfo::misc()`) per display index and the capturer opens `CameraIndex::String(id)`,
+    which nokhwa resolves by that link; a vanished device is an open error, never another
+    camera. Linux keeps index-based open (its ids are not the same thing).
+  - **Login listing hardened** (`all_info()` Windows branch): duplicates (same id listed twice
+    by the system) are skipped; a camera that cannot be opened is listed as `online: false`
+    with a placeholder size and counted via `note_capture_failure` instead of `?` failing the
+    whole list (one broken device no longer hides the working ones, and no longer yields an
+    empty camera list); resolutions are cached per device id (`CAMERA_RESOLUTIONS`) so a camera
+    is opened for its size once, not on every login — every login used to touch the broken
+    driver again. `get_camera_resolution` reads the listing instead of opening the camera a
+    second time; `exists()` uses the de-duplicated list once it exists; `CameraCapturer::new`
+    refreshes the cache and sets `online` when the camera really opens.
+  - **Still outstanding**: the crash site itself. If the remote dies again, its log now
+    contains the `PANIC` line (our side) — or nothing, which means a native fault in the
+    driver/Media Foundation; then Event Viewer's "Faulting module name" is the next step, and
+    the only full protection would be capturing cameras in a separate process.
 
 ### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
 Verify:

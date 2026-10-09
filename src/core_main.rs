@@ -213,6 +213,20 @@ pub fn core_main() -> Option<Vec<String>> {
     // Once guard means only the first call per process takes effect, so this must be the first.
     hbb_common::init_log(false, &early_log_name());
 
+    // Fork: the release profile aborts on panic (Cargo.toml `panic = 'abort'`), so a panic
+    // anywhere - e.g. inside the camera capture library when a virtual camera driver misbehaves
+    // - killed the process with nothing in the log (found via real testing: the remote died
+    // the moment a local selected a certain camera, three times, log silent). A panic hook
+    // runs before the abort even with panic=abort, so record the message, location and a
+    // backtrace first; the logger is in WriteMode::Direct, so the line is on disk before the
+    // process goes. Catching/recovering is not possible with panic=abort; this only makes the
+    // cause visible.
+    std::panic::set_hook(Box::new(|info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        log::error!("PANIC (process will abort): {info}\nbacktrace:\n{backtrace}");
+        log::logger().flush();
+    }));
+
     // Handle first-run setup if config doesn't exist.
     // Only a plain GUI launch (no CLI args) or an explicit --setup-* flag may show the
     // interactive dialog; CLI invocations such as `rustdesk --version` (used by CI

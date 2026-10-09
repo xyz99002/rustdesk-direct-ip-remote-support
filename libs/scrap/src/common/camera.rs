@@ -52,6 +52,20 @@ lazy_static::lazy_static! {
     // Fork: cameras that failed in the safe format too - refused outright with a clear error
     // instead of being retried forever. Cleared by restarting the process.
     static ref CAMERA_UNUSABLE: Arc<Mutex<HashSet<u32>>> = Default::default();
+    // Fork: our display index -> the device's stable id (Windows: the Media Foundation
+    // symbolic link, nokhwa's `CameraInfo::misc()`; Linux: unused, index-based open is kept).
+    // nokhwa opens `CameraIndex::Index(i)` by re-enumerating devices and taking the i-th, so
+    // when a flaky virtual camera driver drops out of / re-enters the enumeration between the
+    // listing and the open, index i can land on a *different* camera (found via real testing:
+    // the same physical camera shown twice, standing in for the broken one). Opening by id
+    // (`CameraIndex::String`, matched on the symbolic link) cannot be redirected like that: a
+    // vanished device is an open error, never another camera. Built by all_info().
+    static ref CAMERA_IDS: Arc<Mutex<Vec<String>>> = Default::default();
+    // Fork: device id -> last known resolution. all_info() runs on every camera login and used
+    // to open every camera each time just to read its resolution - every login touched the
+    // broken driver again. Cached after the first successful open; the capturer corrects the
+    // size anyway once it actually opens the camera (CameraCapturer::new).
+    static ref CAMERA_RESOLUTIONS: Arc<Mutex<HashMap<String, (i32, i32)>>> = Default::default();
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -90,7 +104,7 @@ impl Cameras {
                                 camera_index = CameraIndex::Index(0);
                             }
                         }
-                        let camera = Self::create_camera(&camera_index)?;
+                        let camera = Self::open_camera(0, camera_index)?;
                         let resolution = camera.resolution();
                         let (width, height) = (resolution.width() as i32, resolution.height() as i32);
                         camera_displays.push(DisplayInfo {
@@ -110,18 +124,48 @@ impl Cameras {
                             ..Default::default()
                         });
                     } else {
+                        // Fork: see CAMERA_IDS / CAMERA_RESOLUTIONS. Compared with upstream:
+                        // duplicates (same device id listed twice) are skipped; a camera that
+                        // cannot be opened is listed as offline with a placeholder size instead
+                        // of failing the whole list (`?`), so one broken device no longer hides
+                        // the working ones; and a camera whose size is already known is not
+                        // reopened. Our display index is the position in `ids`.
                         let mut x = 0;
+                        let mut ids: Vec<String> = Vec::new();
                         for info in &cameras {
-                            let camera = Self::create_camera(info.index())?;
-                            let resolution = camera.resolution();
-                            let (width, height) = (resolution.width() as i32, resolution.height() as i32);
+                            let id = info.misc();
+                            let name = info.human_name();
+                            if !id.is_empty() && ids.contains(&id) {
+                                log::warn!("camera '{name}' listed twice by the system ({id}); skipping the duplicate");
+                                continue;
+                            }
+                            let our_idx = ids.len() as u32;
+                            let cached = CAMERA_RESOLUTIONS.lock().unwrap().get(&id).cloned();
+                            let (width, height, online) = match cached {
+                                Some((w, h)) => (w, h, true),
+                                None => match Self::open_camera(our_idx, CameraIndex::String(id.clone())) {
+                                    Ok(camera) => {
+                                        let r = camera.resolution();
+                                        let (w, h) = (r.width() as i32, r.height() as i32);
+                                        CAMERA_RESOLUTIONS.lock().unwrap().insert(id.clone(), (w, h));
+                                        (w, h, true)
+                                    }
+                                    Err(e) => {
+                                        let reason = format!("{e}");
+                                        log::warn!("camera{our_idx} '{name}' cannot be opened ({reason}); listed as offline");
+                                        Self::note_capture_failure(our_idx, &reason);
+                                        (640, 480, false)
+                                    }
+                                },
+                            };
+                            ids.push(id);
                             camera_displays.push(DisplayInfo {
                                 x,
                                 y: 0,
-                                name: info.human_name().clone(),
+                                name,
                                 width,
                                 height,
-                                online: true,
+                                online,
                                 cursor_embedded: false,
                                 scale:1.0,
                                 original_resolution: Some(Resolution {
@@ -133,6 +177,7 @@ impl Cameras {
                             });
                             x += width;
                         }
+                        *CAMERA_IDS.lock().unwrap() = ids;
                     }
                 }
                 Ok(camera_displays.clone())
@@ -144,16 +189,14 @@ impl Cameras {
     }
 
     pub fn exists(index: usize) -> bool {
+        // Fork: once all_info() has built the (de-duplicated) list, that is the authority.
+        let known = CAMERA_IDS.lock().unwrap().len();
+        if known > 0 {
+            return index < known;
+        }
         match query(ApiBackend::Auto) {
             Ok(cameras) => index < cameras.len(),
             _ => return false,
-        }
-    }
-
-    fn index_num(index: &CameraIndex) -> u32 {
-        match index {
-            CameraIndex::Index(i) => *i,
-            _ => u32::MAX,
         }
     }
 
@@ -198,13 +241,26 @@ impl Cameras {
         CAMERA_FAILURES.lock().unwrap().remove(&index);
     }
 
-    fn create_camera(index: &CameraIndex) -> ResultType<Camera> {
-        let idx = Self::index_num(index);
+    // Fork: open our display index `idx`. On Windows this resolves to the device's stable id
+    // recorded by all_info() (see CAMERA_IDS) and opens by `CameraIndex::String`; before
+    // all_info() has run, or on Linux, it falls back to nokhwa's enumeration index.
+    fn create_camera(idx: u32) -> ResultType<Camera> {
+        let id = CAMERA_IDS.lock().unwrap().get(idx as usize).cloned();
+        let index = match id {
+            Some(id) if cfg!(target_os = "windows") && !id.is_empty() => CameraIndex::String(id),
+            _ => CameraIndex::Index(idx),
+        };
+        Self::open_camera(idx, index)
+    }
+
+    // Fork: the actual open, keyed by our display index for the failure bookkeeping
+    // (CAMERA_UNUSABLE / CAMERA_SAFE_FORMAT). `index` is whatever nokhwa should open.
+    fn open_camera(idx: u32, index: CameraIndex) -> ResultType<Camera> {
         if CAMERA_UNUSABLE.lock().unwrap().contains(&idx) {
             bail!(
                 "camera{} refused: it produced unusable frames in both its highest-resolution \
                  and default formats",
-                index
+                idx
             );
         }
         let safe_format = CAMERA_SAFE_FORMAT.lock().unwrap().contains(&idx);
@@ -213,19 +269,25 @@ impl Cameras {
         } else {
             RequestedFormatType::AbsoluteHighestResolution
         };
-        let result = Camera::new(
-            index.clone(),
-            RequestedFormat::new::<RgbAFormat>(format_type),
-        );
+        let result = Camera::new(index, RequestedFormat::new::<RgbAFormat>(format_type));
         match result {
             Ok(camera) => Ok(camera),
-            Err(e) => bail!("create camera{} error:  {}", index, e),
+            Err(e) => bail!("create camera{} error:  {}", idx, e),
         }
     }
 
     pub fn get_camera_resolution(index: usize) -> ResultType<Resolution> {
-        let index = CameraIndex::Index(index as u32);
-        let camera = Self::create_camera(&index)?;
+        // Fork: all_info() has just listed this camera (login) or the capturer has opened it;
+        // use that size instead of opening the device a second time. Only an unknown index
+        // (no list yet) still opens the camera.
+        if let Some(info) = SYNC_CAMERA_DISPLAYS.lock().unwrap().get(index) {
+            return Ok(Resolution {
+                width: info.width,
+                height: info.height,
+                ..Default::default()
+            });
+        }
+        let camera = Self::create_camera(index as u32)?;
         let resolution = camera.resolution();
         Ok(Resolution {
             width: resolution.width() as i32,
@@ -283,11 +345,12 @@ pub struct CameraCapturer;
 impl CameraCapturer {
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     fn new(current: usize) -> ResultType<Self> {
-        let index = CameraIndex::Index(current as u32);
-        let camera = Cameras::create_camera(&index)?;
-        // Fork: the cached camera list may still advertise the highest-resolution mode; if this
-        // camera was reopened in its default format, publish the real size so the video service
-        // sizes its encoder correctly (see get_capturer_camera in src/server/video_service.rs).
+        let camera = Cameras::create_camera(current as u32)?;
+        // Fork: the cached camera list may still advertise the highest-resolution mode (or the
+        // placeholder size of a camera that could not be opened at login); now that the camera
+        // is actually open, publish the real size so the video service sizes its encoder
+        // correctly (see get_capturer_camera in src/server/video_service.rs) and remember it
+        // for the next login listing (CAMERA_RESOLUTIONS).
         {
             let res = camera.resolution();
             let (w, h) = (res.width() as i32, res.height() as i32);
@@ -301,6 +364,13 @@ impl CameraCapturer {
                     info.width = w;
                     info.height = h;
                 }
+                info.online = true;
+            }
+            if let Some(id) = CAMERA_IDS.lock().unwrap().get(current) {
+                CAMERA_RESOLUTIONS
+                    .lock()
+                    .unwrap()
+                    .insert(id.clone(), (w, h));
             }
         }
         Ok(CameraCapturer {
