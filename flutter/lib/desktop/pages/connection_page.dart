@@ -146,6 +146,11 @@ class _ConnectionPageState extends State<ConnectionPage>
   /// docs/FORK_PROFILE_SPEC.md for why this has no remote-side enforcement.
   bool get _desktopShareEnabled => mainGetBoolOptionSync("desktop-share-enabled");
 
+  /// Fork config: shows/hides the Transfer file button (`file-transfer-enabled`, mapped by
+  /// src/fork_config.rs onto upstream's "enable-file-transfer" permission, which also makes
+  /// the remote reject file-transfer logins). Defaults to shown if the config is absent.
+  bool get _fileTransferEnabled => mainGetBoolOptionSync("enable-file-transfer");
+
   /// Callback for the Support button. Opens *only* a VIEW_CAMERA session (which starts a
   /// Voice Call on it once connected — see ViewCameraPage.initState()).
   ///
@@ -233,18 +238,18 @@ class _ConnectionPageState extends State<ConnectionPage>
                     ),
                   // Fork (2026-10-09): upstream offers "Transfer file" in the dropdown next
                   // to its Connect button; this fork's panel replaced that dropdown with the
-                  // Support/Desktop buttons and lost the option. Restored as a plain button.
-                  // Always shown - upstream has no local gate for it either; the remote's
-                  // own "enable-file-transfer" permission still governs acceptance.
-                  SizedBox(
-                    height: 28.0,
-                    child: OutlinedButton(
-                      onPressed: () {
-                        onConnect(isFileTransfer: true);
-                      },
-                      child: Text(translate("Transfer file")),
+                  // Support/Desktop buttons and lost the option. Restored as a plain button,
+                  // gated by config.toml file-transfer-enabled like the other two.
+                  if (_fileTransferEnabled)
+                    SizedBox(
+                      height: 28.0,
+                      child: OutlinedButton(
+                        onPressed: () {
+                          onConnect(isFileTransfer: true);
+                        },
+                        child: Text(translate("Transfer file")),
+                      ),
                     ),
-                  ),
                 ]),
           ),
         ],

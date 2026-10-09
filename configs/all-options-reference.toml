@@ -67,6 +67,12 @@ desktop-share-enabled = "Y"
 # STATUS: working (2026-09-02).
 show-setup-ui = "Y"
 
+# file-transfer-enabled (boolean "Y"/"N", OPTIONAL — defaults to "Y" if absent)
+# Shows/hides the "Transfer file" button. Maps to Config::set_option("enable-file-transfer", ...)
+# — reused by upstream's own login handler to accept/reject file-transfer sessions remotely
+# ("No permission of file transfer"). STATUS: working, both locally and remotely (2026-10-09).
+file-transfer-enabled = "Y"
+
 # voice-call-enabled (boolean "Y"/"N", OPTIONAL — defaults to "Y" if absent)
 # Voice calls on this machine. Maps to Config::set_option("voice-call-enabled", ...), a
 # fork-specific key. Remote role: src/server/connection.rs rejects every VoiceCallRequest
@@ -100,7 +106,7 @@ log-level = "info"
 # ===========================================================================================
 # UPSTREAM RUSTDESK OPTIONS — a representative subset of the ~130 keys cataloged in
 # docs/UPSTREAM_CONFIG_REFERENCE.md Section 4 (source: libs/hbb_common/src/config.rs). None of
-# these are set by fork_config.rs except approve-mode, enable-camera, enable-lan-discovery
+# these are set by fork_config.rs except approve-mode, enable-camera, enable-file-transfer, enable-lan-discovery
 # (overwritten every startup from the schema keys above — see the note at the end of this
 # file) and desktop-share-enabled/show-setup-ui (fork-specific keys, no upstream meaning).
 # ===========================================================================================
@@ -108,7 +114,7 @@ log-level = "info"
 # --- Session / remote-control permissions (Y/N unless noted) ---
 enable-keyboard = "Y"
 enable-clipboard = "Y"
-enable-file-transfer = "Y"
+enable-file-transfer = "Y"   # OVERWRITTEN every startup from file-transfer-enabled above
 enable-camera = "Y"          # OVERWRITTEN every startup from support-enabled above
 enable-terminal = "Y"
 enable-audio = "Y"

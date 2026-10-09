@@ -740,11 +740,15 @@ regain an implicit second connect call.
 (plus "View camera"/"Terminal") in a dropdown next to its Connect button; this fork's panel
 replaced that dropdown with the Support/Desktop buttons and the option was lost. A third,
 always-shown `OutlinedButton` ("Transfer file") now calls `onConnect(isFileTransfer: true)`,
-i.e. upstream's own `connect()` → `rustDeskWinManager.newFileTransfer()` path, unchanged. There
-is deliberately no local config gate (upstream has none either); the remote's own
-`enable-file-transfer` permission governs acceptance. The button row became a `Wrap` so a third
-button can't overflow the 320 px panel. Terminal/port-forward are still not offered — not
-requested.
+i.e. upstream's own `connect()` → `rustDeskWinManager.newFileTransfer()` path, unchanged. Gated
+like the other two buttons by a fork config key, `file-transfer-enabled` (optional, absent =
+`"Y"`; `fork_config.rs` maps it onto upstream's own `enable-file-transfer` permission exactly as
+`support-enabled` → `enable-camera`, overwriting any plain `enable-file-transfer` in the file —
+`docs/CONFIG_REFERENCE.md` §4.14). That permission is what the remote's login handler already
+checks ("No permission of file transfer"), so `"N"` on the remote rejects file-transfer
+sessions outright; on the local it hides the button (`_fileTransferEnabled` reads
+`enable-file-transfer`). The button row became a `Wrap` so a third button can't overflow the
+320 px panel. Terminal/port-forward are still not offered — not requested.
 
 **One click = one new session window (changed 2026-10-09)**: upstream's connect panel never
 opens a second Desktop/camera/file session to the *same* peer id — a second click resolves to

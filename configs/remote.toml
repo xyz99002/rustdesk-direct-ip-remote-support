@@ -37,6 +37,13 @@ role = "remote"
 support-enabled = "Y"
 desktop-share-enabled = "Y"
 
+# file-transfer-enabled: Optional — defaults to "Y" if omitted. Maps onto upstream's own
+#   "enable-file-transfer" permission (overwriting any plain enable-file-transfer below), which
+#   THIS host checks at login: "N" rejects every file-transfer session outright ("No permission
+#   of file transfer"), fully enforced remotely — the connecting side's own setting only hides
+#   its button.
+file-transfer-enabled = "Y"
+
 # Optional — set to "N" to hide the Settings entry point entirely on a locked-down remote host.
 show-setup-ui = "Y"
 
@@ -87,7 +94,7 @@ access-mode = ""                        # "Permissions" combo box: "" = Custom (
 enable-keyboard = "Y"                   # "Enable keyboard/mouse" (connecting side controls this host)
 enable-remote-printer = "Y"             # "Enable remote printer" (Windows only)
 enable-clipboard = "Y"                  # "Enable clipboard"
-enable-file-transfer = "Y"              # "Enable file transfer"
+# enable-file-transfer: see file-transfer-enabled above — do not set here, it is overwritten.
 enable-audio = "Y"                      # "Enable audio" (this host's audio, sent to the connecting side)
 # enable-camera: see support-enabled above — do not set here, it is overwritten.
 enable-terminal = "N"                   # "Enable terminal"
@@ -129,6 +136,7 @@ allow-auto-record-incoming = "N"        # "Automatically record incoming session
 # approve-mode = ""                                 # <- from auth-mode (empty = upstream's Both default)
 # verification-method = ""                          # <- from auth-mode (empty = upstream's default)
 # enable-camera = "Y"                               # <- from support-enabled
+# enable-file-transfer = "Y"                        # <- from file-transfer-enabled
 # enable-lan-discovery = "N"                        # <- unconditional, ADR-0003
 # direct-server = "Y"                               # <- unconditional, ADR-0003 (see Security section above)
 # direct-access-port = "21118"                      # <- from listen-port above

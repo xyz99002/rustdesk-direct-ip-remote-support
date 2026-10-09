@@ -141,6 +141,17 @@ missing required key is `ConfigError::MissingField`.
 | **Not the same as** | upstream's `enable-audio` permission, which only gates the remote → local audio stream; with it off a call still connects and the remote still hears the caller. |
 | **Status** | ✅ **Working** (2026-10-08). Fully enforced remotely; the local-side gating is a courtesy. |
 
+### 4.14 `file-transfer-enabled` — NEW (2026-10-09)
+
+| | |
+|---|---|
+| **Type** | boolean (`"Y"`/`"N"`) |
+| **Required** | No. Defaults to `true` (enabled) if absent. |
+| **Source** | [src/fork_config.rs](../src/fork_config.rs) `apply()`, `validate()`'s `raw.file_transfer_enabled.unwrap_or(true)` |
+| **Applied to** | `Config::set_option("enable-file-transfer", "Y"/"N")` — upstream's own permission, overwritten every startup (like `support-enabled` → `enable-camera`) |
+| **Consumed by** | Remote role: upstream's login handler in `src/server/connection.rs` (`Permission::file`, "No permission of file transfer") — fully enforced. Local role: `connection_page.dart` `_fileTransferEnabled` shows/hides the "Transfer file" button. |
+| **Status** | ✅ **Working** (2026-10-09), both locally and remotely. |
+
 ### 4.8–4.12 `direct-ip-listen-address`, `direct-ip-listen-port`, `direct-ip-video-quality`, `direct-ip-audio-quality`, `direct-ip-log-level`
 
 All required, all parsed and validated exactly as before the consolidation.
@@ -190,6 +201,7 @@ upstream behavior.
 | `direct-ip-desktop-share-enabled` | ⚠️ Partially working (local-only, no remote enforcement) |
 | `direct-ip-show-setup-ui` | ✅ Working (new, optional, defaults to shown) |
 | `voice-call-enabled` | ✅ Working (2026-10-08, optional, defaults to enabled; enforced remotely) |
+| `file-transfer-enabled` | ✅ Working (2026-10-09, optional, defaults to enabled; enforced remotely via `enable-file-transfer`) |
 | `direct-ip-listen-port` | ✅ Working (2026-09-30 — forced into `direct-access-port`) |
 | `direct-ip-listen-address` / `-video-quality` / `-audio-quality` / `-log-level` | ❌ Not wired |
 | *(unconditional)* disable-account / hide-network-settings / enable-lan-discovery / direct-server / direct-access-port | ✅ Working |

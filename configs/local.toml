@@ -10,9 +10,8 @@
 #
 # "local" means this instance may only INITIATE outbound direct-IP connections; it will never
 # accept an inbound session. Typical use: the machine an operator sits at to reach out to a
-# remote host. The connection page shows a hostname/IP field, Support/Desktop buttons (see
-# support-enabled / desktop-share-enabled below) and an always-present "Transfer file" button
-# (no local gate; the remote's enable-file-transfer permission decides).
+# remote host. The connection page shows a hostname/IP field and Support/Desktop/Transfer file
+# buttons (see support-enabled / desktop-share-enabled / file-transfer-enabled below).
 #
 # File location: next to rustdesk.exe (or the rustdesk binary on Linux/macOS) — copied here
 # from this sample by the first-run setup dialog, or hand-edited/pre-seeded directly.
@@ -41,6 +40,12 @@ role = "local"
 # At least one of these two must be true, or the connect panel would have nothing on it.
 support-enabled = "Y"
 desktop-share-enabled = "Y"
+
+# file-transfer-enabled: Optional — defaults to "Y" if omitted. Shows/hides the "Transfer file"
+#   button. Maps onto upstream's own "enable-file-transfer" permission (overwriting any plain
+#   enable-file-transfer below), which the REMOTE side also checks at login — so "N" on the
+#   remote rejects file-transfer sessions outright ("No permission of file transfer").
+file-transfer-enabled = "Y"
 
 # Optional — defaults to "Y" (shown) if omitted. Set to "N" to hide the Settings entry point
 # entirely (e.g. for an unattended kiosk-style operator machine).
@@ -89,7 +94,7 @@ access-mode = ""                        # "Permissions" combo box: "" = Custom (
 enable-keyboard = "Y"                   # "Enable keyboard/mouse"
 enable-remote-printer = "Y"             # "Enable remote printer" (Windows only)
 enable-clipboard = "Y"                  # "Enable clipboard"
-enable-file-transfer = "Y"              # "Enable file transfer"
+# enable-file-transfer: see file-transfer-enabled above — do not set here, it is overwritten.
 enable-audio = "Y"                      # "Enable audio"
 # enable-camera: see support-enabled above — do not set here, it is overwritten.
 enable-terminal = "N"                   # "Enable terminal"
@@ -129,6 +134,7 @@ allow-auto-record-outgoing = "N"        # "Automatically record outgoing session
 # approve-mode = ""                  # <- from auth-mode (empty = upstream's Both default)
 # verification-method = ""           # <- from auth-mode (empty = upstream's default)
 # enable-camera = "Y"                # <- from support-enabled
+# enable-file-transfer = "Y"         # <- from file-transfer-enabled
 # enable-lan-discovery = "N"         # <- unconditional, ADR-0003
 # direct-server = "Y"                # <- unconditional, ADR-0003 (see Security section above)
 # direct-access-port = "21118"       # <- from listen-port above

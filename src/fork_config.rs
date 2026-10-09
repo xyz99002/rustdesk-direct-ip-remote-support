@@ -142,6 +142,11 @@ mod keys {
     /// `connection.rs` reject every `VoiceCallRequest` outright (the caller is told why); on a
     /// local it hides the "Voice call" button and stops the Support button's automatic dial.
     pub const VOICE_CALL_ENABLED: &str = "voice-call-enabled";
+    /// Optional, defaults to enabled. Like `support-enabled` -> `enable-camera`, this maps onto
+    /// upstream's own `enable-file-transfer` permission, which the remote's login handler
+    /// already checks ("No permission of file transfer") and the local connect panel reads to
+    /// show/hide its "Transfer file" button.
+    pub const FILE_TRANSFER_ENABLED: &str = "file-transfer-enabled";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,6 +211,10 @@ pub struct ForkConfig {
     /// remote -> local audio stream, not the call itself (see docs/UPSTREAM_UPGRADE_GUIDE.md
     /// "Voice Call On/Off Control").
     pub voice_call_enabled: bool,
+    /// Gates the "Transfer file" button (local UI) and, via [`apply`], the remote's acceptance
+    /// of file-transfer sessions (existing upstream `enable-file-transfer` permission, checked
+    /// at login in `src/server/connection.rs`). Defaults to `true` if the key is absent.
+    pub file_transfer_enabled: bool,
     /// Parsed and validated (must be a valid IP), but genuinely unused — `hbb_common::tcp::
     /// listen_any()` (the real listener [`apply`] forces on) takes only a port, no bind address,
     /// so there is nothing to wire this to yet. Distinct from `listen_port` below, which *is*
@@ -236,6 +245,7 @@ struct RawForkConfig {
     desktop_share_enabled: Option<bool>,
     show_setup_ui: Option<bool>,
     voice_call_enabled: Option<bool>,
+    file_transfer_enabled: Option<bool>,
     listen_address: Option<String>,
     listen_port: Option<u16>,
     video_quality: Option<String>,
@@ -372,6 +382,8 @@ fn validate(raw: RawForkConfig) -> Result<ForkConfig, ConfigError> {
     // Same exception: an existing deployment's config.toml predates this key; voice calls
     // stay enabled unless explicitly switched off.
     let voice_call_enabled = raw.voice_call_enabled.unwrap_or(true);
+    // Same exception: added 2026-10-09, existing config.toml files predate it.
+    let file_transfer_enabled = raw.file_transfer_enabled.unwrap_or(true);
 
     let listen_address = raw
         .listen_address
@@ -411,6 +423,7 @@ fn validate(raw: RawForkConfig) -> Result<ForkConfig, ConfigError> {
         desktop_share_enabled,
         show_setup_ui,
         voice_call_enabled,
+        file_transfer_enabled,
         listen_address,
         listen_port,
         video_quality,
@@ -443,6 +456,7 @@ fn read_raw_from_table(options: &Table) -> RawForkConfig {
         desktop_share_enabled: get(keys::DESKTOP_SHARE_ENABLED).and_then(|v| bool_from_yn(&v)),
         show_setup_ui: get(keys::SHOW_SETUP_UI).and_then(|v| bool_from_yn(&v)),
         voice_call_enabled: get(keys::VOICE_CALL_ENABLED).and_then(|v| bool_from_yn(&v)),
+        file_transfer_enabled: get(keys::FILE_TRANSFER_ENABLED).and_then(|v| bool_from_yn(&v)),
         listen_address: get(keys::LISTEN_ADDRESS),
         listen_port: get(keys::LISTEN_PORT).and_then(|v| v.parse::<u16>().ok()),
         video_quality: get(keys::VIDEO_QUALITY),
@@ -473,6 +487,7 @@ fn mirror_upstream_options(options: &Table) {
         keys::LOG_LEVEL,
         keys::SHOW_SETUP_UI,
         keys::VOICE_CALL_ENABLED,
+        keys::FILE_TRANSFER_ENABLED,
     ];
 
     for (key, value) in options {
@@ -564,6 +579,16 @@ pub fn apply(config: &ForkConfig) {
         if config.show_setup_ui { "Y" } else { "N" }.to_owned(),
     );
 
+    // Reuses the existing upstream `enable-file-transfer` permission (checked at login by
+    // `src/server/connection.rs`, "No permission of file transfer") so the remote side rejects
+    // file-transfer sessions when file_transfer_enabled is false; the local connect panel
+    // reads the same option to show/hide its "Transfer file" button. Overwrites any plain
+    // `enable-file-transfer` present in config.toml, exactly like `enable-camera` above.
+    Config::set_option(
+        "enable-file-transfer".to_owned(),
+        if config.file_transfer_enabled { "Y" } else { "N" }.to_owned(),
+    );
+
     // Voice calls: read by `src/server/connection.rs` (remote role, rejects the request) and
     // by the local UI through `main_get_option_sync` (hides the button, no automatic dial).
     // Fork-specific key, no upstream meaning. See `ForkConfig::voice_call_enabled`.
@@ -636,13 +661,14 @@ pub fn apply(config: &ForkConfig) {
 
     log::info!(
         "fork_config: applied role={:?} auth_mode={:?} support_enabled={} desktop_share_enabled={} show_setup_ui={} \
-         voice_call_enabled={} (conn-type={conn_type}, approve-mode={approve_mode:?})",
+         voice_call_enabled={} file_transfer_enabled={} (conn-type={conn_type}, approve-mode={approve_mode:?})",
         config.role,
         config.auth_mode,
         config.support_enabled,
         config.desktop_share_enabled,
         config.show_setup_ui,
         config.voice_call_enabled,
+        config.file_transfer_enabled,
     );
 }
 
@@ -808,6 +834,7 @@ mod tests {
             desktop_share_enabled: Some(desktop_share_enabled),
             show_setup_ui: None,
             voice_call_enabled: None,
+            file_transfer_enabled: None,
             listen_address: Some("0.0.0.0".to_owned()),
             listen_port: Some(21118),
             video_quality: Some("medium".to_owned()),
@@ -975,6 +1002,17 @@ mod tests {
     }
 
     #[test]
+    fn file_transfer_enabled_defaults_to_true_when_absent() {
+        let raw = valid_raw("local", "ask");
+        assert_eq!(raw.file_transfer_enabled, None);
+        assert!(validate(raw).unwrap().file_transfer_enabled);
+
+        let mut raw = valid_raw("local", "ask");
+        raw.file_transfer_enabled = Some(false);
+        assert!(!validate(raw).unwrap().file_transfer_enabled);
+    }
+
+    #[test]
     fn bool_from_yn_only_accepts_y_and_n() {
         assert_eq!(bool_from_yn("Y"), Some(true));
         assert_eq!(bool_from_yn("N"), Some(false));
@@ -1000,6 +1038,7 @@ mod tests {
         original_desktop_share_enabled: String,
         original_show_setup_ui: String,
         original_voice_call_enabled: String,
+        original_enable_file_transfer: String,
         original_enable_lan_discovery: String,
     }
 
@@ -1019,6 +1058,7 @@ mod tests {
                 original_desktop_share_enabled: Config::get_option("desktop-share-enabled"),
                 original_show_setup_ui: Config::get_option("show-setup-ui"),
                 original_voice_call_enabled: Config::get_option("voice-call-enabled"),
+                original_enable_file_transfer: Config::get_option("enable-file-transfer"),
                 original_enable_lan_discovery: Config::get_option("enable-lan-discovery"),
             }
         }
@@ -1053,6 +1093,10 @@ mod tests {
             Config::set_option(
                 "voice-call-enabled".to_owned(),
                 self.original_voice_call_enabled.clone(),
+            );
+            Config::set_option(
+                "enable-file-transfer".to_owned(),
+                self.original_enable_file_transfer.clone(),
             );
             Config::set_option(
                 "enable-lan-discovery".to_owned(),
@@ -1180,6 +1224,21 @@ mod tests {
         let cfg = validate(raw).unwrap();
         apply(&cfg);
         assert_eq!(Config::get_option("voice-call-enabled"), "N");
+    }
+
+    #[test]
+    fn apply_maps_file_transfer_enabled_to_enable_file_transfer_permission() {
+        let _guard = GlobalStateGuard::new();
+
+        let cfg = validate(valid_raw("local", "ask")).unwrap(); // absent -> default enabled
+        apply(&cfg);
+        assert_eq!(Config::get_option("enable-file-transfer"), "Y");
+
+        let mut raw = valid_raw("local", "ask");
+        raw.file_transfer_enabled = Some(false);
+        let cfg = validate(raw).unwrap();
+        apply(&cfg);
+        assert_eq!(Config::get_option("enable-file-transfer"), "N");
     }
 
     #[test]
