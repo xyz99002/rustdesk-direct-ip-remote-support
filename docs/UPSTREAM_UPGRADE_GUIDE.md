@@ -759,18 +759,27 @@ session in its own window, also for a host that is already open (e.g. one Deskto
 monitor). Implemented as a `forceNewWindow` flag threaded `connection_page.onConnect()` →
 `connect()` → `connectMainDesktop()` (and the `kWindowConnect` relay in
 `desktop_home_page.dart`) → `newRemoteDesktop()/newViewCamera()/newFileTransfer()` →
-`newSession()`, which then goes straight to upstream's own `_newSession(openInTabs: false)`:
-reuse a hidden inactive window of that type, else `newSessionWindow()`. A fresh window has its
-own isolate and an empty tab list, so the duplicate peer id is no conflict — this is exactly
-the path upstream's "open monitor in new window" (`openMonitorSession`) already uses, and the
-Rust side keeps one session per `SessionID`, several per peer. Consequences: the "Open new
-connections in tabs" setting no longer applies to these buttons (nothing else in the fork
-calls them with `forceNewWindow`), and a second Support session's automatic voice call is
-refused silently by the remote's duplicate-call guard (expected; see that section). The
-per-monitor toolbar option ("Show displays as individual windows") still works as in upstream.
-**Upgrade check**: if upstream changes `_newSession()`'s inactive-window reuse or how a sub
-window receives its first session (`runMultiWindow` params), re-test two Desktop windows to
-the same host.
+`newSession()`. **Corrected 2026-10-10 (found via real testing: the first version opened a bare
+new window, which showed nothing and produced no accept prompt on the remote).** Upstream's
+Rust session table (`sessions::insert_session` in `src/flutter.rs`) keys core connections by
+`(peer id, conn type)` and `session_start_` only starts a connection for a peer's *first* UI
+session — a second window for a host that is already connected can never be a second
+connection; the Rust side silently attaches it to the existing one. Upstream's own "open
+monitor in new window" (`openMonitorSession`) handles that by passing `tab_window_id` +
+`display`/`displays`, so the new window calls `session_add_existed` and shows that display on
+the existing connection. `newSession(forceNewWindow: true)` now does the same: if
+`peerGetSessionsCount` says the host is connected (Desktop or camera), it opens a new window
+attached to the existing connection showing display 0 (the toolbar's monitor menu then picks
+any other monitor — one connection, one row on the remote's CM, "Monitor 1, Monitor 2" once
+both are captured); if the host is not connected, `_newSession(openInTabs: false)` starts a
+genuinely new connection in a new window; Transfer file for a connected host falls through to
+upstream's activate-existing-window behaviour (no multi-window file transfer upstream).
+Consequences: no second accept prompt for a host already connected (same connection); the
+Support auto-dial does not fire for the attached window (it only fires on a live PeerInfo,
+and the call already runs on the first window); the "Open new connections in tabs" setting
+does not apply to these buttons. **Upgrade check**: if upstream changes `session_add_existed`,
+`insert_peer_session_id` or the `display`/`displays`/`tab_window_id` window parameters, re-test
+two Desktop windows to the same host.
 
 ### Support Voice Call Dials on Session Acceptance, Not on the First Video Frame; Camera/Desktop Window Usable Without Video (changed 2026-10-08)
 Verify, on any upstream merge that touches `FfiModel.handlePeerInfo()` (`flutter/lib/models/model.dart`)

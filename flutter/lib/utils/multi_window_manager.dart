@@ -8,6 +8,8 @@ import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/main.dart';
 import 'package:flutter_hbb/models/input_model.dart';
+import 'package:flutter_hbb/models/model.dart';
+import 'package:flutter_hbb/models/platform_model.dart';
 
 /// must keep the order
 // ignore: constant_identifier_names
@@ -290,7 +292,42 @@ class RustDeskMultiWindowManager {
     final msg = jsonEncode(params);
 
     if (forceNewWindow) {
-      return _newSession(false, type, methodName, remoteId, windows, msg);
+      // Upstream keeps ONE core connection per (host, type) in its Rust session table
+      // (`sessions::insert_session` in src/flutter.rs keys by peer id + conn type, and
+      // `session_start_` only starts the connection for the first UI of a peer). A second
+      // window for a host that is already connected therefore cannot be a second connection;
+      // upstream's own "open monitor in new window" attaches the new window to the existing
+      // connection instead (`session_add_existed` with a display list), and that is what is
+      // done here: same connection, new window showing display 0, from where the toolbar's
+      // monitor menu selects any other monitor (found via real testing: creating a bare new
+      // window gave a blank window and no second accept prompt on the remote - the Rust side
+      // had attached it to the existing connection with no display to show). A host with no
+      // open connection gets a genuinely new one, in a new window, as before. File transfer
+      // has no multi-window support upstream, so a second Transfer file click for a connected
+      // host activates the existing window (upstream behaviour).
+      final connType = type == WindowType.ViewCamera
+          ? ConnType.viewCamera.index
+          : type == WindowType.FileTransfer
+              ? ConnType.fileTransfer.index
+              : ConnType.defaultConn.index;
+      final connected =
+          bind.peerGetSessionsCount(id: remoteId, connType: connType) > 0;
+      if (!connected) {
+        return _newSession(false, type, methodName, remoteId, windows, msg);
+      }
+      if (type == WindowType.RemoteDesktop || type == WindowType.ViewCamera) {
+        final attachParams = {
+          'type': type.index,
+          'id': remoteId,
+          'tab_window_id': windows.isNotEmpty ? windows.first : kMainWindowId,
+          'display': 0,
+          'displays': [0],
+        };
+        return _newSession(
+            false, type, methodName, remoteId, windows, jsonEncode(attachParams));
+      }
+      // File transfer: fall through to upstream's logic below, which activates the
+      // existing window for this host.
     }
 
     // separate window for file transfer is not supported
