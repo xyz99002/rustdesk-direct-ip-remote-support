@@ -649,9 +649,15 @@ class _ClientRowState extends State<_ClientRow> {
 
   // "Desktop · Monitor 1, Monitor 2" / "Camera · [USB Camera 👁]".
   Widget _buildTypeAndSources(ServerModel serverModel) {
+    final pending = !client.authorized;
     final children = <Widget>[
+      // A pending request is the one thing the operator must read before clicking Accept,
+      // so its type is larger and orange until it is accepted or rejected.
       Text(_typeLabel(),
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: pending ? 15 : 13,
+              color: pending ? Colors.orange : null)),
     ];
     for (final source in client.sources) {
       children.add(Text(" · ", style: TextStyle(color: MyTheme.darkGray)));
@@ -705,7 +711,10 @@ class _ClientRowState extends State<_ClientRow> {
   Widget _buildStateLine() {
     final chips = <Widget>[];
     if (!client.authorized) {
-      chips.add(_chip(translate("Request access to your device"), Colors.orange,
+      // Say what is being asked for, not just that something is: the operator decides
+      // between "Desktop", "Camera", "File Transfer", ... from this line.
+      chips.add(_chip(
+          "${translate('Requesting')}: ${_typeLabel()}", Colors.orange,
           icon: Icons.hourglass_top));
     } else if (client.disconnected) {
       chips.add(_chip(translate("Disconnected"), Colors.grey,
