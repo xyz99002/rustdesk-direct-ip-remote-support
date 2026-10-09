@@ -284,19 +284,7 @@ impl<T: Subscriber + From<ConnInner>> ServiceTmpl<T> {
                         may_reset = true;
                         state.init();
                     }
-                    // Fork: a panic inside the service callback (release profile unwinds, see
-                    // Cargo.toml) is treated like a returned error: logged (the panic hook has
-                    // already written the location) and retried after the back-off, instead
-                    // of ending this service thread for the rest of the process lifetime.
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        callback(sp.clone(), &mut state)
-                    }))
-                    .unwrap_or_else(|_| {
-                        Err(hbb_common::anyhow::anyhow!(
-                            "service callback panicked (see the PANIC entry above)"
-                        ))
-                    });
-                    if let Err(err) = result {
+                    if let Err(err) = callback(sp.clone(), &mut state) {
                         log::error!("Error of {} service: {}", sp.name(), err);
                         thread::sleep(time::Duration::from_millis(MAX_ERROR_TIMEOUT));
                         #[cfg(windows)]
@@ -329,16 +317,7 @@ impl<T: Subscriber + From<ConnInner>> ServiceTmpl<T> {
                 if sp.has_subscribes() {
                     log::debug!("Enter {} service inner loop", sp.name());
                     let tm = time::Instant::now();
-                    // Fork: see `repeat()` above - a panic in the video/camera capture loop
-                    // becomes a service error with the usual exponential back-off.
-                    let result =
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback(sp.clone())))
-                            .unwrap_or_else(|_| {
-                                Err(hbb_common::anyhow::anyhow!(
-                                    "service callback panicked (see the PANIC entry above)"
-                                ))
-                            });
-                    if let Err(err) = result {
+                    if let Err(err) = callback(sp.clone()) {
                         log::error!("Error of {} service: {}", sp.name(), err);
                         if tm.elapsed() > time::Duration::from_millis(MAX_ERROR_TIMEOUT) {
                             error_timeout = HIBERNATE_TIMEOUT;
