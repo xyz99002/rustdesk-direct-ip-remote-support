@@ -195,30 +195,48 @@ class _ConnectionPageState extends State<ConnectionPage>
           ).workaroundFreezeLinuxMint(),
           Padding(
             padding: const EdgeInsets.only(top: 13.0),
-            child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-              if (_supportEnabled)
-                SizedBox(
-                  height: 28.0,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      onSupport();
-                    },
-                    child: Text(translate("Support")),
+            // Wrap, not Row: with three buttons a long translation would overflow the
+            // 320 px panel; wrapping to a second line is the harmless outcome.
+            child: Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (_supportEnabled)
+                    SizedBox(
+                      height: 28.0,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          onSupport();
+                        },
+                        child: Text(translate("Support")),
+                      ),
+                    ),
+                  if (_desktopShareEnabled)
+                    SizedBox(
+                      height: 28.0,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          onConnect();
+                        },
+                        child: Text(translate("Desktop")),
+                      ),
+                    ),
+                  // Fork (2026-10-09): upstream offers "Transfer file" in the dropdown next
+                  // to its Connect button; this fork's panel replaced that dropdown with the
+                  // Support/Desktop buttons and lost the option. Restored as a plain button.
+                  // Always shown - upstream has no local gate for it either; the remote's
+                  // own "enable-file-transfer" permission still governs acceptance.
+                  SizedBox(
+                    height: 28.0,
+                    child: OutlinedButton(
+                      onPressed: () {
+                        onConnect(isFileTransfer: true);
+                      },
+                      child: Text(translate("Transfer file")),
+                    ),
                   ),
-                ),
-              if (_supportEnabled && _desktopShareEnabled)
-                const SizedBox(width: 8),
-              if (_desktopShareEnabled)
-                SizedBox(
-                  height: 28.0,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      onConnect();
-                    },
-                    child: Text(translate("Desktop")),
-                  ),
-                ),
-            ]),
+                ]),
           ),
         ],
       ),

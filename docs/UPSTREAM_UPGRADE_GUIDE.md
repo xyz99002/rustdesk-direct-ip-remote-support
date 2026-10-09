@@ -736,6 +736,29 @@ independent — neither triggers the other. **Upgrade check**: if a future upstr
 how Support-style camera sessions are initiated, make sure this fork's `onSupport()` doesn't
 regain an implicit second connect call.
 
+**Transfer file button (added 2026-10-09)**: upstream's connect panel offers "Transfer file"
+(plus "View camera"/"Terminal") in a dropdown next to its Connect button; this fork's panel
+replaced that dropdown with the Support/Desktop buttons and the option was lost. A third,
+always-shown `OutlinedButton` ("Transfer file") now calls `onConnect(isFileTransfer: true)`,
+i.e. upstream's own `connect()` → `rustDeskWinManager.newFileTransfer()` path, unchanged. There
+is deliberately no local config gate (upstream has none either); the remote's own
+`enable-file-transfer` permission governs acceptance. The button row became a `Wrap` so a third
+button can't overflow the 320 px panel. Terminal/port-forward are still not offered — not
+requested.
+
+**Second session to the same host / one window per monitor (checked 2026-10-09, no change)**:
+the fork's connect flow is upstream's (`connect()` → `connectMainDesktop()` → the
+`rustDeskWinManager.new*()` functions, all unchanged). Upstream itself never opens a second
+Desktop (or camera) session to the *same* peer id from the connect panel — a second click
+resolves to the existing tab (`DesktopTabController.add` with an existing key, and
+`kWindowEventActiveSession`). Viewing each monitor in its own window is upstream's per-session
+toolbar option **"Show displays as individual windows"** (`kKeyShowDisplaysAsIndividualWindows`,
+toolbar → Display menu; default in Settings → Display, which this fork gates behind Advance
+Setup), after which picking a monitor in the toolbar's monitor menu calls
+`openMonitorInNewTabOrWindow()` → `kWindowEventOpenMonitorSession` → `openMonitorSession()`
+(`multi_window_manager.dart`) and opens a new window for that display. All of that is intact in
+the fork (`remote_toolbar.dart`, `setting_widgets.dart`, `desktop_home_page.dart`'s handler).
+
 ### Support Voice Call Dials on Session Acceptance, Not on the First Video Frame; Camera/Desktop Window Usable Without Video (changed 2026-10-08)
 Verify, on any upstream merge that touches `FfiModel.handlePeerInfo()` (`flutter/lib/models/model.dart`)
 or `desktop/pages/view_camera_page.dart`'s `initState()`:

@@ -10,8 +10,9 @@
 #
 # "local" means this instance may only INITIATE outbound direct-IP connections; it will never
 # accept an inbound session. Typical use: the machine an operator sits at to reach out to a
-# remote host. The connection page shows a hostname/IP field and Support/Desktop buttons (see
-# support-enabled / desktop-share-enabled below).
+# remote host. The connection page shows a hostname/IP field, Support/Desktop buttons (see
+# support-enabled / desktop-share-enabled below) and an always-present "Transfer file" button
+# (no local gate; the remote's enable-file-transfer permission decides).
 #
 # File location: next to rustdesk.exe (or the rustdesk binary on Linux/macOS) — copied here
 # from this sample by the first-run setup dialog, or hand-edited/pre-seeded directly.
