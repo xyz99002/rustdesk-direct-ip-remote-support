@@ -711,10 +711,9 @@ class _ClientRowState extends State<_ClientRow> {
   Widget _buildStateLine() {
     final chips = <Widget>[];
     if (!client.authorized) {
-      // Say what is being asked for, not just that something is: the operator decides
-      // between "Desktop", "Camera", "File Transfer", ... from this line.
-      chips.add(_chip(
-          "${translate('Requesting')}: ${_typeLabel()}", Colors.orange,
+      // The row's enlarged orange type label and the "Accept Desktop" / "Accept Camera" buttons
+      // already say what is being asked for; this chip only says that it is still undecided.
+      chips.add(_chip(translate("Pending"), Colors.orange,
           icon: Icons.hourglass_top));
     } else if (client.disconnected) {
       chips.add(_chip(translate("Disconnected"), Colors.grey,
@@ -728,9 +727,7 @@ class _ClientRowState extends State<_ClientRow> {
         chips.add(_chip(translate("Voice call"), MyTheme.accent,
             icon: Icons.call));
       } else if (client.incomingVoiceCall) {
-        chips.add(_chip(
-            "${translate('Requesting')}: ${translate('Voice call')}",
-            Colors.orange,
+        chips.add(_chip(translate("Incoming call"), Colors.orange,
             icon: Icons.ring_volume));
       }
       if (client.privacyMode) {
@@ -819,16 +816,22 @@ class _ClientRowState extends State<_ClientRow> {
           windowManager.minimize();
         }));
       }
+      // "Accept Desktop" / "Reject Camera" / "Accept File Transfer": the button itself names
+      // what is being accepted, like "Accept call" / "Decline call" for a voice call, so the
+      // operator never has to read the row first. `_typeLabel()` is already translated and
+      // translate() returns an unknown composite key unchanged, so this stays readable in
+      // every language (English wording for the verb when no translation entry exists).
       if (showAccept) {
         buttons.add(_smallButton(context,
-            text: 'Accept', color: MyTheme.accent, icon: Icons.check,
-            onTap: () {
+            text: "${translate('Accept')} ${_typeLabel()}",
+            color: MyTheme.accent,
+            icon: Icons.check, onTap: () {
           _accept(model);
           windowManager.minimize();
         }));
       }
       buttons.add(_smallButton(context,
-          text: 'Reject',
+          text: "${translate('Reject')} ${_typeLabel()}",
           color: Colors.redAccent,
           icon: Icons.close,
           onTap: _disconnect));

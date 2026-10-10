@@ -885,9 +885,13 @@ loop:
   `ListView` of `_GroupHeader` (avatar + `Client.displayName` = `"Name (id)"`, one per peer id,
   groups with a pending request sorted first) and `_ClientRow` (one per connection: type icon
   and label — "Desktop"/"Camera"/"File Transfer"/"Terminal"/"Port Forward" — followed by
-  ` · <source names>`, a state line of chips — pending / Connected hh:mm:ss / Voice call /
-  Incoming voice call / Privacy mode / Disconnected — and inline actions: Accept[+Elevate] /
-  Reject when pending; Accept/Dismiss call, Audio input + Stop voice call, Switch Sides,
+  ` · <source names>`, a state line of chips — Pending / Connected hh:mm:ss / Voice call /
+  Incoming call / Privacy mode / Disconnected — and inline actions: "Accept <type>" /
+  "Reject <type>" when pending (e.g. "Accept Camera", "Reject File Transfer" — the button names
+  what it accepts, as "Accept call"/"Decline call" do for a voice call; the row's type label is
+  enlarged and orange while pending; changed 2026-10-10 from a "Requesting: <type>" chip with
+  bare Accept/Reject buttons, which the user found unclear), plus Accept and Elevate when
+  elevation applies; Accept call/Decline call, Audio input + Stop voice call, Switch Sides,
   Elevate, Chat (with unread badge) or File Transfer, a "⋯" permissions menu
   (`_buildPermissionsMenu`, upstream's `_PrivilegeBoard` as `CheckedPopupMenuItem`s), and
   Disconnect; Close when disconnected). Every action calls the same `bind.cm*` function the
