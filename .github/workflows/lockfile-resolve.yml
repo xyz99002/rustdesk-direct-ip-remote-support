@@ -1,0 +1,28 @@
+name: Resolve Cargo.lock
+
+# Throwaway helper (branch only): let cargo re-resolve Cargo.lock after a hand edit and print
+# the diff, without building anything. Dispatch manually, read the "Lock diff" step.
+on:
+  workflow_dispatch:
+
+jobs:
+  resolve:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@1.75
+      - name: Locked check (expected to fail)
+        run: cargo metadata --format-version 1 --locked > /dev/null || echo "LOCKED-CHECK-FAILED"
+      - name: Re-resolve
+        run: cargo metadata --format-version 1 > /dev/null
+      - name: Lock diff
+        run: |
+          echo "=====BEGIN LOCK DIFF====="
+          git --no-pager diff --no-color Cargo.lock
+          echo "=====END LOCK DIFF====="
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cargo.lock
+          path: Cargo.lock
