@@ -1,7 +1,9 @@
 name: Resolve Cargo.lock
 
-# Throwaway helper (branch only): let cargo re-resolve Cargo.lock after a hand edit and print
-# the diff, without building anything. Dispatch manually, read the "Lock diff" step.
+# Fork helper: let cargo re-resolve Cargo.lock after a hand edit (no local toolchain) and
+# print the diff, without building anything. Dispatch manually from the Actions tab, read
+# the "Lock diff" step or download the Cargo.lock artifact. Changes under .github/ are in
+# the CI workflows' paths-ignore, so neither this file nor its runs start a build.
 on:
   workflow_dispatch:
 
