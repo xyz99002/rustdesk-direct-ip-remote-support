@@ -265,6 +265,13 @@ jobs:
         run: echo "SODIUM_LIB_DIR=$VCPKG_ROOT/installed/${{ matrix.job.vcpkg-triplet }}/lib" >> "$GITHUB_ENV"
 
       - name: Build rustdesk
+        env:
+          # Fork: the `cmake` crate (turbojpeg-sys, libs/scrap) auto-detects the Visual Studio
+          # generator through an x64-hosted MSBuild lookup, which fails on the native ARM64
+          # runner ("couldn't determine visual studio generator"). Naming the generator skips
+          # that lookup; the crate still adds the ARM64 platform flag itself. x64 detects fine
+          # and keeps the default.
+          CMAKE_GENERATOR: ${{ matrix.job.arch == 'aarch64' && 'Visual Studio 17 2022' || '' }}
         run: |
           # Windows: build RustDesk
           # --hwcodec is shared by all Windows targets; per-target extras (e.g. --vram) come from the matrix
@@ -2070,6 +2077,7 @@ jobs:
             apt-get install -y \
                build-essential \
                clang \
+               cmake \
                curl \
                gcc \
                gcc-8 \

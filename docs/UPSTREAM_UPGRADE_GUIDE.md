@@ -1426,8 +1426,19 @@ Verify, on any upstream merge that touches `libs/scrap/src/common/camera.rs` (`c
     ever switches the MJPEG decoder itself to something that returns errors, the TurboJPEG
     path can be dropped. `Cargo.lock` was edited by hand (CI builds with `--locked`, no local
     toolchain): `mozjpeg`, `mozjpeg-sys`, `nasm-rs`, `dunce`, `rgb` removed, `turbojpeg 1.5.1`,
-    `turbojpeg-sys 1.2.0`, `gcd 2.3.0` added - re-run `cargo update -p turbojpeg` on a machine
-    with a toolchain if the lock ever disagrees.
+    `turbojpeg-sys 1.2.0`, `gcd 2.3.0` added. When the lock disagrees, dispatch the
+    `.github/workflows/lockfile-resolve.yml` helper ("Resolve Cargo.lock", Actions tab): it runs
+    `cargo metadata` on a runner and prints the diff cargo wants, without building anything (it
+    found the two mistakes of the first hand edit: the workspace crate `scrap` must list
+    `turbojpeg` itself, and a lost space in an unrelated line).
+  - **CI consequences of the cmake-built library** (`.github/workflows/flutter-build.yml`):
+    the Linux Sciter container (Ubuntu 18.04 under run-on-arch) had no `cmake` on PATH - vcpkg
+    brings its own - so `cmake` was added to its apt list (the armv7 variant already bootstraps
+    a newer CMake and prepends it to PATH). The Windows ARM64 job runs on a native ARM64
+    runner, where the `cmake` crate's Visual Studio auto-detection fails ("couldn't determine
+    visual studio generator": it looks for an x64-hosted MSBuild); `CMAKE_GENERATOR` is set to
+    `Visual Studio 17 2022` for that job's build step, which skips the lookup. Every other job,
+    including the Windows x86_64 build that ships, passed unchanged (Full Flutter CI #92).
 
 ### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
 Verify:
