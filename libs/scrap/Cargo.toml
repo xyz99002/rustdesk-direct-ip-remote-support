@@ -64,5 +64,15 @@ git = "https://github.com/rustdesk-org/hwcodec"
 optional = true
 
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
-nokhwa = { git = "https://github.com/rustdesk-org/nokhwa.git", branch = "fix_from_raw_parts", features = ["input-native"] }
+# Fork: `default-features = false` drops nokhwa's `decoding` feature, i.e. mozjpeg. MJPEG camera
+# frames are decoded by TurboJPEG below instead: mozjpeg reports a bad frame by unwinding the
+# stack (`resume_unwind`, which skips the panic hook), and under this build's `panic = 'abort'`
+# release profile that ends the whole process with nothing in the log. TurboJPEG returns an
+# error code. Two libjpeg copies in one binary would also clash at link time, hence the drop.
+# See src/common/camera.rs ("decode_mjpeg_rgba") and docs/UPSTREAM_UPGRADE_GUIDE.md.
+nokhwa = { git = "https://github.com/rustdesk-org/nokhwa.git", branch = "fix_from_raw_parts", default-features = false, features = ["input-native"] }
+# Builds the bundled libjpeg-turbo with cmake. SIMD when nasm is on the builder, plain C
+# otherwise - exactly the situation mozjpeg-sys was already in - so `require-simd` is
+# deliberately off: a missing nasm must never fail the build.
+turbojpeg = { version = "1.5", default-features = false, features = ["cmake"] }
 

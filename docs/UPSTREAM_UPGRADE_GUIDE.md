@@ -1373,6 +1373,61 @@ Verify, on any upstream merge that touches `libs/scrap/src/common/camera.rs` (`c
     with `LLVM ERROR: out of memory` because of the unwind tables. Product decision: keep
     upstream's `'abort'` rather than carry a profile divergence or exempt one job. The panic
     hook stays, so a Rust panic is at least named in the log before the abort.
+- **Round 4 (2026-10-15, cameras that kill the remote or show nothing; built for an exhibition
+  demo without a test cycle)**: the user reported that some cameras deliver no frames and the
+  remote dies, while the Windows Camera app shows the same camera fine; the same camera works
+  on USB and fails through a wireless adapter; and a camera in Windows' shared mode shows
+  nothing. Reading the camera library (nokhwa `c2f74662`, its mozjpeg 0.10 dependency and its
+  Media Foundation backend) gave three mechanisms, all fixed in `libs/scrap/src/common/camera.rs`
+  and `libs/scrap/Cargo.toml` only (nothing under `src/`, nothing in the library):
+  - **Silent abort on a bad MJPEG frame (the kill, invisible to the round-2 panic hook).**
+    nokhwa decodes MJPEG with mozjpeg, whose libjpeg error handler does not return an error: it
+    calls `std::panic::resume_unwind`, which skips the panic hook by design, and under the
+    `panic = 'abort'` release profile an unwind is an immediate abort - no PANIC line, nothing.
+    Any frame libjpeg considers fatally bad (truncated, garbled, not JPEG) ends the remote. A
+    wireless camera adapter delivers exactly such frames; the Camera app drops them. **Fix**:
+    `nokhwa` is now built with `default-features = false` (drops the `decoding` feature =
+    mozjpeg; nokhwa-core has `cfg` fallbacks for it) and MJPEG frames are decoded by the
+    `turbojpeg` crate (`decode_mjpeg_rgba`) - the TurboJPEG C API of the same libjpeg-turbo
+    engine, same SIMD speed, errors as return codes - after a free structural pre-check (SOI at
+    the start, EOI in the last 64 bytes). A bad frame is now a logged, counted capture error and
+    the next frame is shown. mozjpeg had to go rather than coexist: two libjpeg copies in one
+    binary clash at link time. `turbojpeg` is built from its bundled libjpeg-turbo 3.1 with
+    cmake; `require-simd` is off so a builder without nasm gets the plain-C build (what
+    mozjpeg-sys did in that situation) instead of a failed build.
+  - **Capture mode (`choose_format`, Windows).** Upstream requests `AbsoluteHighestResolution`,
+    which on most cameras is an MJPEG-only mode far above what the link carries cleanly (this
+    machine's log: a camera advertising 1080p opened at 2560x1440). Now the camera is opened in
+    the driver's first mode and switched (`set_camera_requset(Exact(..))`) to: a decodable mode
+    within 1920x1080 (all above it: the smallest offered); the highest such resolution; at that
+    size an uncompressed mode (NV12/YUYV) if it runs at >= 15 fps, else MJPEG; highest frame
+    rate. Fewer damaged frames over weak links, no JPEG decode at all when the driver - or
+    Windows' Frame Server for a shared camera, which only hands out NV12/YUY2 - offers
+    uncompressed video. Linux and the per-camera "safe format" fallback keep the first listed
+    mode as before.
+  - **Padded NV12/YUYV buffers (`decode_nv12_rgba` / `decode_yuyv_rgba`).** nokhwa's converters
+    require the buffer length to be exactly width x height x 1.5 (NV12) and reject anything
+    else; Frame Server buffers are commonly padded, so a shared camera produced only decode
+    errors. The buffer is now trimmed to the size the mode implies (validate_buffer already
+    guarantees it is at least that long) and converted with nokhwa's own functions.
+  - **Diagnostics.** Every camera open logs the modes the driver offers (one entry per
+    resolution and format with its best rate) and the mode in use, e.g. `camera0: modes
+    offered: 1920x1080 MJPEG@30, 1280x720 NV12@30, …; using 1920x1080@30FPS, MJPEG Format`.
+    The next camera report is answerable from the remote log alone.
+  - **Not covered, known**: nokhwa's `raw_bytes()` loops forever while `ReadSample` returns no
+    sample (a stream that signals end-of-stream or only ticks), which would make a capture
+    thread spin without a frame or an error; fixing it needs a patched nokhwa. Also a virtual
+    camera driver that crashes natively inside our process cannot be caught from Rust; Event
+    Viewer's faulting module tells that case apart (vendor DLL, 0xc0000005) from the abort path
+    above (our exe, 0xc0000409).
+  - **Upgrade check**: if upstream changes the nokhwa branch, keep `default-features = false`
+    (verify nokhwa-core still has the `cfg(not(feature = "mjpeg"))` fallbacks) and keep the
+    MJPEG/NV12/YUYV arms in `CameraCapturer::frame()` routed to the fork's helpers; if upstream
+    ever switches the MJPEG decoder itself to something that returns errors, the TurboJPEG
+    path can be dropped. `Cargo.lock` was edited by hand (CI builds with `--locked`, no local
+    toolchain): `mozjpeg`, `mozjpeg-sys`, `nasm-rs`, `dunce`, `rgb` removed, `turbojpeg 1.5.1`,
+    `turbojpeg-sys 1.2.0`, `gcd 2.3.0` added - re-run `cargo update -p turbojpeg` on a machine
+    with a toolchain if the lock ever disagrees.
 
 ### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
 Verify:
