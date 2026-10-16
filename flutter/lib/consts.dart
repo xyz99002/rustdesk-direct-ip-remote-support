@@ -84,6 +84,9 @@ const String kWindowEventOpenMonitorSession = "open_monitor_session";
 // Fork: height cap of the inline camera preview tile under a camera row in the connection
 // manager list (desktop/pages/server_page.dart); the tile keeps a 16:9 shape within it.
 const double kCameraPreviewTileMaxHeight = 200;
+// Fork: height of the message area of an inline chat box under a local's rows in the
+// connection manager list (desktop/pages/server_page.dart _InlineChatBox).
+const double kCmChatBoxMessagesHeight = 150;
 
 const String kOptionViewStyle = "view_style";
 const String kOptionScrollStyle = "scroll_style";

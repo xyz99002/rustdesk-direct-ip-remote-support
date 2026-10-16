@@ -995,6 +995,18 @@ loop:
     `_fitWindowHeight()` counts expanded tiles so the CM window grows for them like for rows.
     `_refreshCameraPreviews()` re-issues `enable` for every expanded preview whenever a client
     is added/removed, so a preview survives the relaying connection closing.
+- **Chat: one inline box per local (changed 2026-10-16).** With several locals chatting, the
+  side panel followed whoever wrote last (upstream's `receive()` jumped to the sender's tab),
+  so a reply typed on the remote went to the wrong person. Now the Chat button on a row
+  expands `_InlineChatBox` under that local's rows (`ChatModel.cmOpenChats`, keyed by peer
+  id): its own history (`messagesForPeer` - `_messages` already keeps one body per local,
+  `MessageKey` equality ignores the connection), its own input and Send. `sendToPeer` sends
+  to the connection the local last wrote from if it is still up, else its first live
+  connection. An incoming message expands its local's box and bumps the row's unread badge,
+  cleared when the operator clicks into that box (`markPeerRead`); it never moves the
+  selection or the cursor. The side panel is the file-transfer log only (`buildSidePage`
+  returns `Offstage` for non-file rows); `toggleCMChatPage` is unused. `_fitWindowHeight`
+  counts open boxes (`kCmChatBoxMessagesHeight` + header/input).
 - **Deliberately not done**: monitor previews (visible on the remote already); a single
   CM+main window; chat conferencing/relay between locals (noted as a later item); mobile CM
   changes (`flutter/lib/mobile/pages/server_page.dart` untouched; `Client.fromJson` tolerates a
@@ -1458,6 +1470,62 @@ Verify, on any upstream merge that touches `libs/scrap/src/common/camera.rs` (`c
     visual studio generator": it looks for an x64-hosted MSBuild); `CMAKE_GENERATOR` is set to
     `Visual Studio 17 2022` for that job's build step, which skips the lookup. Every other job,
     including the Windows x86_64 build that ships, passed unchanged (Full Flutter CI #92).
+
+### Feed Switches, Pause and Call Mute (implemented 2026-10-16)
+The operator on the remote can switch any single monitor/camera feed off and on per
+connection, pause/resume all feeds of one connection or of every connection, and mute the
+remote's microphone in a voice call per connection or globally; the local can mute its own
+microphone. Chosen over an allow-list at accept time (monitors/cameras come and go, and
+password-admitted connections never show a prompt) and over anything that renumbers the
+display list (indices are protocol-visible). **No wire-protocol change**: the local keeps
+sending its usual switch/capture requests; the remote simply leaves a switched-off source
+unsubscribed and tells the local with the existing `MessageBox` message (`msgtype`
+`remote-notice`, shown as a toast by the fork's `handleMsgBox` in `model.dart`, as a dialog
+by any other client). Everything else is process-local IPC between server and CM.
+- `src/ipc.rs`: `VideoSourceInfo.enabled`; `Data::SetVideoSource { kind, index, enabled }`,
+  `Data::PauseFeeds(bool)`, `Data::MuteVoiceCall(bool)` (CM → connection, and UI → client
+  io_loop for the local's own mic), `Data::MuteAllVoiceCalls(bool)`.
+- `src/server/connection.rs`: `wanted_sources` (what the local asked for: the primary at
+  login in `try_sub_monitor_services`/`try_sub_camera_displays`, the target of
+  `switch_display_to`, the result of `capture_displays`), `blocked_sources`, `feeds_paused`,
+  `is_source_allowed()`. Each subscription point subscribes a wanted source only while
+  allowed (`capture_displays` filters `add`/`set` but chooses its branch on the local's
+  original request, so an `add` of nothing but blocked sources does not collapse into `set` =
+  none). `apply_feed_switches()` reconciles after a toggle (creates a missing service like
+  `capture_displays` does, subscribes iff allowed). `report_video_sources()` now reports
+  `wanted_sources` with the `enabled` flag, so a switched-off source stays on the CM row,
+  greyed, where it can be switched back on (the old `Server::get_subbed_video_sources` is
+  gone). `send_feed_notice`/`send_remote_notice` build the toast text from the source name.
+- `src/server/voice_conference.rs`: `muted: HashSet<conn_id>` and `muted_all`; a muted
+  member's personalized mix carries the other members only, and a lone muted member is left
+  out of the plain-frame set, so it receives nothing; the member is still heard by everyone.
+  `set_muted(conn_id, bool)`, `set_muted_all(bool)`; `unregister` clears the per-member flag.
+  The global flag lives here, in the server, so it covers calls that start while it is set and
+  survives connection churn.
+- `src/client/io_loop.rs`: `voice_call_muted: Arc<AtomicBool>` checked by the voice-call
+  recorder thread before forwarding an `AudioFrame` (capture keeps running, nothing is sent);
+  reset in `stop_voice_call`. `Session::set_voice_call_muted` (`ui_session_interface.rs`).
+- `src/ui_cm_interface.rs`: `set_video_source`, `pause_feeds` (id 0 = all), `set_voice_call_muted`
+  (id 0 = global, delivered via every live connection). `src/flutter_ffi.rs`:
+  `cm_set_video_source`, `cm_pause_feeds`, `cm_set_voice_call_muted`,
+  `session_set_voice_call_muted` (bridge regenerated by CI).
+- Flutter CM (`server_model.dart`, `server_page.dart`): `VideoSourceInfo.enabled`;
+  `Client.feedsPaused`/`voiceCallMuted` (operator-side state); `setVideoSource`, `pauseFeeds`,
+  `pauseAllFeeds` + `_applyGlobalPause` (a connection appearing while "pause all" is on is
+  paused from `_refreshCameraPreviews`, i.e. on every client-list change), `setVoiceCallMuted`,
+  `muteAllVoiceCalls` (rows in a call mirror it; a call starting under it shows muted). UI:
+  pause/play icon after each source name (hidden while the row is paused), greyed
+  strike-through name when off; a row-level pause/resume button for Desktop/Camera rows; Mute/
+  Unmute next to "Stop voice call"; in the title bar a global mic mute and a global pause, with
+  "Feeds paused" / "Microphone muted" appended to the title. Local side
+  (`remote_toolbar.dart`): "Mute microphone"/"Unmute microphone" in the voice-call menu,
+  `ChatModel.voiceCallMuted` reset on call start/end. Mobile UIs untouched.
+- **Upgrade checks**: (1) if upstream touches `switch_display_to`/`capture_displays`/the two
+  `try_sub_*` functions, re-add the `wanted_sources` bookkeeping and the `is_source_allowed`
+  gate; (2) if `voice_conference.rs` is rewritten, keep the two mute sets in the mix and in the
+  plain-frame filter; (3) `remote-notice` must stay a toast in `handleMsgBox` or every toggle
+  pops a dialog on the local; (4) if upstream's CM row layout returns, the per-source icons
+  need a new home.
 
 ### Direct-IP Enforcement (implemented 2026-08-29, ADR-0003)
 Verify:

@@ -1605,6 +1605,13 @@ impl<T: InvokeUiSession> Session<T> {
         self.send(Data::CloseVoiceCall);
     }
 
+    // Fork: mute/unmute this side's microphone while a voice call is up (io_loop keeps the
+    // capture running and simply stops sending frames).
+    #[inline]
+    pub fn set_voice_call_muted(&self, muted: bool) {
+        self.send(Data::MuteVoiceCall(muted));
+    }
+
     pub fn send_selected_session_id(&self, sid: String) {
         if let Ok(sid) = sid.parse::<u32>() {
             self.lc.write().unwrap().selected_windows_session_id = Some(sid);

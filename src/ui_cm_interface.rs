@@ -383,6 +383,57 @@ pub fn set_camera_preview(index: usize, enable: bool) {
     }
 }
 
+// Fork: feed switches, pause and call mute per connection (docs/UPSTREAM_UPGRADE_GUIDE.md
+// "Feed Switches, Pause and Call Mute"). `id` 0 in pause_feeds means every live connection.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn send_to_client(id: i32, data: Data) {
+    if let Some(client) = CLIENTS.read().unwrap().get(&id) {
+        if !client.disconnected {
+            allow_err!(client.tx.send(data));
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn set_video_source(id: i32, kind: String, index: usize, enabled: bool) {
+    send_to_client(
+        id,
+        Data::SetVideoSource {
+            kind,
+            index,
+            enabled,
+        },
+    );
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn pause_feeds(id: i32, paused: bool) {
+    if id != 0 {
+        send_to_client(id, Data::PauseFeeds(paused));
+        return;
+    }
+    for client in CLIENTS.read().unwrap().values() {
+        if !client.disconnected {
+            allow_err!(client.tx.send(Data::PauseFeeds(paused)));
+        }
+    }
+}
+
+// `id` 0 = the global mute (every call, current and future); delivered through every live
+// connection, the server keeps it once.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn set_voice_call_muted(id: i32, muted: bool) {
+    if id != 0 {
+        send_to_client(id, Data::MuteVoiceCall(muted));
+        return;
+    }
+    for client in CLIENTS.read().unwrap().values() {
+        if !client.disconnected {
+            allow_err!(client.tx.send(Data::MuteAllVoiceCalls(muted)));
+        }
+    }
+}
+
 #[inline]
 #[cfg(not(any(target_os = "ios")))]
 pub fn check_click_time(id: i32) {

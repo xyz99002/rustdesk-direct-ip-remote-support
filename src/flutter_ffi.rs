@@ -1760,6 +1760,33 @@ pub fn cm_set_camera_preview(index: i32, enable: bool) {
     }
 }
 
+// Fork: feed switches, pause and call mute from the connection manager list
+// (flutter/lib/models/server_model.dart; docs "Feed Switches, Pause and Call Mute").
+pub fn cm_set_video_source(conn_id: i32, kind: String, index: i32, enabled: bool) {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if index >= 0 {
+        crate::ui_cm_interface::set_video_source(conn_id, kind, index as usize, enabled);
+    }
+}
+
+// `conn_id` 0 = every connection.
+pub fn cm_pause_feeds(conn_id: i32, paused: bool) {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    crate::ui_cm_interface::pause_feeds(conn_id, paused);
+}
+
+pub fn cm_set_voice_call_muted(conn_id: i32, muted: bool) {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    crate::ui_cm_interface::set_voice_call_muted(conn_id, muted);
+}
+
+// Fork: the local side's microphone mute in a voice call (remote_toolbar.dart).
+pub fn session_set_voice_call_muted(session_id: SessionID, muted: bool) {
+    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
+        session.set_voice_call_muted(muted);
+    }
+}
+
 pub fn set_voice_call_input_device(_is_cm: bool, _device: String) {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if _is_cm {

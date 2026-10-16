@@ -304,6 +304,9 @@ pub struct VideoSourceInfo {
     pub index: usize,
     /// Human-readable device name, if known.
     pub name: String,
+    /// Fork: false while the connection manager has switched this source off for the
+    /// connection, or paused all of its feeds (see `Data::SetVideoSource` / `PauseFeeds`).
+    pub enabled: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -390,6 +393,27 @@ pub enum Data {
     StartVoiceCall,
     VoiceCallResponse(bool),
     CloseVoiceCall(String),
+    /// Fork, CM -> server connection: turn one video source (monitor or camera `index` of
+    /// `kind`, "monitor"/"camera") on or off for that connection only. Off means the
+    /// connection is unsubscribed from that source's video service and any later request for
+    /// it is left unsubscribed; on resubscribes it. See docs/UPSTREAM_UPGRADE_GUIDE.md
+    /// "Feed Switches, Pause and Call Mute".
+    SetVideoSource {
+        kind: String,
+        index: usize,
+        enabled: bool,
+    },
+    /// Fork, CM -> server connection: pause (`true`) or resume every video source of that
+    /// connection. The CM sends it to one connection or to all of them.
+    PauseFeeds(bool),
+    /// Fork: mute a voice call's microphone. CM -> server connection: the remote's mic is no
+    /// longer sent to that local. UI -> client io_loop: this local's mic is no longer sent
+    /// to the remote. The call itself stays up either way.
+    MuteVoiceCall(bool),
+    /// Fork, CM -> server (via any live connection): mute the remote's microphone towards
+    /// every voice call, current and future, until resumed. Kept in the server's conference
+    /// state (src/server/voice_conference.rs), so it outlives the connections it arrived on.
+    MuteAllVoiceCalls(bool),
     #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     Plugin(Plugin),

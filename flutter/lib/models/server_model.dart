@@ -657,6 +657,88 @@ class ServerModel with ChangeNotifier {
     for (final index in _openCameraPreviews) {
       bind.cmSetCameraPreview(index: index, enable: true);
     }
+    _applyGlobalPause();
+  }
+
+  // Fork: feed switches, pause and call mute (docs/UPSTREAM_UPGRADE_GUIDE.md "Feed Switches,
+  // Pause and Call Mute"). All desktop-CM only; each is one command to the connection.
+
+  // Switch one monitor/camera of `client` off or on. The server unsubscribes/resubscribes and
+  // re-reports the row's sources with the new flag; the flag is set here first so the icon
+  // reacts at once.
+  void setVideoSource(Client client, VideoSourceInfo source, bool enabled) {
+    if (desktopType != DesktopType.cm) return;
+    source.enabled = enabled;
+    bind.cmSetVideoSource(
+        connId: client.id,
+        kind: source.kind,
+        index: source.index,
+        enabled: enabled);
+    notifyListeners();
+  }
+
+  // Pause/resume every feed of one connection.
+  void pauseFeeds(Client client, bool paused) {
+    if (desktopType != DesktopType.cm) return;
+    client.feedsPaused = paused;
+    for (final s in client.sources) {
+      s.enabled = !paused;
+    }
+    bind.cmPauseFeeds(connId: client.id, paused: paused);
+    notifyListeners();
+  }
+
+  // Pause/resume every feed of every connection, now and for connections accepted while the
+  // pause is on (see _applyGlobalPause).
+  bool globalFeedsPaused = false;
+  void pauseAllFeeds(bool paused) {
+    if (desktopType != DesktopType.cm) return;
+    globalFeedsPaused = paused;
+    for (final c in _clients) {
+      c.feedsPaused = paused;
+      for (final s in c.sources) {
+        s.enabled = !paused;
+      }
+    }
+    bind.cmPauseFeeds(connId: 0, paused: paused);
+    notifyListeners();
+  }
+
+  // A connection that appeared while "pause all" is on starts paused too. Called from
+  // _refreshCameraPreviews(), i.e. on every client-list change.
+  void _applyGlobalPause() {
+    if (!globalFeedsPaused) return;
+    for (final c in _clients) {
+      if (!c.feedsPaused && !c.disconnected) {
+        c.feedsPaused = true;
+        for (final s in c.sources) {
+          s.enabled = false;
+        }
+        bind.cmPauseFeeds(connId: c.id, paused: true);
+      }
+    }
+  }
+
+  // Mute/unmute the remote's microphone towards one local in a voice call; the call stays up.
+  void setVoiceCallMuted(Client client, bool muted) {
+    if (desktopType != DesktopType.cm) return;
+    client.voiceCallMuted = muted;
+    bind.cmSetVoiceCallMuted(connId: client.id, muted: muted);
+    notifyListeners();
+  }
+
+  // Global mute: the remote's microphone goes to no call at all, current or future, until
+  // resumed. Kept by the server (voice_conference), so it survives connection churn; the rows
+  // mirror it so every call shows as muted.
+  bool globalMicMuted = false;
+  void muteAllVoiceCalls(bool muted) {
+    if (desktopType != DesktopType.cm) return;
+    globalMicMuted = muted;
+    for (final c in _clients) {
+      if (c.inVoiceCall) c.voiceCallMuted = muted;
+    }
+    bind.cmSetVoiceCallMuted(connId: 0, muted: muted);
+    notifyListeners();
   }
 
   void _addTab(Client client) {
@@ -843,6 +925,12 @@ class ServerModel with ChangeNotifier {
       if (index != -1) {
         _clients[index].inVoiceCall = client.inVoiceCall;
         _clients[index].incomingVoiceCall = client.incomingVoiceCall;
+        // Fork: a mute never outlives the call it was set in; a call that starts under the
+        // global mute shows as muted from the start (the server already applies it).
+        if (!client.inVoiceCall) _clients[index].voiceCallMuted = false;
+        if (client.inVoiceCall && globalMicMuted) {
+          _clients[index].voiceCallMuted = true;
+        }
         if (client.incomingVoiceCall) {
           if (isAndroid) {
             showVoiceCallDialog(client);
@@ -912,6 +1000,10 @@ class Client {
   bool incomingVoiceCall = false;
   // Fork: monitors/cameras this connection currently receives (server-reported).
   List<VideoSourceInfo> sources = [];
+  // Fork: operator-side state of the row's "pause feeds" and call "mute" switches (the server
+  // only needs the commands; see ServerModel.pauseFeeds / setVoiceCallMuted).
+  bool feedsPaused = false;
+  bool voiceCallMuted = false;
 
   RxInt unreadChatMessageCount = 0.obs;
 
@@ -1013,15 +1105,21 @@ class VideoSourceInfo {
   final String kind; // "monitor" | "camera"
   final int index;
   final String name;
+  // Fork: false while the operator has this source switched off for the connection, or the
+  // connection's feeds paused (feed switches, 2026-10-16). Server-reported; updated
+  // optimistically on toggle until the next report.
+  bool enabled;
 
-  VideoSourceInfo(this.kind, this.index, this.name);
+  VideoSourceInfo(this.kind, this.index, this.name, {this.enabled = true});
 
   VideoSourceInfo.fromJson(Map<String, dynamic> json)
       : kind = json['kind'] ?? '',
         index = json['index'] ?? 0,
-        name = json['name'] ?? '';
+        name = json['name'] ?? '',
+        enabled = json['enabled'] ?? true;
 
-  Map<String, dynamic> toJson() => {'kind': kind, 'index': index, 'name': name};
+  Map<String, dynamic> toJson() =>
+      {'kind': kind, 'index': index, 'name': name, 'enabled': enabled};
 
   bool get isCamera => kind == 'camera';
 }

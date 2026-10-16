@@ -12,6 +12,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:dash_chat_2/dash_chat_2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/widgets/audio_input.dart';
 import 'package:flutter_hbb/common/widgets/chat_page.dart';
@@ -205,17 +206,21 @@ class ConnectionManagerState extends State<ConnectionManager>
   // Fork: grow the window with its rows (never shrink it under the user), up to a cap;
   // past the cap the list scrolls. The window is resizable, so a manual resize is respected
   // until the next time more rows need room.
-  void _fitWindowHeight(int groupCount, int rowCount, int tileCount) {
+  void _fitWindowHeight(
+      int groupCount, int rowCount, int tileCount, int chatCount) {
     const titleBar = kDesktopRemoteTabBarHeight;
     const groupHeader = 30.0;
     const row = 78.0;
-    // Fork: an expanded inline camera preview adds a tile under its row.
+    // Fork: an expanded inline camera preview adds a tile under its row; an open chat box
+    // adds its message area plus header and input line under the local's rows.
     const tile = kCameraPreviewTileMaxHeight + 6.0;
+    const chat = kCmChatBoxMessagesHeight + 80.0;
     const padding = 24.0;
     final desired = (titleBar +
             groupHeader * groupCount +
             row * rowCount +
             tile * tileCount +
+            chat * chatCount +
             padding)
         .clamp(kConnectionManagerWindowSizeClosedChat.height,
             kConnectionManagerWindowMaxAutoHeight)
@@ -253,7 +258,8 @@ class ConnectionManagerState extends State<ConnectionManager>
       WidgetsBinding.instance.addPostFrameCallback((_) => _fitWindowHeight(
           groups.length,
           serverModel.clients.length,
-          _openPreviewTileCount(serverModel)));
+          _openPreviewTileCount(serverModel),
+          chatModel.cmOpenChats.length));
       // The startup show/resize in showCmWindow() may land after the first frame and reset
       // the size; fit once more shortly after.
       if (!_startupFitScheduled) {
@@ -263,7 +269,7 @@ class ConnectionManagerState extends State<ConnectionManager>
             _lastFittedHeight = 0;
             final m = gFFI.serverModel;
             _fitWindowHeight(_groupClients(m.clients).length, m.clients.length,
-                _openPreviewTileCount(m));
+                _openPreviewTileCount(m), gFFI.chatModel.cmOpenChats.length);
           }
         });
       }
@@ -282,6 +288,13 @@ class ConnectionManagerState extends State<ConnectionManager>
                     key: ValueKey(client.id),
                     client: client,
                     index: serverModel.clients.indexOf(client),
+                  ),
+                // Fork: this local's own chat box, under its rows (see _InlineChatBox).
+                if (chatModel.cmOpenChats.contains(group.first.peerId))
+                  _InlineChatBox(
+                    key: ValueKey('chat-${group.first.peerId}'),
+                    peerId: group.first.peerId,
+                    displayName: group.first.displayName,
                   ),
               ],
             ],
@@ -359,6 +372,10 @@ class ConnectionManagerState extends State<ConnectionManager>
     }
     final client = gFFI.serverModel.clients[selected];
     final isFile = client.type_() == ClientType.file;
+    // Fork: chat lives in the inline boxes now; the side panel is the file-transfer log only.
+    if (!isFile) {
+      return Offstage();
+    }
     return Column(
       children: [
         Container(
@@ -404,9 +421,15 @@ class ConnectionManagerState extends State<ConnectionManager>
 
   Widget buildTitleBar(ServerModel serverModel) {
     final count = serverModel.clients.length;
+    final paused = serverModel.globalFeedsPaused;
+    final micMuted = serverModel.globalMicMuted;
+    final flags = [
+      if (paused) translate('Feeds paused'),
+      if (micMuted) translate('Microphone muted'),
+    ];
     final title = count == 0
         ? translate("Waiting")
-        : "${translate('Connections')}: $count";
+        : "${translate('Connections')}: $count${flags.isEmpty ? '' : ' · ${flags.join(' · ')}'}";
     return SizedBox(
       height: kDesktopRemoteTabBarHeight,
       child: Row(
@@ -430,6 +453,40 @@ class ConnectionManagerState extends State<ConnectionManager>
               ),
             ),
           ),
+          // Fork: global microphone mute - the remote's mic reaches no call, current or
+          // future, until resumed (src/server/voice_conference.rs set_muted_all).
+          if (count > 0)
+            Tooltip(
+              message: translate(
+                  micMuted ? 'Unmute microphone for all' : 'Mute microphone for all'),
+              child: InkWell(
+                onTap: () => serverModel.muteAllVoiceCalls(!micMuted),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Icon(
+                    micMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                    size: 20,
+                    color: micMuted ? Colors.orange : MyTheme.accent,
+                  ),
+                ),
+              ),
+            ),
+          // Fork: pause/resume every feed of every connection (feed switches).
+          if (count > 0)
+            Tooltip(
+              message: translate(paused ? 'Resume all feeds' : 'Pause all feeds'),
+              child: InkWell(
+                onTap: () => serverModel.pauseAllFeeds(!paused),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Icon(
+                    paused ? Icons.play_circle_fill : Icons.pause_circle_filled,
+                    size: 20,
+                    color: paused ? Colors.orange : MyTheme.accent,
+                  ),
+                ),
+              ),
+            ),
           if (!isMacOS)
             ActionIcon(
               message: 'Minimize',
@@ -669,9 +726,37 @@ class _ClientRowState extends State<_ClientRow> {
         child: Text(
           source.name,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 13),
+          style: TextStyle(
+            fontSize: 13,
+            color: source.enabled ? null : Colors.grey,
+            decoration:
+                source.enabled ? null : TextDecoration.lineThrough,
+          ),
         ),
       ));
+      // Fork: feed switch - this source, this connection. Off unsubscribes it on the server
+      // and refuses the local's later requests for it; on resumes it.
+      if (!client.feedsPaused) {
+        children.add(Tooltip(
+          message: translate(
+              source.enabled ? "Turn this feed off" : "Turn this feed on"),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () =>
+                serverModel.setVideoSource(client, source, !source.enabled),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 3),
+              child: Icon(
+                source.enabled
+                    ? Icons.pause_circle_outline
+                    : Icons.play_circle_outline,
+                size: 16,
+                color: source.enabled ? null : Colors.orange,
+              ),
+            ),
+          ),
+        ));
+      }
       if (source.isCamera) {
         final open = serverModel.isCameraPreviewOpen(source.index);
         children.add(Tooltip(
@@ -896,11 +981,32 @@ class _ClientRowState extends State<_ClientRow> {
           ),
         ),
       ));
+      // Fork: mute this remote's microphone towards this local; the call stays up.
+      buttons.add(_smallButton(context,
+          text: client.voiceCallMuted ? 'Unmute' : 'Mute',
+          color: client.voiceCallMuted ? Colors.orange : Colors.blueGrey,
+          icon: client.voiceCallMuted
+              ? Icons.mic_off_rounded
+              : Icons.mic_rounded,
+          onTap: () =>
+              model.setVoiceCallMuted(client, !client.voiceCallMuted)));
       buttons.add(_smallButton(context,
           text: 'Stop voice call',
           color: Colors.red,
           icon: Icons.call_end_rounded,
           onTap: _closeVoiceCall));
+    }
+    // Fork: pause/resume every feed of this connection (feed switches).
+    if (client.type_() == ClientType.remote ||
+        client.type_() == ClientType.camera) {
+      buttons.add(_iconButton(
+        client.feedsPaused
+            ? Icons.play_circle_fill
+            : Icons.pause_circle_filled,
+        client.feedsPaused ? 'Resume feeds' : 'Pause feeds',
+        () => model.pauseFeeds(client, !client.feedsPaused),
+        color: client.feedsPaused ? Colors.orange : null,
+      ));
     }
     if (client.fromSwitch) {
       buttons.add(_smallButton(context,
@@ -927,12 +1033,12 @@ class _ClientRowState extends State<_ClientRow> {
         isFile ? Icons.folder_outlined : Icons.chat_outlined,
         isFile ? 'File Transfer' : 'Chat',
         () {
-          model.tabController.jumpTo(widget.index);
           if (isFile) {
+            model.tabController.jumpTo(widget.index);
             gFFI.chatModel.toggleCMFilePage();
           } else {
-            gFFI.chatModel
-                .toggleCMChatPage(MessageKey(client.peerId, client.id));
+            // Fork: expand/collapse this local's inline chat box (one per local).
+            gFFI.chatModel.toggleCmChat(client.peerId);
           }
         },
         badge: isFile
@@ -1334,6 +1440,171 @@ class __FileTransferLogPageState extends State<_FileTransferLogPage> {
                   : statusListView(jobTable);
             },
           )),
+    );
+  }
+}
+
+// Fork: one local's chat box, inline under that local's rows (2026-10-16; replaces the chat in
+// the side panel, which followed the last sender and so sent replies to the wrong local when
+// several were chatting). Its own history, input and send button: text typed here can only
+// go to this local (ChatModel.sendToPeer picks the connection it last wrote from, else its
+// first live one). Several boxes can be open at once.
+class _InlineChatBox extends StatefulWidget {
+  final String peerId;
+  final String displayName;
+
+  const _InlineChatBox(
+      {Key? key, required this.peerId, required this.displayName})
+      : super(key: key);
+
+  @override
+  State<_InlineChatBox> createState() => _InlineChatBoxState();
+}
+
+class _InlineChatBoxState extends State<_InlineChatBox> {
+  final _controller = TextEditingController();
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(() {
+      if (_focus.hasFocus) gFFI.chatModel.markPeerRead(widget.peerId);
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _send(ChatModel chatModel) {
+    final text = _controller.text.trim();
+    if (text.isEmpty) return;
+    chatModel.sendToPeer(widget.peerId, text);
+    _controller.clear();
+    _focus.requestFocus();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final chatModel = Provider.of<ChatModel>(context);
+    final messages = chatModel.messagesForPeer(widget.peerId);
+    final border = MyTheme.color(context).border!;
+    return Container(
+      margin: const EdgeInsets.only(left: 2, right: 2, bottom: 8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.background,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: border),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            height: 30,
+            padding: const EdgeInsets.only(left: 10, right: 2),
+            decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: border))),
+            child: Row(children: [
+              const Icon(Icons.chat_outlined, size: 14),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  "${translate('Chat')} · ${widget.displayName}",
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 12),
+                ),
+              ),
+              IconButton(
+                tooltip: translate('Close'),
+                icon: const Icon(Icons.close, size: 14),
+                splashRadius: kDesktopIconButtonSplashRadius,
+                constraints:
+                    const BoxConstraints(minWidth: 26, minHeight: 26),
+                padding: EdgeInsets.zero,
+                onPressed: () => chatModel.toggleCmChat(widget.peerId),
+              ),
+            ]),
+          ),
+          SizedBox(
+            height: kCmChatBoxMessagesHeight,
+            child: messages.isEmpty
+                ? Center(
+                    child: Text(translate('No messages yet'),
+                        style: TextStyle(
+                            color: MyTheme.darkGray, fontSize: 12)))
+                : ListView.builder(
+                    reverse: true,
+                    padding: const EdgeInsets.all(6),
+                    itemCount: messages.length,
+                    itemBuilder: (_, i) => _bubble(context, messages[i],
+                        messages[i].user.id == chatModel.me.id),
+                  ),
+          ),
+          Container(
+            padding: const EdgeInsets.fromLTRB(8, 2, 2, 2),
+            decoration:
+                BoxDecoration(border: Border(top: BorderSide(color: border))),
+            child: Row(children: [
+              Expanded(
+                child: TextField(
+                  controller: _controller,
+                  focusNode: _focus,
+                  style: const TextStyle(fontSize: 13),
+                  decoration: InputDecoration(
+                    hintText: "${translate('Message')} ${widget.displayName}",
+                    hintStyle: const TextStyle(fontSize: 12),
+                    border: InputBorder.none,
+                    isDense: true,
+                  ),
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => _send(chatModel),
+                ),
+              ),
+              IconButton(
+                tooltip: translate('Send'),
+                icon: Icon(Icons.send_rounded, size: 16, color: MyTheme.accent),
+                splashRadius: kDesktopIconButtonSplashRadius,
+                constraints:
+                    const BoxConstraints(minWidth: 28, minHeight: 28),
+                padding: EdgeInsets.zero,
+                onPressed: () => _send(chatModel),
+              ),
+            ]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _bubble(BuildContext context, ChatMessage m, bool mine) {
+    return Align(
+      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        constraints: const BoxConstraints(maxWidth: 320),
+        decoration: BoxDecoration(
+          color: mine
+              ? MyTheme.accent.withOpacity(0.15)
+              : Theme.of(context).colorScheme.surfaceVariant,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!mine)
+              Text(m.user.firstName ?? '',
+                  style: TextStyle(fontSize: 10, color: MyTheme.darkGray)),
+            SelectableText(m.text, style: const TextStyle(fontSize: 13)),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -62,6 +62,12 @@ struct State {
     capture_format: Option<(u32, u16)>,
     /// Single playback on the remote's speaker for the sum of every member's mic.
     speaker: Option<Speaker>,
+    /// Members the connection manager has muted: they no longer receive the remote's own mic
+    /// (they still hear the other members, and the remote still hears them).
+    muted: HashSet<i32>,
+    /// The connection manager's global mute: the remote's mic goes to no member at all, now
+    /// and for calls that start while it is set.
+    muted_all: bool,
 }
 
 lazy_static::lazy_static! {
@@ -118,12 +124,36 @@ pub fn register(conn_id: i32) {
 pub fn unregister(conn_id: i32) -> bool {
     let mut st = STATE.lock().unwrap();
     st.members.remove(&conn_id);
+    st.muted.remove(&conn_id);
     let empty = st.members.is_empty();
     if empty {
         // Dropping the sender ends the playback thread and releases the output device.
         st.speaker = None;
     }
     empty
+}
+
+/// Fork (2026-10-16): mute/unmute the remote's microphone towards one member, from the
+/// connection manager's row. A muted member's personalized mix carries the other members
+/// only; a lone muted member gets nothing. The call stays up and the member keeps being heard.
+pub fn set_muted(conn_id: i32, muted: bool) {
+    let mut st = STATE.lock().unwrap();
+    if muted {
+        st.muted.insert(conn_id);
+    } else {
+        st.muted.remove(&conn_id);
+    }
+}
+
+/// Fork: the connection manager's global mute - every member, current and future, stops
+/// receiving the remote's microphone until this is cleared. Per-member mutes stay as they are.
+pub fn set_muted_all(muted: bool) {
+    STATE.lock().unwrap().muted_all = muted;
+}
+
+#[inline]
+fn is_muted(st: &State, conn_id: &i32) -> bool {
+    st.muted_all || st.muted.contains(conn_id)
 }
 
 /// Called whenever a connection's negotiated mic-upload `AudioFormat` arrives. Returns `true`
@@ -255,7 +285,12 @@ pub fn on_capture_frame(
             continue;
         }
         for (id, m) in st.members.iter_mut() {
-            let mut mix = frame.to_vec();
+            // Muted member: the remote's own mic is left out of its mix (see set_muted).
+            let mut mix = if st.muted_all || st.muted.contains(id) {
+                vec![0.0f32; frame_len]
+            } else {
+                frame.to_vec()
+            };
             for (other, chunk) in &chunks {
                 if other != id {
                     add_into(&mut mix, chunk);
@@ -289,12 +324,13 @@ pub fn on_capture_frame(
             }
         }
     }
-    // Members that got no personalized frame (a lone caller) still need the plain one; nobody
-    // outside the call gets anything while a call is active.
+    // Members that got no personalized frame (a lone caller) still need the plain one - unless
+    // muted, since the plain frame is the remote's mic alone; nobody outside the call gets
+    // anything while a call is active.
     let plain: HashSet<i32> = st
         .members
         .keys()
-        .filter(|id| !served.contains(id))
+        .filter(|id| !served.contains(id) && !is_muted(st, id))
         .copied()
         .collect();
     Some(plain)

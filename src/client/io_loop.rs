@@ -53,7 +53,7 @@ use std::{
     num::NonZeroI64,
     path::PathBuf,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, RwLock,
     },
 };
@@ -65,6 +65,9 @@ pub struct Remote<T: InvokeUiSession> {
     sender: mpsc::UnboundedSender<Data>,
     // Stop sending local audio to remote client.
     stop_voice_call_sender: Option<std::sync::mpsc::Sender<()>>,
+    // Fork: while true the voice-call recorder keeps capturing but sends no audio frames
+    // (microphone mute, `Data::MuteVoiceCall` from the toolbar). Reset when the call ends.
+    voice_call_muted: Arc<AtomicBool>,
     voice_call_request_timestamp: Option<NonZeroI64>,
     read_jobs: Vec<fs::TransferJob>,
     write_jobs: Vec<fs::TransferJob>,
@@ -125,6 +128,7 @@ impl<T: InvokeUiSession> Remote<T> {
             data_count: Arc::new(AtomicUsize::new(0)),
             video_format: CodecFormat::Unknown,
             stop_voice_call_sender: None,
+            voice_call_muted: Arc::new(AtomicBool::new(false)),
             voice_call_request_timestamp: None,
             elevation_requested: false,
             peer_info: Default::default(),
@@ -468,6 +472,8 @@ impl<T: InvokeUiSession> Remote<T> {
         if let Some(stopper) = voice_call_sender {
             let _ = stopper.send(());
         }
+        // Fork: a mute never outlives the call it was set in.
+        self.voice_call_muted.store(false, Ordering::Relaxed);
     }
 
     // Start a voice call recorder, records audio and send to remote
@@ -501,6 +507,7 @@ impl<T: InvokeUiSession> Remote<T> {
                 true,
             );
             let tx_audio = self.sender.clone();
+            let voice_call_muted = self.voice_call_muted.clone();
             std::thread::spawn(move || {
                 loop {
                     // check if client is closed
@@ -521,6 +528,11 @@ impl<T: InvokeUiSession> Remote<T> {
                     match rx_audio_data.try_recv() {
                         Ok((_instant, msg)) => match &msg.union {
                             Some(message::Union::AudioFrame(frame)) => {
+                                // Fork: microphone mute - capture keeps running (so the
+                                // device and format stay negotiated), nothing is sent.
+                                if voice_call_muted.load(Ordering::Relaxed) {
+                                    continue;
+                                }
                                 let mut msg = Message::new();
                                 msg.set_audio_frame(frame.clone());
                                 tx_audio.send(Data::Message(msg)).ok();
@@ -994,6 +1006,10 @@ impl<T: InvokeUiSession> Remote<T> {
                 self.handler
                     .on_voice_call_closed("Closed manually by the peer");
                 allow_err!(peer.send(&msg).await);
+            }
+            // Fork: mute/unmute this side's microphone in the voice call (see start_voice_call).
+            Data::MuteVoiceCall(muted) => {
+                self.voice_call_muted.store(muted, Ordering::Relaxed);
             }
             Data::ResetDecoder(display) => match display {
                 Some(display) => {

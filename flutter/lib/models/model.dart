@@ -1010,6 +1010,12 @@ class FfiModel with ChangeNotifier {
       final hasRetry = evt['hasRetry'] == 'true';
       showPrivacyFailedDialog(
           sessionId, type, title, text, link, hasRetry, dialogManager);
+    } else if (type == 'remote-notice') {
+      // Fork: a non-fatal notice from the remote - a feed switched off/on, all feeds paused
+      // or resumed (src/server/connection.rs send_remote_notice). A toast, never a dialog:
+      // it must not interrupt the session or need a click.
+      handleToast({'type': 'info', 'text': text, 'dur_msec': 4000}, sessionId,
+          peerId);
     } else if (type == 'voice-call-disabled') {
       // Fork: the remote has voice calls switched off (config.toml voice-call-enabled = "N").
       // Always worth telling the user - also for the Support button's automatic call, since

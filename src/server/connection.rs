@@ -418,6 +418,14 @@ pub struct Connection {
     multi_ui_session: bool,
     tx_from_authed: mpsc::UnboundedSender<ipc::Data>,
     printer_data: Vec<(Instant, String, Vec<u8>)>,
+    // Fork: feed switches (docs/UPSTREAM_UPGRADE_GUIDE.md "Feed Switches, Pause and Call
+    // Mute"). `wanted_sources` is what the local asked to receive (display/camera indices of
+    // this connection's video source kind): the primary at login, the target of a display
+    // switch, the result of a CaptureDisplays. `blocked_sources` and `feeds_paused` are the
+    // connection manager's switches; a wanted source is subscribed only while allowed.
+    wanted_sources: Vec<usize>,
+    blocked_sources: HashSet<usize>,
+    feeds_paused: bool,
     // For post requests that need to be sent sequentially.
     // eg. post_conn_audit
     tx_post_seq: mpsc::UnboundedSender<(String, Value)>,
@@ -610,6 +618,9 @@ impl Connection {
             file_remove_log_control: FileRemoveLogControl::new(id),
             last_supported_encoding: None,
             services_subed: false,
+            wanted_sources: Vec::new(),
+            blocked_sources: Default::default(),
+            feeds_paused: false,
             delayed_read_dir: None,
             #[cfg(target_os = "macos")]
             retina: Retina::default(),
@@ -924,6 +935,44 @@ impl Connection {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         ipc::Data::CameraPreview { index, enable } => {
                             video_service::set_camera_preview(index, enable, conn.tx_to_cm.clone());
+                        }
+                        // Fork: feed switches from the connection manager - see
+                        // apply_feed_switches(). `kind` must be this connection's own video
+                        // source kind; anything else is ignored.
+                        ipc::Data::SetVideoSource { kind, index, enabled } => {
+                            if kind == conn.video_source().service_name_prefix() {
+                                if enabled {
+                                    conn.blocked_sources.remove(&index);
+                                } else {
+                                    conn.blocked_sources.insert(index);
+                                }
+                                conn.apply_feed_switches();
+                                if conn.wanted_sources.contains(&index) {
+                                    conn.send_feed_notice(index, enabled).await;
+                                }
+                            }
+                        }
+                        ipc::Data::PauseFeeds(paused) => {
+                            if conn.feeds_paused != paused {
+                                conn.feeds_paused = paused;
+                                conn.apply_feed_switches();
+                                if !conn.wanted_sources.is_empty() {
+                                    conn.send_remote_notice(if paused {
+                                        "All feeds were paused by the remote".to_owned()
+                                    } else {
+                                        "Feeds were resumed by the remote".to_owned()
+                                    })
+                                    .await;
+                                }
+                            }
+                        }
+                        // Fork: the remote's microphone is no longer mixed into this local's
+                        // call audio (src/server/voice_conference.rs); the call stays up.
+                        ipc::Data::MuteVoiceCall(muted) => {
+                            super::voice_conference::set_muted(conn.inner.id(), muted);
+                        }
+                        ipc::Data::MuteAllVoiceCalls(muted) => {
+                            super::voice_conference::set_muted_all(muted);
                         }
                         ipc::Data::CloseVoiceCall(_reason) => {
                             log::debug!("Close the voice call from the ipc.");
@@ -2013,8 +2062,95 @@ impl Connection {
 
             s.try_add_primary_camera_service();
             s.add_camera_connection(self.inner.clone());
+            // Fork: the primary camera is what the local asked for; keep it unsubscribed if
+            // the connection manager has it switched off or everything paused.
+            let primary = camera::PRIMARY_CAMERA_IDX;
+            self.wanted_sources = vec![primary];
+            if !self.is_source_allowed(primary) {
+                s.subscribe(
+                    &video_service::get_service_name(VideoSource::Camera, primary),
+                    self.inner.clone(),
+                    false,
+                );
+            }
         }
         self.report_video_sources();
+    }
+
+    // Fork: feed switches - true while the connection may receive video source `idx`.
+    #[inline]
+    fn is_source_allowed(&self, idx: usize) -> bool {
+        !self.feeds_paused && !self.blocked_sources.contains(&idx)
+    }
+
+    // Fork: (re)apply the switches to what the local asked for, after a toggle from the
+    // connection manager: every wanted source is subscribed iff allowed. A service that does
+    // not exist yet is created like capture_displays() does; an unsubscribed service idles.
+    fn apply_feed_switches(&mut self) {
+        let Some(server) = self.server.upgrade() else {
+            return;
+        };
+        let source = self.video_source();
+        let wanted = self.wanted_sources.clone();
+        let mut lock = server.write().unwrap();
+        for idx in wanted {
+            let name = video_service::get_service_name(source, idx);
+            let allowed = self.is_source_allowed(idx);
+            if allowed && !lock.contains(&name) {
+                lock.add_service(Box::new(video_service::new(source, idx)));
+            }
+            lock.subscribe(&name, self.inner.clone(), allowed);
+        }
+        drop(lock);
+        self.report_video_sources();
+    }
+
+    // Fork: the human-readable name of source `idx` of this connection's kind, as the CM
+    // row and the local's notices show it. `cameras` is the current camera table (looked up
+    // once by the caller, empty for monitor connections).
+    fn source_name(&self, idx: usize, cameras: &[DisplayInfo]) -> String {
+        match self.video_source() {
+            VideoSource::Monitor => super::display_service::get_display_info(idx)
+                .map(|d| d.name)
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| format!("Monitor {}", idx + 1)),
+            VideoSource::Camera => cameras
+                .get(idx)
+                .map(|d| d.name.clone())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| format!("Camera {}", idx + 1)),
+        }
+    }
+
+    // Fork: tell the local that source `idx` was switched off/on by the remote. Uses the
+    // existing MessageBox message with the fork's "remote-notice" type, which the fork's
+    // Flutter shows as a toast (handleMsgBox in flutter/lib/models/model.dart); any other
+    // client shows it as an ordinary dialog. No new wire message.
+    async fn send_feed_notice(&mut self, idx: usize, enabled: bool) {
+        let cameras = if self.view_camera {
+            camera::Cameras::get_sync_cameras()
+        } else {
+            Vec::new()
+        };
+        let name = self.source_name(idx, &cameras);
+        let text = if enabled {
+            format!("{name} was turned on by the remote")
+        } else {
+            format!("{name} was turned off by the remote")
+        };
+        self.send_remote_notice(text).await;
+    }
+
+    async fn send_remote_notice(&mut self, text: String) {
+        let mut msg_out = Message::new();
+        msg_out.set_message_box(MessageBox {
+            msgtype: "remote-notice".to_owned(),
+            title: "".to_owned(),
+            text,
+            link: "".to_owned(),
+            ..Default::default()
+        });
+        self.send(msg_out).await;
     }
 
     // Fork: tell the connection manager which monitors/cameras this connection currently
@@ -2023,37 +2159,23 @@ impl Connection {
     // switch, CaptureDisplays). Names come from the same display/camera tables the peer info
     // is built from. Cheap: one IPC message per change, nothing per frame.
     fn report_video_sources(&mut self) {
-        let Some(server) = self.server.upgrade() else {
-            return;
-        };
-        let subbed = server
-            .read()
-            .unwrap()
-            .get_subbed_video_sources(self.inner.id());
-        let cameras = if subbed.iter().any(|(s, _)| s.is_camera()) {
+        // Since the feed switches (2026-10-16) the report is what the local *asked for*
+        // (`wanted_sources`), each flagged with whether it is currently allowed, so a source
+        // the CM switched off stays on the row, greyed, where it can be switched back on.
+        let cameras = if self.view_camera {
             camera::Cameras::get_sync_cameras()
         } else {
             Vec::new()
         };
-        let sources = subbed
-            .into_iter()
-            .map(|(source, idx)| {
-                let name = match source {
-                    VideoSource::Monitor => super::display_service::get_display_info(idx)
-                        .map(|d| d.name)
-                        .filter(|n| !n.is_empty())
-                        .unwrap_or_else(|| format!("Monitor {}", idx + 1)),
-                    VideoSource::Camera => cameras
-                        .get(idx)
-                        .map(|d| d.name.clone())
-                        .filter(|n| !n.is_empty())
-                        .unwrap_or_else(|| format!("Camera {}", idx + 1)),
-                };
-                ipc::VideoSourceInfo {
-                    kind: source.service_name_prefix().to_owned(),
-                    index: idx,
-                    name,
-                }
+        let kind = self.video_source().service_name_prefix().to_owned();
+        let sources = self
+            .wanted_sources
+            .iter()
+            .map(|&idx| ipc::VideoSourceInfo {
+                kind: kind.clone(),
+                index: idx,
+                name: self.source_name(idx, &cameras),
+                enabled: self.is_source_allowed(idx),
             })
             .collect();
         self.send_to_cm(ipc::Data::VideoSources(sources));
@@ -2098,6 +2220,17 @@ impl Connection {
                 self.auto_disconnect_timer = Self::get_auto_disconenct_timer();
                 s.try_add_primay_video_service();
                 s.add_connection(self.inner.clone(), &noperms);
+                // Fork: the primary monitor is what the local asked for; keep it unsubscribed
+                // if the connection manager has it switched off or everything paused.
+                let primary = *display_service::PRIMARY_DISPLAY_IDX;
+                self.wanted_sources = vec![primary];
+                if !self.is_source_allowed(primary) {
+                    s.subscribe(
+                        &video_service::get_service_name(VideoSource::Monitor, primary),
+                        self.inner.clone(),
+                        false,
+                    );
+                }
                 drop(s);
                 self.report_video_sources();
             }
@@ -4342,6 +4475,11 @@ impl Connection {
         if self.display_idx != display_idx {
             if let Some(server) = self.server.upgrade() {
                 self.switch_display_to(display_idx, server.clone());
+                // Fork: the switch is recorded but the feed stays off while the connection
+                // manager has this source switched off - say so, the picture will not change.
+                if !self.is_source_allowed(display_idx) {
+                    self.send_feed_notice(display_idx, false).await;
+                }
 
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 if !self.view_camera && s.width != 0 && s.height != 0 {
@@ -4394,8 +4532,11 @@ impl Connection {
         if !crate::common::is_support_multi_ui_session(&self.lr.version) {
             lock.subscribe(&old_service_name, self.inner.clone(), false);
         }
-        lock.subscribe(&new_service_name, self.inner.clone(), true);
+        // Fork: subscribe only while the connection manager allows this source.
+        let allowed = self.is_source_allowed(display_idx);
+        lock.subscribe(&new_service_name, self.inner.clone(), allowed);
         self.display_idx = display_idx;
+        self.wanted_sources = vec![display_idx];
         drop(lock);
         self.report_video_sources();
     }
@@ -4424,6 +4565,30 @@ impl Connection {
 
     async fn capture_displays(&mut self, add: &[usize], sub: &[usize], set: &[usize]) {
         let video_source = self.video_source();
+        // Fork: remember what the local asked for, then subscribe only the allowed part of it
+        // (feed switches). The branch is chosen on the local's original request so that an
+        // `add` of nothing but switched-off sources does not fall through into `set` = none.
+        if !add.is_empty() {
+            for d in add {
+                if !self.wanted_sources.contains(d) {
+                    self.wanted_sources.push(*d);
+                }
+            }
+        } else if !sub.is_empty() {
+            self.wanted_sources.retain(|d| !sub.contains(d));
+        } else {
+            self.wanted_sources = set.to_vec();
+        }
+        let add_allowed: Vec<usize> = add
+            .iter()
+            .copied()
+            .filter(|d| self.is_source_allowed(*d))
+            .collect();
+        let set_allowed: Vec<usize> = set
+            .iter()
+            .copied()
+            .filter(|d| self.is_source_allowed(*d))
+            .collect();
         if let Some(sever) = self.server.upgrade() {
             let mut lock = sever.write().unwrap();
             for display in add.iter() {
@@ -4439,11 +4604,25 @@ impl Connection {
                 }
             }
             if !add.is_empty() {
-                lock.capture_displays(self.inner.clone(), video_source, add, true, false);
+                if !add_allowed.is_empty() {
+                    lock.capture_displays(
+                        self.inner.clone(),
+                        video_source,
+                        &add_allowed,
+                        true,
+                        false,
+                    );
+                }
             } else if !sub.is_empty() {
                 lock.capture_displays(self.inner.clone(), video_source, sub, false, true);
             } else {
-                lock.capture_displays(self.inner.clone(), video_source, set, true, true);
+                lock.capture_displays(
+                    self.inner.clone(),
+                    video_source,
+                    &set_allowed,
+                    true,
+                    true,
+                );
             }
             self.multi_ui_session = lock.get_subbed_displays_count(self.inner.id()) > 1;
             if self.follow_remote_window {

@@ -2700,6 +2700,20 @@ class _VoiceCallMenu extends StatelessWidget {
       return [
         audioInput,
         Divider(),
+        // Fork: mute this side's microphone; the call stays up, the remote hears silence
+        // (src/client/io_loop.rs keeps capturing, sends nothing).
+        MenuButton(
+          child: Obx(() => Text(translate(ffi.chatModel.voiceCallMuted.value
+              ? 'Unmute microphone'
+              : 'Mute microphone'))),
+          onPressed: () {
+            final muted = !ffi.chatModel.voiceCallMuted.value;
+            ffi.chatModel.voiceCallMuted.value = muted;
+            bind.sessionSetVoiceCallMuted(
+                sessionId: ffi.sessionId, muted: muted);
+          },
+          ffi: ffi,
+        ),
         MenuButton(
           child: Text(translate('End call')),
           onPressed: () => bind.sessionCloseVoiceCall(sessionId: ffi.sessionId),

@@ -75,6 +75,16 @@ class ChatModel with ChangeNotifier {
 
   Rx<VoiceCallStatus> get voiceCallStatus => _voiceCallStatus;
 
+  // Fork: this side's microphone mute in the current voice call (local side, toolbar's call
+  // menu). Reset whenever the call ends or starts.
+  final RxBool voiceCallMuted = false.obs;
+
+  // Fork: CM inline chat boxes (desktop/pages/server_page.dart _InlineChatBox, 2026-10-16) -
+  // the locals (peer ids) whose box is expanded. One box per local, all visible at once; a
+  // box's input can only ever go to its own local, which is what makes multi-party chat on
+  // the remote unambiguous (the previous single side panel followed the last sender).
+  final Set<String> cmOpenChats = {};
+
   TextEditingController textController = TextEditingController();
   RxInt mobileUnreadSum = 0.obs;
   MessageKey? latestReceivedKey;
@@ -345,6 +355,54 @@ class ChatModel with ChangeNotifier {
     _togglingCMSidePage = false;
   }
 
+  // Fork: CM inline chat boxes.
+  void toggleCmChat(String peerId) {
+    if (!cmOpenChats.remove(peerId)) {
+      cmOpenChats.add(peerId);
+      markPeerRead(peerId);
+    }
+    notifyListeners();
+  }
+
+  void markPeerRead(String peerId) {
+    for (final c in parent.target?.serverModel.clients ?? []) {
+      if (c.peerId == peerId) c.unreadChatMessageCount.value = 0;
+    }
+  }
+
+  // All messages exchanged with local `peerId`, newest first. `_messages` already keeps one
+  // body per local (MessageKey equality ignores the connection), so this is that body.
+  List<ChatMessage> messagesForPeer(String peerId) {
+    final entry = _messages.entries
+        .firstWhereOrNull((e) => e.key.peerId == peerId && !e.key.isOut);
+    return entry?.value.chatMessages ?? const [];
+  }
+
+  // Send to local `peerId`: to the connection it last wrote from (the body's key keeps the
+  // latest connection id) if that connection is still up, else to its first live connection.
+  void sendToPeer(String peerId, String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    final clients = parent.target?.serverModel.clients ?? [];
+    final existing = _messages.keys
+        .firstWhereOrNull((k) => k.peerId == peerId && !k.isOut);
+    final existingConnId = existing?.connId;
+    final MessageKey target;
+    if (existing != null &&
+        clients.any((c) => c.id == existingConnId && !c.disconnected)) {
+      target = existing;
+    } else {
+      final c = clients.firstWhereOrNull(
+          (c) => c.peerId == peerId && c.authorized && !c.disconnected);
+      if (c == null) return;
+      target = MessageKey(peerId, c.id);
+    }
+    insertMessage(target,
+        ChatMessage(text: trimmed, user: me, createdAt: DateTime.now()));
+    bind.cmSendChat(connId: target.connId, msg: trimmed);
+    notifyListeners();
+  }
+
   changeCurrentKey(MessageKey key) {
     updateConnIdOfKey(key);
     String? peerName;
@@ -442,14 +500,12 @@ class ChatModel with ChangeNotifier {
       }
       if (isDesktop) {
         windowOnTop(null);
-        // disable auto jumpTo other tab when hasFocus, and mark unread message
-        final currentSelectedTab =
-            session.serverModel.tabController.state.value.selectedTabInfo;
-        if (currentSelectedTab.key != id.toString() && inputNode.hasFocus) {
-          client.unreadChatMessageCount.value += 1;
-        } else {
-          parent.target?.serverModel.jumpTo(id);
-        }
+        // Fork: inline chat boxes - a message lands in its own local's box and never moves
+        // the selection or the cursor (upstream jumped to the sender's tab, which is what made
+        // replies go to whoever wrote last). A collapsed box expands; the row's unread badge
+        // counts until the operator clicks into that box.
+        cmOpenChats.add(client.peerId);
+        client.unreadChatMessageCount.value += 1;
       } else {
         if (HomePage.homeKey.currentState?.isChatPageCurrentTab != true ||
             _currentKey != messagekey) {
@@ -558,6 +614,7 @@ class ChatModel with ChangeNotifier {
 
   void onVoiceCallStarted() {
     _voiceCallStatus.value = VoiceCallStatus.connected;
+    voiceCallMuted.value = false;
     if (isAndroid) {
       parent.target?.invokeMethod("on_voice_call_started");
     }
@@ -565,6 +622,7 @@ class ChatModel with ChangeNotifier {
 
   void onVoiceCallClosed(String reason) {
     _voiceCallStatus.value = VoiceCallStatus.notStarted;
+    voiceCallMuted.value = false;
     if (isAndroid) {
       // We can always invoke "on_voice_call_closed"
       // no matter if the `_voiceCallStatus` was `VoiceCallStatus.notStarted` or not.
