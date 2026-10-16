@@ -3840,6 +3840,9 @@ pub enum Data {
     ElevateWithLogon(String, String),
     NewVoiceCall,
     CloseVoiceCall,
+    // Fork: mute/unmute this side's microphone in the voice call (io_loop keeps capturing,
+    // sends nothing). UI -> io_loop only; the CM -> connection counterpart is ipc::Data.
+    MuteVoiceCall(bool),
     ContinueInsecureConnection,
     ResetDecoder(Option<usize>),
     RenameFile((i32, String, String, bool)),

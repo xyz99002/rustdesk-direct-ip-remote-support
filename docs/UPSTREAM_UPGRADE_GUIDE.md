@@ -1483,8 +1483,11 @@ unsubscribed and tells the local with the existing `MessageBox` message (`msgtyp
 `remote-notice`, shown as a toast by the fork's `handleMsgBox` in `model.dart`, as a dialog
 by any other client). Everything else is process-local IPC between server and CM.
 - `src/ipc.rs`: `VideoSourceInfo.enabled`; `Data::SetVideoSource { kind, index, enabled }`,
-  `Data::PauseFeeds(bool)`, `Data::MuteVoiceCall(bool)` (CM → connection, and UI → client
-  io_loop for the local's own mic), `Data::MuteAllVoiceCalls(bool)`.
+  `Data::PauseFeeds(bool)`, `Data::MuteVoiceCall(bool)` (CM → connection),
+  `Data::MuteAllVoiceCalls(bool)`. The local's own mic uses the *other* `Data` enum, the
+  client-side one in `src/client.rs` (`client::Data::MuteVoiceCall(bool)`, UI → io_loop, next
+  to `NewVoiceCall`/`CloseVoiceCall`) - the two enums share a name and the first build of this
+  change confused them (CI #78).
 - `src/server/connection.rs`: `wanted_sources` (what the local asked for: the primary at
   login in `try_sub_monitor_services`/`try_sub_camera_displays`, the target of
   `switch_display_to`, the result of `capture_displays`), `blocked_sources`, `feeds_paused`,
