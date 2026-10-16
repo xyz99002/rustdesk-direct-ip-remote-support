@@ -409,6 +409,11 @@ jobs:
             # reset both from git before every pass or the second pass duplicates every file
             # component and breaks the WiX build.
             git checkout -- res/msi/Package
+            # Start every pass from clean intermediate/output folders. MSBuild materialises
+            # bin\...\Package.msi as a HARD LINK to obj\...\Package.msi (its log says so:
+            # "Creating hard link to copy ..."); anything that still shares that inode when the
+            # next pass writes obj\...\Package.msi is silently overwritten with the new content.
+            Remove-Item -Recurse -Force ./res/msi/Package/obj, ./res/msi/Package/bin -ErrorAction SilentlyContinue
             # Bundle the matching sample config so config_exists() is already true on first
             # launch and the first-run Local/Remote setup dialog never appears.
             Copy-Item $v.Config ./rustdesk/config.toml -Force
@@ -434,13 +439,26 @@ jobs:
             $msi = Get-ChildItem ./Package/bin/*/Release/en-us/Package.msi | Select-Object -First 1
             popd
 
-            mv $msi.FullName "./SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-$($v.Name).msi"
+            # COPY, never move: a moved bin\Package.msi is still the hard link to
+            # obj\Package.msi, and the next pass's build rewrote it in place - found via real
+            # testing 2026-10-15: the "local" MSI installed with role = "remote", and the step's
+            # own sha256sum lines showed both MSIs byte-identical (nightly #58). A copy gets its
+            # own data; the clean-up above removes the shared inode as well.
+            Copy-Item $msi.FullName "./SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-$($v.Name).msi" -Force
             # Restore the dist dir for the next pass (and so later steps in this job still find
             # the plain rustdesk.exe name they expect).
             Rename-Item -Path "./rustdesk/$env:MSI_APP_NAME.exe" -NewName "rustdesk.exe"
             Remove-Item ./rustdesk/config.toml -Force -ErrorAction SilentlyContinue
           }
           sha256sum ./SignOutput/rustdesk-*.msi
+          # The two variants must differ (different config.toml inside). Identical hashes mean
+          # the hard-link overwrite above has come back in some form; fail loudly rather than
+          # publish two "remote" installers under two names.
+          $hashes = Get-FileHash ./SignOutput/rustdesk-*-local.msi, ./SignOutput/rustdesk-*-remote.msi | Select-Object -ExpandProperty Hash -Unique
+          if ($hashes.Count -lt 2) {
+            Write-Error "Local and Remote MSIs are byte-identical - the variant split did not take effect"
+            exit 1
+          }
 
       - name: Sign rustdesk self-extracted file
         if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL != '-2'

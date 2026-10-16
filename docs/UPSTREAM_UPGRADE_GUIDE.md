@@ -265,6 +265,22 @@ Verify:
   `RustDesk-DirectIP-RemoteSupport.exe` — must match `src/core_main.rs`'s runtime `APP_NAME`) and
   passes `--app-name $env:MSI_APP_NAME` to `preprocess.py`, and still passes `--conn-type outgoing`
   for the Local variant only (Remote gets no `--conn-type` flag — today's default).
+- **Both installers were the Remote one (found via real testing 2026-10-15, fixed the same
+  day).** The Local MSI installed on a user's machine came up as role=remote; its `config.toml`,
+  extracted with `msiexec /a`, said `role = "remote"`, and the step's own `sha256sum` lines in
+  nightly #58 showed `-local.msi` and `-remote.msi` byte-identical, with the Remote pass's
+  build number inside. Cause: MSBuild writes `bin\x64\Release\en-us\Package.msi` as a **hard
+  link** to `obj\x64\Release\en-us\Package.msi` (its log prints "Creating hard link to copy
+  …"). The loop moved `bin\Package.msi` to `SignOutput\…-local.msi`, which moved the link, not
+  the data; the second pass then wrote `obj\Package.msi` in place and so rewrote the "local"
+  file with the Remote build. Fix in the "Build msi" step: `Remove-Item` of
+  `res/msi/Package/obj` and `bin` before every pass, `Copy-Item` (never `mv`) into
+  `SignOutput`, and a final guard that fails the step when the two MSIs hash the same.
+  **Upgrade check**: keep the copy and the guard whatever upstream does to this step; if the
+  loop is ever rewritten, run `sha256sum` on both outputs and make sure they differ. A
+  machine that already has the wrong Local installer can be repaired without reinstalling:
+  copy `local.toml` over `config.toml` in `C:\Program Files\RustDesk-DirectIP-RemoteSupport\`
+  (the MSI ships both samples next to the exe) and restart the app.
 - `--app-name` changes, consistently, everything derived from WiX's one `$(var.Product)` variable:
   ProductName, install folder (`C:\Program Files\<AppName>\`), `UpgradeCode` (this is the piece
   that actually matters — WiX's `<MajorUpgrade>` triggers off `UpgradeCode` family match, not
