@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/main.dart';
-import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_hbb/mobile/pages/settings_page.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
@@ -49,9 +47,11 @@ class ServerModel with ChangeNotifier {
 
   final List<Client> _clients = [];
 
-  // Fork: camera index -> id of the open preview pop-up window for it (desktop CM only).
-  // See openCameraPreview() / onCameraPreviewClosed().
-  final Map<int, int> _cameraPreviewWindows = {};
+  // Fork: cameras whose inline preview tile is expanded in the CM list (desktop CM only), and
+  // the latest preview frame per camera. See toggleCameraPreview() / onCameraPreviewFrame().
+  // Changed 2026-10-16 from one pop-up window per camera to a tile under the camera's row.
+  final Set<int> _openCameraPreviews = {};
+  final Map<int, ValueNotifier<CameraPreviewFrame?>> _cameraPreviewFrames = {};
 
   Timer? cmHiddenTimer;
 
@@ -607,60 +607,45 @@ class ServerModel with ChangeNotifier {
     }
   }
 
-  // Fork: open (or raise) the pop-up window that shows what camera `index` is sending, and
-  // ask the server to start feeding it frames. One window per camera, shared by every
-  // connection watching that camera.
-  Future<void> openCameraPreview(int index, String name) async {
+  // Fork: expand or collapse the inline preview tile of camera `index` and ask the server to
+  // start/stop feeding frames for it. One preview per camera index, shared by every connection
+  // watching that camera (each such row draws the tile).
+  Future<void> toggleCameraPreview(int index) async {
     if (desktopType != DesktopType.cm) return;
-    final existing = _cameraPreviewWindows[index];
-    if (existing != null) {
-      try {
-        final controller = WindowController.fromWindowId(existing);
-        await controller.show();
-        await controller.focus();
-      } catch (e) {
-        debugPrint("camera preview: failed to raise window $existing: $e");
-      }
+    if (_openCameraPreviews.remove(index)) {
+      _cameraPreviewFrames[index]?.value = null;
+      await bind.cmSetCameraPreview(index: index, enable: false);
     } else {
-      try {
-        final windowId = await rustDeskWinManager.newCameraPreview(index, name);
-        _cameraPreviewWindows[index] = windowId;
-      } catch (e) {
-        debugPrint("camera preview: failed to open window: $e");
-        return;
-      }
+      _openCameraPreviews.add(index);
+      await bind.cmSetCameraPreview(index: index, enable: true);
     }
-    await bind.cmSetCameraPreview(index: index, enable: true);
     notifyListeners();
   }
 
-  bool isCameraPreviewOpen(int index) =>
-      _cameraPreviewWindows.containsKey(index);
+  bool isCameraPreviewOpen(int index) => _openCameraPreviews.contains(index);
 
-  // Fork: `camera_preview_frame` event (src/flutter.rs) -> the camera's preview window.
+  // Fork: the latest frame of camera `index`. Tiles listen to this notifier rather than to
+  // the whole model, so a frame (up to four per second per camera) repaints one tile, not
+  // the list.
+  ValueNotifier<CameraPreviewFrame?> cameraPreviewFrame(int index) =>
+      _cameraPreviewFrames.putIfAbsent(
+          index, () => ValueNotifier<CameraPreviewFrame?>(null));
+
+  // Fork: `camera_preview_frame` event (src/flutter.rs): one base64 JPEG of camera `index`.
   void onCameraPreviewFrame(Map<String, dynamic> evt) {
     final index = int.tryParse(evt['index']?.toString() ?? '');
-    if (index == null) return;
-    final windowId = _cameraPreviewWindows[index];
-    if (windowId == null) return;
-    DesktopMultiWindow.invokeMethod(
-        windowId,
-        kWindowEventCameraPreviewFrame,
-        jsonEncode({
-          'index': index,
-          'width': int.tryParse(evt['width']?.toString() ?? '') ?? 0,
-          'height': int.tryParse(evt['height']?.toString() ?? '') ?? 0,
-          'data': evt['data'] ?? '',
-        })).catchError((e) {
-      debugPrint("camera preview: failed to forward frame: $e");
-    });
-  }
-
-  // Fork: the preview window was closed by the user (kWindowEventCameraPreviewClosed).
-  void onCameraPreviewClosed(int index) {
-    if (_cameraPreviewWindows.remove(index) != null) {
-      bind.cmSetCameraPreview(index: index, enable: false);
-      notifyListeners();
+    if (index == null || !_openCameraPreviews.contains(index)) return;
+    final data = evt['data']?.toString() ?? '';
+    if (data.isEmpty) return;
+    try {
+      cameraPreviewFrame(index).value = CameraPreviewFrame(
+        bytes: base64Decode(data),
+        width: int.tryParse(evt['width']?.toString() ?? '') ?? 0,
+        height: int.tryParse(evt['height']?.toString() ?? '') ?? 0,
+        at: DateTime.now(),
+      );
+    } catch (e) {
+      debugPrint("camera preview: bad frame: $e");
     }
   }
 
@@ -669,7 +654,7 @@ class ServerModel with ChangeNotifier {
   // the client list changes; harmless when nothing changed.
   void _refreshCameraPreviews() {
     if (desktopType != DesktopType.cm) return;
-    for (final index in _cameraPreviewWindows.keys) {
+    for (final index in _openCameraPreviews) {
       bind.cmSetCameraPreview(index: index, enable: true);
     }
   }
@@ -1007,6 +992,23 @@ class Client {
 }
 
 // Fork: one monitor or camera a connection receives (ipc::VideoSourceInfo, src/ipc.rs).
+// Fork: one decoded camera preview frame (JPEG bytes as sent by the server, see
+// src/server/video_service.rs maybe_send_camera_preview) and when it arrived, so the tile can
+// say "no frames recently" instead of freezing silently.
+class CameraPreviewFrame {
+  final Uint8List bytes;
+  final int width;
+  final int height;
+  final DateTime at;
+
+  const CameraPreviewFrame({
+    required this.bytes,
+    required this.width,
+    required this.height,
+    required this.at,
+  });
+}
+
 class VideoSourceInfo {
   final String kind; // "monitor" | "camera"
   final int index;

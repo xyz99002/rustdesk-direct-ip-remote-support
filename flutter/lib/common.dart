@@ -110,8 +110,6 @@ enum DesktopType {
   terminal,
   cm,
   portForward,
-  // Fork: the connection manager's camera preview pop-up window.
-  cameraPreview,
 }
 
 bool isDoubleEqual(double a, double b) {

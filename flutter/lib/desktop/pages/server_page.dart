@@ -5,11 +5,11 @@
 // row shows the connection type, the monitors/cameras it currently receives (server-reported,
 // see ServerModel.updateVideoSources), its state (pending / connected / in call / incoming
 // call / disconnected) and its actions inline. Chat and the file-transfer log use upstream's
-// side panel (toggleCMSidePage). Cameras get a pop-up preview window (ServerModel.
-// openCameraPreview). See docs/UPSTREAM_UPGRADE_GUIDE.md "Connection Manager List View".
+// side panel (toggleCMSidePage). Cameras get an inline preview tile under their row
+// (ServerModel.toggleCameraPreview, _CameraPreviewTile; a pop-up window until 2026-10-16).
+// See docs/UPSTREAM_UPGRADE_GUIDE.md "Connection Manager List View".
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -19,7 +19,6 @@ import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_hbb/models/cm_file_model.dart';
-import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_hbb/utils/platform_channel.dart';
 import 'package:get/get.dart';
 import 'package:percent_indicator/linear_percent_indicator.dart';
@@ -54,23 +53,6 @@ class _DesktopServerPageState extends State<DesktopServerPage>
   @override
   void initState() {
     windowManager.addListener(this);
-    // Fork: camera preview pop-ups report their close back to this (main) window.
-    rustDeskWinManager.setMethodHandler((call, fromWindowId) async {
-      if (call.method == kWindowEventCameraPreviewClosed) {
-        try {
-          final args = call.arguments is String
-              ? jsonDecode(call.arguments)
-              : call.arguments;
-          final index = args['index'] as int?;
-          if (index != null) {
-            gFFI.serverModel.onCameraPreviewClosed(index);
-          }
-        } catch (e) {
-          debugPrint("camera preview closed: bad args: $e");
-        }
-      }
-      return null;
-    });
     super.initState();
   }
 
@@ -208,15 +190,33 @@ class ConnectionManagerState extends State<ConnectionManager>
     return list;
   }
 
+  // Fork: number of inline camera preview tiles currently expanded across all rows (each
+  // camera's tile is drawn under every connection watching that camera).
+  int _openPreviewTileCount(ServerModel serverModel) {
+    var count = 0;
+    for (final c in serverModel.clients) {
+      for (final s in c.sources) {
+        if (s.isCamera && serverModel.isCameraPreviewOpen(s.index)) count++;
+      }
+    }
+    return count;
+  }
+
   // Fork: grow the window with its rows (never shrink it under the user), up to a cap;
   // past the cap the list scrolls. The window is resizable, so a manual resize is respected
   // until the next time more rows need room.
-  void _fitWindowHeight(int groupCount, int rowCount) {
+  void _fitWindowHeight(int groupCount, int rowCount, int tileCount) {
     const titleBar = kDesktopRemoteTabBarHeight;
     const groupHeader = 30.0;
     const row = 78.0;
+    // Fork: an expanded inline camera preview adds a tile under its row.
+    const tile = kCameraPreviewTileMaxHeight + 6.0;
     const padding = 24.0;
-    final desired = (titleBar + groupHeader * groupCount + row * rowCount + padding)
+    final desired = (titleBar +
+            groupHeader * groupCount +
+            row * rowCount +
+            tile * tileCount +
+            padding)
         .clamp(kConnectionManagerWindowSizeClosedChat.height,
             kConnectionManagerWindowMaxAutoHeight)
         .toDouble();
@@ -250,8 +250,10 @@ class ConnectionManagerState extends State<ConnectionManager>
 
     final groups = _groupClients(serverModel.clients);
     if (serverModel.clients.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback(
-          (_) => _fitWindowHeight(groups.length, serverModel.clients.length));
+      WidgetsBinding.instance.addPostFrameCallback((_) => _fitWindowHeight(
+          groups.length,
+          serverModel.clients.length,
+          _openPreviewTileCount(serverModel)));
       // The startup show/resize in showCmWindow() may land after the first frame and reset
       // the size; fit once more shortly after.
       if (!_startupFitScheduled) {
@@ -260,7 +262,8 @@ class ConnectionManagerState extends State<ConnectionManager>
           if (mounted) {
             _lastFittedHeight = 0;
             final m = gFFI.serverModel;
-            _fitWindowHeight(_groupClients(m.clients).length, m.clients.length);
+            _fitWindowHeight(_groupClients(m.clients).length, m.clients.length,
+                _openPreviewTileCount(m));
           }
         });
       }
@@ -634,6 +637,7 @@ class _ClientRowState extends State<_ClientRow> {
                       _buildTypeAndSources(serverModel),
                       const SizedBox(height: 4),
                       _buildStateLine(),
+                      ..._buildCameraPreviewTiles(serverModel),
                     ],
                   ),
                 ),
@@ -671,10 +675,12 @@ class _ClientRowState extends State<_ClientRow> {
       if (source.isCamera) {
         final open = serverModel.isCameraPreviewOpen(source.index);
         children.add(Tooltip(
-          message: translate("Show the camera feed being sent"),
+          message: translate(open
+              ? "Hide the camera feed"
+              : "Show the camera feed being sent"),
           child: InkWell(
             borderRadius: BorderRadius.circular(10),
-            onTap: () => serverModel.openCameraPreview(source.index, source.name),
+            onTap: () => serverModel.toggleCameraPreview(source.index),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Icon(
@@ -688,6 +694,25 @@ class _ClientRowState extends State<_ClientRow> {
       }
     }
     return Row(mainAxisSize: MainAxisSize.min, children: children);
+  }
+
+  // Fork: inline preview tiles - one per expanded camera of this connection - under the
+  // state line, instead of a separate pop-up window (changed 2026-10-16; the operator asked
+  // for the feed to stay inside the connection manager, next to the connection it belongs to).
+  List<Widget> _buildCameraPreviewTiles(ServerModel serverModel) {
+    return [
+      for (final source in client.sources)
+        if (source.isCamera && serverModel.isCameraPreviewOpen(source.index))
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: _CameraPreviewTile(
+              key: ValueKey('camera-preview-${client.id}-${source.index}'),
+              name: source.name,
+              frames: serverModel.cameraPreviewFrame(source.index),
+              onClose: () => serverModel.toggleCameraPreview(source.index),
+            ),
+          ),
+    ];
   }
 
   Widget _chip(String text, Color color, {IconData? icon}) {
@@ -1309,6 +1334,125 @@ class __FileTransferLogPageState extends State<_FileTransferLogPage> {
                   : statusListView(jobTable);
             },
           )),
+    );
+  }
+}
+
+// Fork: the inline camera preview under a camera row in the connection manager list. Shows
+// the frames the server already captures for the connection (no second camera open), at most
+// four per second, reduced to 480 px wide and JPEG-compressed on the remote
+// (src/server/video_service.rs maybe_send_camera_preview). Replaces the pop-up window of
+// 2026-10-07; the operator wanted the feed next to the connection it belongs to.
+class _CameraPreviewTile extends StatefulWidget {
+  final String name;
+  final ValueNotifier<CameraPreviewFrame?> frames;
+  final VoidCallback onClose;
+
+  const _CameraPreviewTile({
+    Key? key,
+    required this.name,
+    required this.frames,
+    required this.onClose,
+  }) : super(key: key);
+
+  @override
+  State<_CameraPreviewTile> createState() => _CameraPreviewTileState();
+}
+
+class _CameraPreviewTileState extends State<_CameraPreviewTile> {
+  static const _staleAfter = Duration(seconds: 3);
+  // Re-evaluates the "no frames recently" state once a second; frames themselves repaint
+  // through the ValueListenableBuilder below.
+  Timer? _staleTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _staleTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _staleTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const overlayText = TextStyle(
+      color: Colors.white,
+      fontSize: 11,
+      shadows: [Shadow(color: Colors.black, blurRadius: 4)],
+    );
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints:
+            const BoxConstraints(maxHeight: kCameraPreviewTileMaxHeight),
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              color: Colors.black,
+              child: ValueListenableBuilder<CameraPreviewFrame?>(
+                valueListenable: widget.frames,
+                builder: (context, frame, _) {
+                  final stale = frame == null ||
+                      DateTime.now().difference(frame.at) > _staleAfter;
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (frame != null)
+                        Image.memory(
+                          frame.bytes,
+                          gaplessPlayback: true,
+                          fit: BoxFit.contain,
+                          filterQuality: FilterQuality.low,
+                        ),
+                      if (stale)
+                        Center(
+                          child: Text(
+                            translate(frame == null
+                                ? "Waiting for camera frames..."
+                                : "No frames received recently"),
+                            textAlign: TextAlign.center,
+                            style: overlayText.copyWith(fontSize: 12),
+                          ),
+                        ),
+                      Positioned(
+                        left: 6,
+                        top: 4,
+                        right: 28,
+                        child: Text(widget.name,
+                            overflow: TextOverflow.ellipsis,
+                            style: overlayText),
+                      ),
+                      Positioned(
+                        right: 0,
+                        top: 0,
+                        child: Tooltip(
+                          message: translate("Hide the camera feed"),
+                          child: InkWell(
+                            onTap: widget.onClose,
+                            child: const Padding(
+                              padding: EdgeInsets.all(5),
+                              child: Icon(Icons.close,
+                                  size: 16, color: Colors.white),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

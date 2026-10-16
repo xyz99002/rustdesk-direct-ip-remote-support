@@ -52,9 +52,6 @@ const String kAppTypeDesktopFileTransfer = "file transfer";
 const String kAppTypeDesktopViewCamera = "view camera";
 const String kAppTypeDesktopPortForward = "port forward";
 const String kAppTypeDesktopTerminal = "terminal";
-// Fork: the connection manager's pop-up camera preview window (see
-// desktop/screen/desktop_camera_preview_screen.dart).
-const String kAppTypeDesktopCameraPreview = "camera preview";
 
 const String kWindowMainWindowOnTop = "main_window_on_top";
 const String kWindowRefreshCurrentUser = "refresh_current_user";
@@ -84,10 +81,9 @@ const String kWindowEventSetFullscreen = "set_fullscreen";
 const String kWindowEventMoveTabToNewWindow = "move_tab_to_new_window";
 const String kWindowEventGetCachedSessionData = "get_cached_session_data";
 const String kWindowEventOpenMonitorSession = "open_monitor_session";
-// Fork: CM main window -> camera preview window, one base64 JPEG frame.
-const String kWindowEventCameraPreviewFrame = "camera_preview_frame";
-// Fork: camera preview window -> CM main window, the user closed it.
-const String kWindowEventCameraPreviewClosed = "camera_preview_closed";
+// Fork: height cap of the inline camera preview tile under a camera row in the connection
+// manager list (desktop/pages/server_page.dart); the tile keeps a 16:9 shape within it.
+const double kCameraPreviewTileMaxHeight = 200;
 
 const String kOptionViewStyle = "view_style";
 const String kOptionScrollStyle = "scroll_style";

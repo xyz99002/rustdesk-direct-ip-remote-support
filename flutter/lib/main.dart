@@ -10,7 +10,6 @@ import 'package:flutter_hbb/common/widgets/overlay.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/pages/install_page.dart';
 import 'package:flutter_hbb/desktop/pages/server_page.dart';
-import 'package:flutter_hbb/desktop/screen/desktop_camera_preview_screen.dart';
 import 'package:flutter_hbb/desktop/screen/desktop_file_transfer_screen.dart';
 import 'package:flutter_hbb/desktop/screen/desktop_view_camera_screen.dart';
 import 'package:flutter_hbb/desktop/screen/desktop_port_forward_screen.dart';
@@ -99,14 +98,6 @@ Future<void> main(List<String> args) async {
         runMultiWindow(
           argument,
           kAppTypeDesktopTerminal,
-        );
-        break;
-      case WindowType.CameraPreview:
-        // Fork: opened by the connection manager (same process as the CM main window).
-        desktopType = DesktopType.cameraPreview;
-        runMultiWindow(
-          argument,
-          kAppTypeDesktopCameraPreview,
         );
         break;
       default:
@@ -240,16 +231,6 @@ void runMultiWindow(
         params: argument,
       );
       break;
-    case kAppTypeDesktopCameraPreview:
-      // Fork: a plain, natively framed window (no custom tab bar), so it can be minimized,
-      // moved and resized like any other window while the CM stays where it is.
-      if (!isMacOS) {
-        WindowController.fromWindowId(kWindowId!).showTitleBar(true);
-      }
-      widget = DesktopCameraPreviewScreen(
-        params: argument,
-      );
-      break;
     default:
       // no such appType
       exit(0);
@@ -298,9 +279,6 @@ void runMultiWindow(
       break;
     case kAppTypeDesktopTerminal:
       await restoreWindowPosition(WindowType.Terminal, windowId: kWindowId!);
-      break;
-    case kAppTypeDesktopCameraPreview:
-      // Fork: no saved position; newCameraPreview() already sized and centered it.
       break;
     default:
       // no such appType
