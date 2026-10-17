@@ -74,10 +74,6 @@ nokhwa = { git = "https://github.com/rustdesk-org/nokhwa.git", branch = "fix_fro
 
 # Builds the bundled libjpeg-turbo with cmake. SIMD when nasm is on the builder, plain C
 # otherwise - exactly the situation mozjpeg-sys was already in - so `require-simd` is
-# deliberately off: a missing nasm must never fail the build. Not on Windows-on-ARM: the
-# cmake crate cannot find Visual Studio on the ARM64 CI runner (Full Flutter CI #95), and that
-# target is not shipped by the fork - MJPEG camera frames are refused there with a clear
-# error (see decode_mjpeg_rgba) and the mode choice avoids MJPEG modes.
-[target.'cfg(any(target_os = "linux", all(target_os = "windows", target_arch = "x86_64")))'.dependencies]
+# deliberately off: a missing nasm must never fail the build.
 turbojpeg = { version = "1.5", default-features = false, features = ["cmake"] }
 

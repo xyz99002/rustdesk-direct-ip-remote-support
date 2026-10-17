@@ -1465,19 +1465,24 @@ Verify, on any upstream merge that touches `libs/scrap/src/common/camera.rs` (`c
   - **CI consequences of the cmake-built library** (`.github/workflows/flutter-build.yml`):
     the Linux Sciter container (Ubuntu 18.04 under run-on-arch) had no `cmake` on PATH - vcpkg
     brings its own - so `cmake` was added to its apt list (the armv7 variant already bootstraps
-    a newer CMake and prepends it to PATH). On Windows the `cmake` crate's Visual Studio
-    auto-detection is skipped by `CMAKE_GENERATOR = Visual Studio 17 2022` on the build step
-    for **both** arches - an `env:` entry cannot be left unset per arch and an empty value is
-    passed as `-G ""`, which broke the x64 job in Full Flutter CI #95. The Windows ARM64 job
-    (native ARM64 runner) fails even with the generator named: CMake there "could not find any
-    instance of Visual Studio". Since the fork does not ship Windows-on-ARM, TurboJPEG is simply
-    **not built for that target** (`libs/scrap/Cargo.toml` target condition
-    `any(linux, all(windows, x86_64))`): `MJPEG_SUPPORTED` is false there, `choose_format()`
-    never picks an MJPEG mode, and a stub `decode_mjpeg_rgba` returns a clear error for MJPEG
-    frames. Every shipping job, including Windows x86_64, passed with the library (Full
-    Flutter CI #92). If Windows-on-ARM is ever shipped, point CMake at the VS instance
-    (`CMAKE_GENERATOR_INSTANCE`) or switch that job to the Ninja generator and re-enable the
-    dependency for `aarch64-pc-windows-msvc`.
+    a newer CMake and prepends it to PATH). **Windows, every arch** (found 2026-10-17 by real
+    testing and a probe workflow, `.github/workflows/arm64-cmake-probe.yml`): the `cmake`
+    crate detects the Visual Studio generator itself and does not know the newest Visual
+    Studio. The windows-2022 runners have Visual Studio 2022, the **windows-11-arm runner has
+    only Visual Studio 2026** (vswhere: product line 18), so the crate's detection failed there
+    ("couldn't determine visual studio generator"), a pinned `Visual Studio 17 2022` failed
+    there too ("could not find any instance of Visual Studio") and an empty `CMAKE_GENERATOR`
+    broke x64 (cmake gets `-G ""`). The "Select CMake generator" step in
+    `flutter-build.yml` therefore pins nothing: it reads the generator CMake marks with a star
+    in `cmake --help` (its default = the newest Visual Studio it finds) and exports that as
+    `CMAKE_GENERATOR` for the build step, failing loudly if the default is not a Visual Studio
+    generator. The probe proved the real `turbojpeg-sys` build script succeeds on the ARM64
+    runner that way (and that a garbage JPEG gives an error value, not a crash), so
+    **Windows-on-ARM has the same camera code as every other target** - an earlier version of
+    this change had disabled TurboJPEG there to get the job green; that shortcut was removed
+    the same day. Upgrade check: if the step ever fails because CMake's default is no longer a
+    Visual Studio generator, extend the step (vswhere + `CMAKE_GENERATOR_INSTANCE`) rather than
+    skipping the dependency for a target.
 
 ### Feed Switches, Pause and Call Mute (implemented 2026-10-16)
 The operator on the remote can switch any single monitor/camera feed off and on per

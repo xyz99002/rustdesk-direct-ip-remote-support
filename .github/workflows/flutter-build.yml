@@ -264,16 +264,12 @@ jobs:
         shell: bash
         run: echo "SODIUM_LIB_DIR=$VCPKG_ROOT/installed/${{ matrix.job.vcpkg-triplet }}/lib" >> "$GITHUB_ENV"
 
+      - name: Select CMake generator (whatever Visual Studio the runner has)
+        # Fork: see .github/actions/select-cmake-generator/action.yml. The `cmake` crate behind
+        # turbojpeg-sys does not know the newest Visual Studio (the ARM64 runner has only 2026).
+        uses: ./.github/actions/select-cmake-generator
+
       - name: Build rustdesk
-        env:
-          # Fork: the `cmake` crate (turbojpeg-sys, libs/scrap) auto-detects the Visual Studio
-          # generator through an x64-hosted MSBuild lookup, which fails on the native ARM64
-          # runner ("couldn't determine visual studio generator"). Naming the generator skips
-          # that lookup; the crate still adds the platform flag (x64 / ARM64) itself. Set for
-          # both arches: an `env:` entry cannot be left unset per arch, and an EMPTY value is
-          # passed to cmake as `-G ""`, which fails (found via real testing, Full Flutter CI
-          # #95: the x64 job broke on exactly that).
-          CMAKE_GENERATOR: Visual Studio 17 2022
         run: |
           # Windows: build RustDesk
           # --hwcodec is shared by all Windows targets; per-target extras (e.g. --vram) come from the matrix
@@ -571,6 +567,10 @@ jobs:
           fi
           head -n 100 "${VCPKG_ROOT}/buildtrees/ffmpeg/build-${{ matrix.job.vcpkg-triplet }}-rel-out.log" || true
         shell: bash
+
+      - name: Select CMake generator (whatever Visual Studio the runner has)
+        # Fork: see .github/actions/select-cmake-generator/action.yml (turbojpeg-sys, libs/scrap).
+        uses: ./.github/actions/select-cmake-generator
 
       - name: Build rustdesk
         id: build

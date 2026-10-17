@@ -189,6 +189,10 @@ jobs:
           }
         shell: pwsh
 
+      - name: Select CMake generator (whatever Visual Studio the runner has)
+        # Fork: see .github/actions/select-cmake-generator/action.yml (turbojpeg-sys, libs/scrap).
+        uses: ./.github/actions/select-cmake-generator
+
       - name: Build rustdesk
         run: |
           python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec
