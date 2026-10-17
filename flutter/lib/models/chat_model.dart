@@ -373,9 +373,10 @@ class ChatModel with ChangeNotifier {
   // All messages exchanged with local `peerId`, newest first. `_messages` already keeps one
   // body per local (MessageKey equality ignores the connection), so this is that body.
   List<ChatMessage> messagesForPeer(String peerId) {
-    final entry = _messages.entries
-        .firstWhereOrNull((e) => e.key.peerId == peerId && !e.key.isOut);
-    return entry?.value.chatMessages ?? const [];
+    for (final e in _messages.entries) {
+      if (e.key.peerId == peerId && !e.key.isOut) return e.value.chatMessages;
+    }
+    return const [];
   }
 
   // Send to local `peerId`: to the connection it last wrote from (the body's key keeps the
@@ -384,8 +385,13 @@ class ChatModel with ChangeNotifier {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
     final clients = parent.target?.serverModel.clients ?? [];
-    final existing = _messages.keys
-        .firstWhereOrNull((k) => k.peerId == peerId && !k.isOut);
+    MessageKey? existing;
+    for (final k in _messages.keys) {
+      if (k.peerId == peerId && !k.isOut) {
+        existing = k;
+        break;
+      }
+    }
     final existingConnId = existing?.connId;
     final MessageKey target;
     if (existing != null &&
