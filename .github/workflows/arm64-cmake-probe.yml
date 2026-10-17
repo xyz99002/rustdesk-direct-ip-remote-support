@@ -45,6 +45,29 @@ jobs:
           Try-Cmake "C vs17 -A ARM64 + instance" @("-G","Visual Studio 17 2022","-A","ARM64","-DCMAKE_GENERATOR_INSTANCE=$inst")
           Try-Cmake "D vs18 -A ARM64" @("-G","Visual Studio 18 2026","-A","ARM64")
           Try-Cmake "E default generator, no -G" @("-A","ARM64")
+      - uses: dtolnay/rust-toolchain@1.75
+      - name: Real build script - turbojpeg-sys with the generator chosen from the runner's Visual Studio
+        shell: pwsh
+        run: |
+          # Same selection logic as the "Select CMake generator" step in flutter-build.yml.
+          $vw = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $line = & $vw -latest -products * -property catalog_productLineVersion
+          switch ($line) {
+            "18" { $gen = "Visual Studio 18 2026" }
+            "17" { $gen = "Visual Studio 17 2022" }
+            default { throw "Unsupported Visual Studio product line '$line' - extend the generator selection" }
+          }
+          Write-Host "VS product line $line -> CMAKE_GENERATOR=$gen"
+          $env:CMAKE_GENERATOR = $gen
+          $t = Join-Path $env:RUNNER_TEMP "tj_probe"
+          New-Item -ItemType Directory -Force "$t\src" | Out-Null
+          Set-Content "$t\Cargo.toml" "[package]`nname = `"tj_probe`"`nversion = `"0.1.0`"`nedition = `"2021`"`n[dependencies]`nturbojpeg = { version = `"1.5`", default-features = false, features = [`"cmake`"] }`n"
+          Set-Content "$t\src\main.rs" "fn main() { println!(`"{:?}`", turbojpeg::decompress(&[0u8; 8], turbojpeg::PixelFormat::RGBA).is_err()); }"
+          Set-Location $t
+          cargo build --release 2>&1 | Select-Object -Last 25
+          if ($LASTEXITCODE -ne 0) { throw "cargo build failed ($LASTEXITCODE)" }
+          .\target\release\tj_probe.exe
+          Write-Host "===== RESULT real-build-script OK (garbage JPEG returned an error value, no crash)"
       - name: Probe Ninja under the ARM64 developer environment
         shell: pwsh
         continue-on-error: true
