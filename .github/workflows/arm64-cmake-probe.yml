@@ -1,81 +1,65 @@
-name: ARM64 CMake probe
+name: Windows CMake generator probe
 
-# Fork helper (manual only, changes under .github/ start no CI): find out why the `cmake`
-# crate cannot configure libjpeg-turbo (turbojpeg-sys) on the native Windows-on-ARM runner
-# ("could not find any instance of Visual Studio"), by printing the runner's Visual Studio and
-# CMake facts and trying the plausible configurations on the real libjpeg-turbo source.
-# Dispatch from the Actions tab, read the "Probe" step. Kept as a tool for runner-image changes.
+# Fork helper (manual only, changes under .github/ start no CI). Two jobs:
+#  - `verify`: builds a tiny crate that depends on turbojpeg (the library libs/scrap uses for
+#    MJPEG camera frames) on every Windows configuration the real workflows build, using the
+#    shared .github/actions/select-cmake-generator action - i.e. proves the "whatever Visual
+#    Studio the runner has" logic on windows-11-arm (Visual Studio 2026 only), windows-2022 x64
+#    and windows-2022 i686 (the 32-bit Sciter job). Dispatch it after runner-image changes or
+#    edits to that action.
+#  - `facts`: prints the runner's Visual Studio / CMake facts (what showed that the ARM64
+#    image has no Visual Studio 2022, 2026-10-17).
 on:
   workflow_dispatch:
 
 jobs:
-  probe:
+  verify:
+    name: verify (${{ matrix.os }} ${{ matrix.target || 'native' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-11-arm
+            target: ''
+          - os: windows-2022
+            target: ''
+          - os: windows-2022
+            target: i686-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.75
+        with:
+          targets: ${{ matrix.target }}
+      - name: Select CMake generator
+        uses: ./.github/actions/select-cmake-generator
+      - name: Build turbojpeg-sys and decode garbage
+        shell: pwsh
+        run: |
+          Write-Host "CMAKE_GENERATOR=$env:CMAKE_GENERATOR"
+          $t = Join-Path $env:RUNNER_TEMP "tj_probe"
+          New-Item -ItemType Directory -Force "$t\src" | Out-Null
+          Set-Content "$t\Cargo.toml" "[package]`nname = `"tj_probe`"`nversion = `"0.1.0`"`nedition = `"2021`"`n[dependencies]`nturbojpeg = { version = `"1.5`", default-features = false, features = [`"cmake`"] }`n"
+          Set-Content "$t\src\main.rs" "fn main() { println!(`"garbage_is_error={:?}`", turbojpeg::decompress(&[0u8; 8], turbojpeg::PixelFormat::RGBA).is_err()); }"
+          Set-Location $t
+          $tgt = "${{ matrix.target }}"
+          if ($tgt) { cargo build --release --target $tgt; $exe = "target\$tgt\release\tj_probe.exe" }
+          else { cargo build --release; $exe = "target\release\tj_probe.exe" }
+          if ($LASTEXITCODE -ne 0) { throw "cargo build failed ($LASTEXITCODE)" }
+          $out = & ".\$exe"
+          Write-Host $out
+          if ($out -notmatch 'garbage_is_error=true') { throw "unexpected output: $out" }
+          Write-Host "===== RESULT OK ${{ matrix.os }} ${{ matrix.target }}"
+
+  facts:
     runs-on: windows-11-arm
     steps:
       - name: Facts
         shell: pwsh
         run: |
-          Write-Host "== cmake"; Get-Command cmake -All | Format-Table Source, Version -AutoSize | Out-String -Width 200; cmake --version
-          Write-Host "== ninja"; Get-Command ninja -All -ErrorAction SilentlyContinue | Format-Table Source -AutoSize | Out-String -Width 200
-          Write-Host "== processor"; $env:PROCESSOR_ARCHITECTURE; [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture; [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+          Write-Host "== cmake"; cmake --version
           $vw = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          Write-Host "== vswhere at $vw exists=$(Test-Path $vw)"
-          & $vw -all -prerelease -products * -format text
-          Write-Host "== generators offered by cmake"
+          & $vw -all -prerelease -products * -property displayName
+          & $vw -all -prerelease -products * -property installationPath
+          Write-Host "== generators offered by cmake (star = default)"
           cmake --help | Select-String "Visual Studio|Ninja"
-      - name: Fetch libjpeg-turbo 3.1.0
-        shell: pwsh
-        run: git clone --depth 1 --branch 3.1.0 https://github.com/libjpeg-turbo/libjpeg-turbo.git "$env:RUNNER_TEMP\ljt"
-      - name: Probe
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $src = "$env:RUNNER_TEMP\ljt"
-          $vw = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $inst = & $vw -latest -prerelease -products * -property installationPath
-          Write-Host "latest VS instance: $inst"
-          function Try-Cmake($name, $argsList) {
-            Write-Host "`n===== $name : cmake $($argsList -join ' ')"
-            $dir = Join-Path $env:RUNNER_TEMP ("b_" + ($name -replace '\W','_'))
-            & cmake -S $src -B $dir @argsList 2>&1 | Select-Object -Last 12
-            Write-Host "===== RESULT $name exit=$LASTEXITCODE"
-          }
-          Try-Cmake "A vs17 -A ARM64 -Thost=x64 (what the crate runs)" @("-G","Visual Studio 17 2022","-A","ARM64","-Thost=x64")
-          Try-Cmake "B vs17 -A ARM64" @("-G","Visual Studio 17 2022","-A","ARM64")
-          Try-Cmake "C vs17 -A ARM64 + instance" @("-G","Visual Studio 17 2022","-A","ARM64","-DCMAKE_GENERATOR_INSTANCE=$inst")
-          Try-Cmake "D vs18 -A ARM64" @("-G","Visual Studio 18 2026","-A","ARM64")
-          Try-Cmake "E default generator, no -G" @("-A","ARM64")
-      - uses: dtolnay/rust-toolchain@1.75
-      - name: Real build script - turbojpeg-sys with the generator chosen from the runner's Visual Studio
-        shell: pwsh
-        run: |
-          # Same selection logic as the "Select CMake generator" step in flutter-build.yml:
-          # CMake marks with a star the default generator, i.e. the newest Visual Studio it
-          # can find on this machine. Nothing is pinned here.
-          $default = (cmake --help | Select-String '^\* (.+?)\s+=').Matches[0].Groups[1].Value.Trim()
-          Write-Host "cmake's default generator: '$default'"
-          if ($default -notlike 'Visual Studio*') { throw "cmake's default generator is '$default', not a Visual Studio generator" }
-          $env:CMAKE_GENERATOR = $default
-          $t = Join-Path $env:RUNNER_TEMP "tj_probe"
-          New-Item -ItemType Directory -Force "$t\src" | Out-Null
-          Set-Content "$t\Cargo.toml" "[package]`nname = `"tj_probe`"`nversion = `"0.1.0`"`nedition = `"2021`"`n[dependencies]`nturbojpeg = { version = `"1.5`", default-features = false, features = [`"cmake`"] }`n"
-          Set-Content "$t\src\main.rs" "fn main() { println!(`"{:?}`", turbojpeg::decompress(&[0u8; 8], turbojpeg::PixelFormat::RGBA).is_err()); }"
-          Set-Location $t
-          cargo build --release 2>&1 | Select-Object -Last 25
-          if ($LASTEXITCODE -ne 0) { throw "cargo build failed ($LASTEXITCODE)" }
-          .\target\release\tj_probe.exe
-          Write-Host "===== RESULT real-build-script OK (garbage JPEG returned an error value, no crash)"
-      - name: Probe Ninja under the ARM64 developer environment
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $vw = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $inst = & $vw -latest -prerelease -products * -property installationPath
-          $vcvars = Join-Path $inst "VC\Auxiliary\Build\vcvarsall.bat"
-          Write-Host "vcvarsall: $vcvars exists=$(Test-Path $vcvars)"
-          cmd /c "`"$vcvars`" arm64 && set" | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2]) } }
-          Write-Host "cl: $((Get-Command cl -ErrorAction SilentlyContinue).Source)"
-          $dir = Join-Path $env:RUNNER_TEMP "b_ninja"
-          cmake -S "$env:RUNNER_TEMP\ljt" -B $dir -G Ninja -DCMAKE_BUILD_TYPE=Release 2>&1 | Select-Object -Last 15
-          Write-Host "===== RESULT ninja exit=$LASTEXITCODE"
-          if ($LASTEXITCODE -eq 0) { cmake --build $dir --target turbojpeg-static 2>&1 | Select-Object -Last 5; Write-Host "===== RESULT ninja build exit=$LASTEXITCODE" }

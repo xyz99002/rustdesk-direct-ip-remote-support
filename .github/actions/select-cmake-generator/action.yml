@@ -1,0 +1,23 @@
+name: Select CMake generator
+description: >
+  Windows only. Exports CMAKE_GENERATOR as whatever Visual Studio generator CMake itself
+  considers the default on this runner (the entry marked with a star in `cmake --help`, i.e. the
+  newest Visual Studio it can find). Needed because the `cmake` crate (turbojpeg-sys, used by
+  libs/scrap) detects the generator itself and does not know the newest Visual Studio: the
+  windows-11-arm image has only Visual Studio 2026, windows-2022 has 2022. Nothing is pinned, so
+  an image update to another Visual Studio needs no edit. Fails loudly if CMake's default is not
+  a Visual Studio generator. See docs/UPSTREAM_UPGRADE_GUIDE.md, "Camera Capture Must Not Kill
+  the Remote", round 4 ("CI consequences").
+runs:
+  using: composite
+  steps:
+    - name: Export CMAKE_GENERATOR
+      shell: pwsh
+      run: |
+        $default = (cmake --help | Select-String '^\* (.+?)\s+=').Matches[0].Groups[1].Value.Trim()
+        Write-Host "cmake's default generator: '$default'"
+        if ($default -notlike 'Visual Studio*') {
+          Write-Error "cmake's default generator is '$default', not a Visual Studio generator"
+          exit 1
+        }
+        "CMAKE_GENERATOR=$default" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
