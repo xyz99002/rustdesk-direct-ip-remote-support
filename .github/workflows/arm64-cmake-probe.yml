@@ -49,16 +49,13 @@ jobs:
       - name: Real build script - turbojpeg-sys with the generator chosen from the runner's Visual Studio
         shell: pwsh
         run: |
-          # Same selection logic as the "Select CMake generator" step in flutter-build.yml.
-          $vw = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $line = & $vw -latest -products * -property catalog_productLineVersion
-          switch ($line) {
-            "18" { $gen = "Visual Studio 18 2026" }
-            "17" { $gen = "Visual Studio 17 2022" }
-            default { throw "Unsupported Visual Studio product line '$line' - extend the generator selection" }
-          }
-          Write-Host "VS product line $line -> CMAKE_GENERATOR=$gen"
-          $env:CMAKE_GENERATOR = $gen
+          # Same selection logic as the "Select CMake generator" step in flutter-build.yml:
+          # CMake marks with a star the default generator, i.e. the newest Visual Studio it
+          # can find on this machine. Nothing is pinned here.
+          $default = (cmake --help | Select-String '^\* (.+?)\s+=').Matches[0].Groups[1].Value.Trim()
+          Write-Host "cmake's default generator: '$default'"
+          if ($default -notlike 'Visual Studio*') { throw "cmake's default generator is '$default', not a Visual Studio generator" }
+          $env:CMAKE_GENERATOR = $default
           $t = Join-Path $env:RUNNER_TEMP "tj_probe"
           New-Item -ItemType Directory -Force "$t\src" | Out-Null
           Set-Content "$t\Cargo.toml" "[package]`nname = `"tj_probe`"`nversion = `"0.1.0`"`nedition = `"2021`"`n[dependencies]`nturbojpeg = { version = `"1.5`", default-features = false, features = [`"cmake`"] }`n"
