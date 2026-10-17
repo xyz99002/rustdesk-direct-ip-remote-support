@@ -1465,11 +1465,19 @@ Verify, on any upstream merge that touches `libs/scrap/src/common/camera.rs` (`c
   - **CI consequences of the cmake-built library** (`.github/workflows/flutter-build.yml`):
     the Linux Sciter container (Ubuntu 18.04 under run-on-arch) had no `cmake` on PATH - vcpkg
     brings its own - so `cmake` was added to its apt list (the armv7 variant already bootstraps
-    a newer CMake and prepends it to PATH). The Windows ARM64 job runs on a native ARM64
-    runner, where the `cmake` crate's Visual Studio auto-detection fails ("couldn't determine
-    visual studio generator": it looks for an x64-hosted MSBuild); `CMAKE_GENERATOR` is set to
-    `Visual Studio 17 2022` for that job's build step, which skips the lookup. Every other job,
-    including the Windows x86_64 build that ships, passed unchanged (Full Flutter CI #92).
+    a newer CMake and prepends it to PATH). On Windows the `cmake` crate's Visual Studio
+    auto-detection is skipped by `CMAKE_GENERATOR = Visual Studio 17 2022` on the build step
+    for **both** arches - an `env:` entry cannot be left unset per arch and an empty value is
+    passed as `-G ""`, which broke the x64 job in Full Flutter CI #95. The Windows ARM64 job
+    (native ARM64 runner) fails even with the generator named: CMake there "could not find any
+    instance of Visual Studio". Since the fork does not ship Windows-on-ARM, TurboJPEG is simply
+    **not built for that target** (`libs/scrap/Cargo.toml` target condition
+    `any(linux, all(windows, x86_64))`): `MJPEG_SUPPORTED` is false there, `choose_format()`
+    never picks an MJPEG mode, and a stub `decode_mjpeg_rgba` returns a clear error for MJPEG
+    frames. Every shipping job, including Windows x86_64, passed with the library (Full
+    Flutter CI #92). If Windows-on-ARM is ever shipped, point CMake at the VS instance
+    (`CMAKE_GENERATOR_INSTANCE`) or switch that job to the Ninja generator and re-enable the
+    dependency for `aarch64-pc-windows-msvc`.
 
 ### Feed Switches, Pause and Call Mute (implemented 2026-10-16)
 The operator on the remote can switch any single monitor/camera feed off and on per

@@ -43,6 +43,14 @@ const MAX_CAPTURE_HEIGHT: u32 = 1080;
 // runs at least this fast; USB 2 cameras typically offer 1080p uncompressed at 5 fps only.
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 const MIN_UNCOMPRESSED_FPS: u32 = 15;
+// Fork: whether this build can decode MJPEG camera frames (TurboJPEG, see Cargo.toml). False
+// only on Windows-on-ARM, where the library is not built; such a build never chooses an MJPEG
+// mode and refuses MJPEG frames with a clear error instead of crashing.
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+const MJPEG_SUPPORTED: bool = cfg!(any(
+    target_os = "linux",
+    all(target_os = "windows", target_arch = "x86_64")
+));
 lazy_static::lazy_static! {
     static ref SYNC_CAMERA_DISPLAYS: Arc<Mutex<Vec<DisplayInfo>>> = Arc::new(Mutex::new(Vec::new()));
 }
@@ -410,6 +418,7 @@ impl Cameras {
                         | FrameFormat::RAWRGB
                 )
             })
+            .filter(|f| MJPEG_SUPPORTED || f.format() != FrameFormat::MJPEG)
             .collect();
         let within: Vec<CameraFormat> = decodable
             .iter()
@@ -611,7 +620,16 @@ impl CameraCapturer {
     // wireless adapter, whose link delivers truncated/garbled JPEG frames that the Windows
     // Camera app simply drops. Here such a frame is an ordinary capture error (logged and
     // counted by the caller) and the next frame is shown.
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    // Windows-on-ARM: no TurboJPEG in this build (see Cargo.toml), so an MJPEG frame is an
+    // ordinary capture error; choose_format() avoids MJPEG modes on this target anyway.
+    #[cfg(all(target_os = "windows", not(target_arch = "x86_64")))]
+    fn decode_mjpeg_rgba(_data: &[u8], _width: usize, _height: usize) -> Result<Vec<u8>, String> {
+        Err("MJPEG camera frames are not supported by this build (Windows on ARM); \
+             the camera needs an uncompressed mode (NV12/YUY2)"
+            .to_owned())
+    }
+
+    #[cfg(any(target_os = "linux", all(target_os = "windows", target_arch = "x86_64")))]
     fn decode_mjpeg_rgba(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>, String> {
         // Cheap structural pre-check before the decoder sees the bytes: SOI at the start, EOI
         // near the end (drivers may pad after it). Rejects the common wireless damage -

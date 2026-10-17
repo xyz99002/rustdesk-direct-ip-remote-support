@@ -269,9 +269,11 @@ jobs:
           # Fork: the `cmake` crate (turbojpeg-sys, libs/scrap) auto-detects the Visual Studio
           # generator through an x64-hosted MSBuild lookup, which fails on the native ARM64
           # runner ("couldn't determine visual studio generator"). Naming the generator skips
-          # that lookup; the crate still adds the ARM64 platform flag itself. x64 detects fine
-          # and keeps the default.
-          CMAKE_GENERATOR: ${{ matrix.job.arch == 'aarch64' && 'Visual Studio 17 2022' || '' }}
+          # that lookup; the crate still adds the platform flag (x64 / ARM64) itself. Set for
+          # both arches: an `env:` entry cannot be left unset per arch, and an EMPTY value is
+          # passed to cmake as `-G ""`, which fails (found via real testing, Full Flutter CI
+          # #95: the x64 job broke on exactly that).
+          CMAKE_GENERATOR: Visual Studio 17 2022
         run: |
           # Windows: build RustDesk
           # --hwcodec is shared by all Windows targets; per-target extras (e.g. --vram) come from the matrix
