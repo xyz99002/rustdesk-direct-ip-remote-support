@@ -1,0 +1,61 @@
+name: ARM64 CMake probe
+
+# Fork helper (manual only, changes under .github/ start no CI): find out why the `cmake`
+# crate cannot configure libjpeg-turbo (turbojpeg-sys) on the native Windows-on-ARM runner
+# ("could not find any instance of Visual Studio"), by printing the runner's Visual Studio and
+# CMake facts and trying the plausible configurations on the real libjpeg-turbo source.
+# Dispatch from the Actions tab, read the "Probe" step. Kept as a tool for runner-image changes.
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: windows-11-arm
+    steps:
+      - name: Facts
+        shell: pwsh
+        run: |
+          Write-Host "== cmake"; Get-Command cmake -All | Format-Table Source, Version -AutoSize | Out-String -Width 200; cmake --version
+          Write-Host "== ninja"; Get-Command ninja -All -ErrorAction SilentlyContinue | Format-Table Source -AutoSize | Out-String -Width 200
+          Write-Host "== processor"; $env:PROCESSOR_ARCHITECTURE; [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture; [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+          $vw = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          Write-Host "== vswhere at $vw exists=$(Test-Path $vw)"
+          & $vw -all -prerelease -products * -format text
+          Write-Host "== generators offered by cmake"
+          cmake --help | Select-String "Visual Studio|Ninja"
+      - name: Fetch libjpeg-turbo 3.1.0
+        shell: pwsh
+        run: git clone --depth 1 --branch 3.1.0 https://github.com/libjpeg-turbo/libjpeg-turbo.git "$env:RUNNER_TEMP\ljt"
+      - name: Probe
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $src = "$env:RUNNER_TEMP\ljt"
+          $vw = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $inst = & $vw -latest -prerelease -products * -property installationPath
+          Write-Host "latest VS instance: $inst"
+          function Try-Cmake($name, $argsList) {
+            Write-Host "`n===== $name : cmake $($argsList -join ' ')"
+            $dir = Join-Path $env:RUNNER_TEMP ("b_" + ($name -replace '\W','_'))
+            & cmake -S $src -B $dir @argsList 2>&1 | Select-Object -Last 12
+            Write-Host "===== RESULT $name exit=$LASTEXITCODE"
+          }
+          Try-Cmake "A vs17 -A ARM64 -Thost=x64 (what the crate runs)" @("-G","Visual Studio 17 2022","-A","ARM64","-Thost=x64")
+          Try-Cmake "B vs17 -A ARM64" @("-G","Visual Studio 17 2022","-A","ARM64")
+          Try-Cmake "C vs17 -A ARM64 + instance" @("-G","Visual Studio 17 2022","-A","ARM64","-DCMAKE_GENERATOR_INSTANCE=$inst")
+          Try-Cmake "D vs18 -A ARM64" @("-G","Visual Studio 18 2026","-A","ARM64")
+          Try-Cmake "E default generator, no -G" @("-A","ARM64")
+      - name: Probe Ninja under the ARM64 developer environment
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $vw = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $inst = & $vw -latest -prerelease -products * -property installationPath
+          $vcvars = Join-Path $inst "VC\Auxiliary\Build\vcvarsall.bat"
+          Write-Host "vcvarsall: $vcvars exists=$(Test-Path $vcvars)"
+          cmd /c "`"$vcvars`" arm64 && set" | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2]) } }
+          Write-Host "cl: $((Get-Command cl -ErrorAction SilentlyContinue).Source)"
+          $dir = Join-Path $env:RUNNER_TEMP "b_ninja"
+          cmake -S "$env:RUNNER_TEMP\ljt" -B $dir -G Ninja -DCMAKE_BUILD_TYPE=Release 2>&1 | Select-Object -Last 15
+          Write-Host "===== RESULT ninja exit=$LASTEXITCODE"
+          if ($LASTEXITCODE -eq 0) { cmake --build $dir --target turbojpeg-static 2>&1 | Select-Object -Last 5; Write-Host "===== RESULT ninja build exit=$LASTEXITCODE" }
