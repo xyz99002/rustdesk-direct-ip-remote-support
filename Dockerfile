@@ -3,6 +3,9 @@ FROM debian:bullseye-slim
 WORKDIR /
 ARG DEBIAN_FRONTEND=noninteractive
 ENV VCPKG_FORCE_SYSTEM_BINARIES=1
+# bullseye is EOL: its packages now live on archive.debian.org only
+RUN sed -i -e 's|deb.debian.org|archive.debian.org|g' -e 's|security.debian.org|archive.debian.org|g' -e '/bullseye-updates/d' /etc/apt/sources.list && \
+    echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99archive
 RUN apt update -y && \
     apt install --yes --no-install-recommends \
         g++ \
